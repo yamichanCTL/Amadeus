@@ -64,9 +64,11 @@ class TranscribeOptions(BaseModel):
     # Merge strategy when multiple engines are selected
     merge_strategy: Literal["first", "vote", "concat"] = "first"
 
-    # Uploaded audio retention. By default long-audio files are temporary.
-    allow_server_data_collection: bool = False
+    # Uploaded audio/result archive. Enabled by default so recognition records
+    # are written under user/day/type for both short and long audio.
+    allow_server_data_collection: bool = True
     archive_dir: str | None = None
+    archive_category: str | None = None
 
     @field_validator("engines")
     @classmethod

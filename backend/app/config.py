@@ -15,10 +15,13 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
+_PROJECT_ROOT = _BACKEND_ROOT.parent if _BACKEND_ROOT.name == "backend" else _BACKEND_ROOT
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=str(_BACKEND_ROOT / ".env"),
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
@@ -32,7 +35,7 @@ class Settings(BaseSettings):
     secret_key: str = Field(default="dev-secret-key-change-in-prod")
 
     # ── Database ──────────────────────────────────────────────────────────────
-    database_url: str = "sqlite+aiosqlite:///./data/asr.db"
+    database_url: str = f"sqlite+aiosqlite:///{_PROJECT_ROOT / 'data/asr.db'}"
 
     # ── Redis / Celery ────────────────────────────────────────────────────────
     redis_url: str = "redis://localhost:6379/0"
@@ -40,30 +43,50 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://localhost:6379/2"
 
     # ── Paths ─────────────────────────────────────────────────────────────────
-    models_dir: Path = Path("./models")
-    audio_upload_dir: Path = Path("./data/uploads")
-    transcript_dir: Path = Path("./data/transcripts")
-    archive_dir: Path = Path("./data/archive")
+    models_dir: Path = _BACKEND_ROOT / "models"
+    audio_upload_dir: Path = _PROJECT_ROOT / "data/uploads"
+    transcript_dir: Path = _PROJECT_ROOT / "data/transcripts"
+    archive_dir: Path = _PROJECT_ROOT / "data/archive"
 
     # ── ASR engine defaults ───────────────────────────────────────────────────
     default_engine: str = "fireredasr2"
+    default_stream_engine: str = "sensevoice"
+    default_stream_final_engine: str = "fireredasr2"
     preload_default_engine: bool = False
+
+    # SenseVoice
+    sensevoice_model_dir: Path = _BACKEND_ROOT / "models/SenseVoiceSmall"
+    sensevoice_src_path: Path = Path("/home/yami/AI/audio/ASR/SenseVoice")
+    default_sensevoice_device: str = "cuda:0"
+    sensevoice_batch_size_s: int = 60
 
     # FireRedASR2
     fireredasr2_src_path: Path | None = None
     default_fireredasr2_model: str = "FireRedASR2-AED"
     default_fireredasr2_device: Literal["cpu", "cuda"] = "cuda"
-    fireredasr2_model_dir: Path = Path("./models/fireredasr2/FireRedASR2-AED")
+    fireredasr2_model_dir: Path = _BACKEND_ROOT / "models/fireredasr2/FireRedASR2-AED"
     fireredasr2_asr_type: Literal["aed", "llm"] = "aed"
     fireredasr2_beam_size: int = 3
     fireredasr2_batch_size: int = 1
     fireredasr2_return_timestamp: bool = True
     fireredasr2_use_half: bool = False
 
+    # FireRedVAD for pseudo-streaming endpoint detection
+    firered_vad_src_path: Path | None = None
+    firered_vad_model_dir: Path = _BACKEND_ROOT / "models/fireredasr2/FireRedVAD/Stream-VAD"
+    firered_vad_use_gpu: bool = False
+    firered_vad_speech_threshold: float = 0.25
+
     # Whisper
     default_whisper_model: str = "base"
     default_whisper_device: Literal["cpu", "cuda"] = "cpu"
     default_whisper_compute_type: Literal["int8", "float16", "float32"] = "int8"
+
+    # Qwen3-ASR
+    default_qwen3asr_model: str = "Qwen/Qwen3-ASR-1.7B"
+    qwen3asr_model_dir: Path = _BACKEND_ROOT / "models/Qwen3-ASR-1.7B"
+    default_qwen3asr_device: str = "cuda:0"
+    qwen3asr_torch_dtype: str = "bfloat16"
 
     # Vosk
     default_vosk_model: str = "vosk-model-cn-0.22"
@@ -78,6 +101,22 @@ class Settings(BaseSettings):
     enable_denoise: bool = False
     enable_punctuation: bool = False
     enable_diarize: bool = False
+
+    # ── Streaming ASR ─────────────────────────────────────────────────────
+    stream_sample_rate: int = 16000
+    stream_ring_keep_ms: int = 3000
+    stream_pre_roll_ms: int = 800
+    stream_partial_enabled: bool = True
+    stream_first_partial_after_ms: int = 400
+    stream_partial_interval_ms: int = 300
+    stream_end_silence_ms: int = 700
+    stream_start_speech_ms: int = 80
+    stream_min_segment_ms: int = 300
+    stream_max_segment_ms: int = 10000
+    stream_hard_max_segment_ms: int = 15000
+    stream_tail_keep_ms: int = 200
+    stream_archive_category: str = "实时转录"
+    upload_archive_category: str = "一段语音转写"
 
     # ── Task / upload limits ──────────────────────────────────────────────────
     max_upload_size_mb: int = 500
@@ -104,6 +143,8 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def create_directories(self) -> "Settings":
         """Ensure all required directories exist at startup."""
+        self._resolve_relative_paths()
+        self._resolve_database_url()
         for path in (
             self.models_dir,
             self.audio_upload_dir,
@@ -112,13 +153,57 @@ class Settings(BaseSettings):
         ):
             path.mkdir(parents=True, exist_ok=True)
         # Create per-engine model subdirs
-        for engine in ("fireredasr2", "whisper", "vosk", "sherpa"):
+        for engine in ("fireredasr2", "whisper", "vosk", "sherpa", "qwen3asr"):
             (self.models_dir / engine).mkdir(parents=True, exist_ok=True)
         # DB directory
         if self.database_url.startswith("sqlite"):
-            db_path = self.database_url.replace("sqlite+aiosqlite:///", "")
+            db_path = self.database_url.replace("sqlite+aiosqlite:///", "").replace("sqlite:///", "")
             Path(db_path).parent.mkdir(parents=True, exist_ok=True)
         return self
+
+    def _resolve_relative_paths(self) -> None:
+        """Resolve local paths independently of the process cwd."""
+        data_path_fields = (
+            "audio_upload_dir",
+            "transcript_dir",
+            "archive_dir",
+        )
+        model_path_fields = (
+            "models_dir",
+            "sensevoice_model_dir",
+            "sensevoice_src_path",
+            "fireredasr2_model_dir",
+            "firered_vad_model_dir",
+            "qwen3asr_model_dir",
+        )
+        for name in data_path_fields:
+            value = getattr(self, name)
+            if isinstance(value, Path) and not value.is_absolute():
+                setattr(self, name, (_PROJECT_ROOT / value).resolve())
+
+        for name in model_path_fields:
+            value = getattr(self, name)
+            if isinstance(value, Path) and not value.is_absolute():
+                setattr(self, name, (_BACKEND_ROOT / value).resolve())
+
+        if self.fireredasr2_src_path is not None and not self.fireredasr2_src_path.is_absolute():
+            self.fireredasr2_src_path = (_BACKEND_ROOT / self.fireredasr2_src_path).resolve()
+        if self.firered_vad_src_path is not None and not self.firered_vad_src_path.is_absolute():
+            self.firered_vad_src_path = (_BACKEND_ROOT / self.firered_vad_src_path).resolve()
+
+    def _resolve_database_url(self) -> None:
+        """Resolve relative SQLite database paths against the project data root."""
+        for prefix in ("sqlite+aiosqlite:///", "sqlite:///"):
+            if not self.database_url.startswith(prefix):
+                continue
+            db_path = self.database_url.removeprefix(prefix)
+            if db_path == ":memory:":
+                return
+            path = Path(db_path)
+            if not path.is_absolute():
+                path = (_PROJECT_ROOT / path).resolve()
+                self.database_url = f"{prefix}{path}"
+            return
 
     # ── Convenience helpers ───────────────────────────────────────────────────
     @property
@@ -145,6 +230,14 @@ class Settings(BaseSettings):
         if model_name is None or model_name == self.default_fireredasr2_model:
             return self.fireredasr2_model_dir
         return self.models_dir / "fireredasr2" / model_name
+
+    def sensevoice_model_path(self) -> Path:
+        return self.sensevoice_model_dir
+
+    def qwen3asr_model_path(self, model_name: str | None = None) -> Path:
+        if model_name is None or model_name == self.default_qwen3asr_model:
+            return self.qwen3asr_model_dir
+        return self.models_dir / "qwen3asr" / model_name
 
 
 @lru_cache(maxsize=1)

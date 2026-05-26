@@ -29,6 +29,7 @@ import soundfile as sf  # type: ignore[import]
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
 
 from app.config import get_settings
+from app.core.archive import archive_file_error_record, archive_file_record
 from app.core.asr.base import EngineOptions
 from app.core.asr.router import ModelRouter
 from app.core.model_manager import ModelManager
@@ -203,6 +204,7 @@ async def transcribe(
             "task": opts.whisper_task,
             "merge_strategy": opts.merge_strategy,
             "allow_server_data_collection": opts.allow_server_data_collection,
+            "archive_category": opts.archive_category,
             "extra": (
                 {"model_size": opts.whisper_model} if opts.whisper_model else {}
             ),
@@ -279,6 +281,21 @@ async def transcribe(
             confidence=result.confidence,
             raw_results=result.raw,
         )
+        archive_file_record(
+            audio_bytes=audio_bytes,
+            suffix=Path(file.filename or "audio.wav").suffix or ".wav",
+            user_id=user.id if user else None,
+            category=opts.archive_category or settings.upload_archive_category,
+            text=result.full_text,
+            engine=result.engine_name,
+            language=result.language,
+            duration_sec=duration,
+            metadata={
+                "task_id": task.id,
+                "transcript_id": transcript.id,
+                "allow_server_data_collection": opts.allow_server_data_collection,
+            },
+        )
 
         # Reload task for elapsed_sec
         await update_task_status(db, task.id, TaskStatus.SUCCESS)
@@ -318,6 +335,17 @@ async def transcribe(
 
     except Exception as exc:
         logger.exception("Sync transcription failed for task %s: %s", task.id, exc)
+        archive_file_error_record(
+            audio_bytes=audio_bytes,
+            suffix=Path(file.filename or "audio.wav").suffix or ".wav",
+            user_id=user.id if user else None,
+            category=opts.archive_category or settings.upload_archive_category,
+            engine=",".join(opts.engines),
+            language=opts.language,
+            duration_sec=duration,
+            error=str(exc),
+            metadata={"task_id": task.id},
+        )
         await update_task_status(
             db, task.id, TaskStatus.FAILED, error_message=str(exc)
         )

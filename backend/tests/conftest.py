@@ -32,6 +32,7 @@ def _apply_test_env(tmp_dir: str) -> None:
     os.environ["MODELS_DIR"] = f"{tmp_dir}/models"
     os.environ["AUDIO_UPLOAD_DIR"] = f"{tmp_dir}/uploads"
     os.environ["TRANSCRIPT_DIR"] = f"{tmp_dir}/transcripts"
+    os.environ["ARCHIVE_DIR"] = f"{tmp_dir}/archive"
     os.environ["DEFAULT_ENGINE"] = "mock"
     os.environ["ENABLE_VAD"] = "false"
     os.environ["ENABLE_PUNCTUATION"] = "false"

@@ -1,0 +1,100 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ASR App – docker-compose
+#
+# Services
+# ────────
+#   api      – FastAPI server  (port 8000)
+#   worker   – Celery worker   (same image, different CMD)
+#   redis    – Celery broker + result backend
+#
+# Quick start
+# ───────────
+#   cp backend/.env.example backend/.env   # edit as needed
+#   docker-compose up --build
+# ─────────────────────────────────────────────────────────────────────────────
+
+x-common: &common
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+  env_file: ./backend/.env
+  volumes:
+    # Model weights: mount a local directory so models persist across rebuilds
+    - ./models:/app/models
+    # Uploaded audio, transcripts, and SQLite data
+    - ./data:/app/data
+  networks:
+    - asr_net
+  restart: unless-stopped
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+
+  # ── Redis ────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no  # no persistence for broker
+    ports:
+      - "6379:6379"
+    networks:
+      - asr_net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # ── API server ────────────────────────────────────────────────────────────────
+  api:
+    <<: *common
+    container_name: asr_api
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: production
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      # SQLite for single-node; replace with PostgreSQL for multi-node
+      DATABASE_URL: sqlite+aiosqlite:///./data/asr.db
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/health')"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+  # ── Celery worker ─────────────────────────────────────────────────────────────
+  worker:
+    <<: *common
+    container_name: asr_worker
+    command: >
+      celery -A app.tasks.celery_app.celery_app worker
+      --loglevel=info
+      --concurrency=1
+      --queues=celery
+      --hostname=worker@%h
+    environment:
+      APP_ENV: production
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      DATABASE_URL: sqlite+aiosqlite:///./data/asr.db
+    # Uncomment to expose GPU to the worker container:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+networks:
+  asr_net:
+    driver: bridge

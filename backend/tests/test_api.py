@@ -134,6 +134,36 @@ async def test_list_models(async_client: AsyncClient) -> None:
     assert isinstance(data["engines"], list)
 
 
+# ── Records endpoint ─────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_list_archived_records(async_client: AsyncClient) -> None:
+    from datetime import datetime, timezone
+
+    from app.core.archive import archive_pcm_record
+
+    started_at = datetime.now(timezone.utc)
+    archive_pcm_record(
+        pcm_bytes=b"\x00\x00" * 1600,
+        sample_rate=16_000,
+        user_id="user-a",
+        category="stream",
+        text="hello",
+        engine="mock",
+        language="zh",
+        started_at=started_at,
+        ended_at=started_at,
+        duration_sec=0.1,
+    )
+
+    resp = await async_client.get("/v1/records", params={"user_id": "user-a", "category": "stream"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 1
+    assert data["items"][0]["text"] == "hello"
+    assert data["items"][0]["audio_path"].endswith(".wav")
+
+
 # ── Auth endpoints ────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
@@ -179,11 +209,11 @@ async def test_me_unauthenticated(async_client: AsyncClient) -> None:
     assert resp.status_code == 401
 
 
-# ── WebSocket stream stub ─────────────────────────────────────────────────────
+# ── WebSocket stream ──────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_stream_returns_not_implemented(async_client: AsyncClient) -> None:
-    """The streaming stub should accept, send an error message, then close."""
+async def test_stream_returns_ready(async_client: AsyncClient) -> None:
+    """The streaming endpoint should accept and announce a ready session."""
     pytest.importorskip("httpx_ws", reason="httpx_ws not installed")
 
     import json
@@ -192,5 +222,5 @@ async def test_stream_returns_not_implemented(async_client: AsyncClient) -> None
     async with aconnect_ws("/v1/stream", async_client) as ws:
         msg = await ws.receive_text()
         data = json.loads(msg)
-        assert data["type"] == "error"
-        assert data["code"] == "NOT_IMPLEMENTED"
+        assert data["type"] == "ready"
+        await ws.send_text('{"type":"end"}')

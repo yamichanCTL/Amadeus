@@ -80,6 +80,7 @@ def run_asr_task(self: ASRBaseTask, task_id: str) -> dict:  # type: ignore[misc]
 
 async def _run(task_id: str) -> dict:
     from app.config import get_settings
+    from app.core.archive import archive_file_error_record, archive_file_record
     from app.core.asr.base import EngineOptions
     from app.core.asr.router import ModelRouter
     from app.core.model_manager import get_model_manager
@@ -183,7 +184,7 @@ async def _run(task_id: str) -> dict:
                 for s in result.segments
             ]
 
-            await create_transcript(
+            transcript = await create_transcript(
                 db,
                 task_id=task_id,
                 full_text=result.full_text,
@@ -192,6 +193,21 @@ async def _run(task_id: str) -> dict:
                 engine_used=result.engine_name,
                 confidence=result.confidence,
                 raw_results=result.raw,
+            )
+            archive_file_record(
+                audio_bytes=audio_bytes,
+                suffix=Path(task.filename or "audio.wav").suffix or ".wav",
+                user_id=task.user_id,
+                category=engine_opts_raw.get("archive_category") or settings.upload_archive_category,
+                text=result.full_text,
+                engine=result.engine_name,
+                language=result.language,
+                duration_sec=task.duration_sec,
+                metadata={
+                    "task_id": task_id,
+                    "transcript_id": transcript.id,
+                    "allow_server_data_collection": keep_audio,
+                },
             )
 
             await update_task_status(db, task_id, TaskStatus.SUCCESS)
@@ -210,6 +226,20 @@ async def _run(task_id: str) -> dict:
 
         except Exception as exc:
             logger.exception("Task %s failed: %s", task_id, exc)
+            if "audio_bytes" in locals():
+                archive_file_error_record(
+                    audio_bytes=audio_bytes,
+                    suffix=Path(task.filename or "audio.wav").suffix or ".wav",
+                    user_id=task.user_id,
+                    category=engine_opts_raw.get("archive_category") or settings.upload_archive_category
+                    if "engine_opts_raw" in locals()
+                    else settings.upload_archive_category,
+                    engine=task.engines,
+                    language=engine_opts_raw.get("language") if "engine_opts_raw" in locals() else None,
+                    duration_sec=task.duration_sec,
+                    error=str(exc),
+                    metadata={"task_id": task_id},
+                )
             await update_task_status(
                 db, task_id, TaskStatus.FAILED, error_message=str(exc)
             )

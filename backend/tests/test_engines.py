@@ -21,6 +21,8 @@ from tests.conftest import MockASREngine, make_wav_bytes
 def test_registry_contains_default_engines() -> None:
     engines = available_engines()
     assert "fireredasr2" in engines
+    assert "sensevoice" in engines
+    assert "qwen3asr" in engines
     assert "whisper" in engines
     assert "vosk" in engines
     assert "sherpa" in engines

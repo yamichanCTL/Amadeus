@@ -1,35 +1,16 @@
-"""
-app/api/v1/stream.py
-─────────────────────
-WebSocket endpoint for real-time streaming ASR — reserved.
-
-WS /v1/stream
-
-Protocol (future)
-─────────────────
-Client  →  Server  :  binary frames of raw PCM audio (16 kHz, 16-bit, mono)
-                       OR  text frame {"type": "config", "language": "zh", "engine": "sherpa"}
-                       OR  text frame {"type": "end"}   (signal end of audio)
-
-Server  →  Client  :  text frames of JSON:
-    {"type": "partial", "text": "识别中 …"}
-    {"type": "final",   "text": "完整的句子。", "start": 0.0, "end": 3.2}
-    {"type": "error",   "message": "..."}
-    {"type": "done"}
-
-Current state
-─────────────
-The endpoint accepts WebSocket connections, sends a "not implemented" message,
-and closes cleanly.  This avoids 404 errors from clients that already probe
-the streaming URL.
-"""
+"""WebSocket endpoint for VAD-driven pseudo-streaming ASR."""
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
 import logging
+from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+from app.core.streaming.session import StreamingASRSession, parse_stream_config
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/stream", tags=["streaming"])
@@ -38,94 +19,84 @@ router = APIRouter(prefix="/stream", tags=["streaming"])
 @router.websocket("")
 async def stream_asr(websocket: WebSocket) -> None:
     """
-    Real-time ASR via WebSocket.
+    Stream 16 kHz mono PCM over WebSocket.
 
-    **Status**: reserved — not yet implemented.
+    Client text frames:
+    - ``{"type":"config","engine":"sensevoice","language":"zh","user_id":"u1"}``
+    - ``{"type":"audio","data":"<base64 pcm_s16le>"}``
+    - ``{"type":"end"}``
 
-    Connects, notifies the client, then closes with code 1001 (going away).
+    Client binary frames are treated as raw ``pcm_s16le`` audio chunks.
     """
+
     await websocket.accept()
+    session = StreamingASRSession()
+    await session.send_ready()
+    sender = asyncio.create_task(_send_loop(websocket, session))
     logger.info("WebSocket stream connected from %s", websocket.client)
 
     try:
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "type": "error",
-                    "code": "NOT_IMPLEMENTED",
-                    "message": (
-                        "Streaming ASR is reserved for a future release. "
-                        "Use POST /v1/transcribe for offline recognition."
-                    ),
-                }
-            )
-        )
-    except Exception:
+        while True:
+            message = await websocket.receive()
+            if message.get("bytes") is not None:
+                await session.accept_audio(message["bytes"] or b"")
+                continue
+            if message.get("text") is not None:
+                should_close = await _handle_text_frame(session, message["text"])
+                if should_close:
+                    break
+            if message.get("type") == "websocket.disconnect":
+                break
+    except WebSocketDisconnect:
         pass
+    except Exception as exc:
+        logger.exception("Streaming session failed: %s", exc)
+        await session.queue.put({"type": "error", "session_id": session.session_id, "message": str(exc)})
     finally:
+        await session.finish()
+        await sender
         try:
-            await websocket.close(code=1001)
+            await websocket.close()
         except Exception:
             pass
         logger.info("WebSocket stream closed.")
 
 
-# ────────────────────────────────────────────────────────────────────────────
-#  Scaffolding for future implementation
-#  (kept here so the structure is clear when the time comes)
-# ────────────────────────────────────────────────────────────────────────────
-
-async def _handle_stream_session(websocket: WebSocket) -> None:  # pragma: no cover
-    """
-    Future: full streaming session handler.
-
-    1. Wait for a JSON "config" frame from the client.
-    2. Load the streaming-capable engine (Sherpa OnlineRecognizer / Vosk).
-    3. Forward incoming binary PCM chunks to the engine.
-    4. Send partial and final results back to the client as JSON text frames.
-    5. On "end" frame or disconnect: finalise, send "done", close.
-    """
-    from app.core.model_manager import get_model_manager
-    from app.core.asr.base import EngineOptions
-
-    manager = get_model_manager()
-    engine_name = "sherpa"   # default streaming engine
-    language = None
-
-    # Config frame
-    try:
-        raw = await websocket.receive_text()
-        cfg = json.loads(raw)
-        if cfg.get("type") == "config":
-            engine_name = cfg.get("engine", engine_name)
-            language = cfg.get("language")
-    except Exception:
-        pass
-
-    engine = await manager.get_engine(engine_name)
-    options = EngineOptions(language=language)
-
-    async def _chunk_iter():
-        while True:
-            try:
-                data = await websocket.receive()
-                if "bytes" in data:
-                    yield data["bytes"]
-                elif "text" in data:
-                    msg = json.loads(data["text"])
-                    if msg.get("type") == "end":
-                        return
-            except WebSocketDisconnect:
-                return
-
-    async for partial_result in engine.transcribe_stream(_chunk_iter(), options):
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "type": "final" if partial_result.raw.get("is_final") else "partial",
-                    "text": partial_result.full_text,
-                }
-            )
+async def _handle_text_frame(session: StreamingASRSession, text: str) -> bool:
+    data = parse_stream_config(text)
+    msg_type = data.get("type")
+    if msg_type == "config":
+        session.update_config(data)
+        await session.queue.put(
+            {
+                "type": "configured",
+                "session_id": session.session_id,
+                "engine": session.config.engine,
+                "final_engine": session.config.final_engine,
+                "language": session.config.language,
+                "user_id": session.config.user_id,
+                "category": session.config.category,
+                "state": session.state,
+            }
         )
+        return False
+    if msg_type == "audio":
+        payload = data.get("data")
+        if not isinstance(payload, str):
+            raise ValueError("audio text frames require base64 string field 'data'")
+        await session.accept_audio(base64.b64decode(payload))
+        return False
+    if msg_type == "end":
+        return True
+    if msg_type == "ping":
+        await session.queue.put({"type": "pong", "session_id": session.session_id, "state": session.state})
+        return False
+    raise ValueError(f"Unknown stream message type: {msg_type}")
 
-    await websocket.send_text(json.dumps({"type": "done"}))
+
+async def _send_loop(websocket: WebSocket, session: StreamingASRSession) -> None:
+    while True:
+        event: dict[str, Any] = await session.queue.get()
+        await websocket.send_text(json.dumps(event, ensure_ascii=False))
+        if event.get("type") == "done":
+            return

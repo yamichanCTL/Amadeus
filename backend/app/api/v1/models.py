@@ -121,6 +121,15 @@ async def load_model(
         # Map generic "model_name" to engine-specific param
         if name == "whisper":
             kwargs["model_size"] = body.model_name
+        elif name == "sensevoice":
+            if body.model_name == "SenseVoiceSmall":
+                kwargs["model_dir"] = str(settings.sensevoice_model_dir)
+            else:
+                kwargs["model_dir"] = body.model_name
+        elif name == "qwen3asr":
+            kwargs["model_name"] = body.model_name
+            if body.model_name == settings.default_qwen3asr_model:
+                kwargs["model_dir"] = str(settings.qwen3asr_model_dir)
         else:
             kwargs["model_name"] = body.model_name
     if body.device:

@@ -130,15 +130,15 @@ APP_PORT=8000
 APP_LOG_LEVEL=info
 SECRET_KEY=change-me-in-production
 
-DATABASE_URL=sqlite+aiosqlite:///./data/asr.db
+DATABASE_URL=sqlite+aiosqlite:///../data/asr.db
 REDIS_URL=redis://localhost:6379/0
 CELERY_BROKER_URL=redis://localhost:6379/1
 CELERY_RESULT_BACKEND=redis://localhost:6379/2
 
 MODELS_DIR=./models
-AUDIO_UPLOAD_DIR=./data/uploads
-TRANSCRIPT_DIR=./data/transcripts
-ARCHIVE_DIR=./data/archive
+AUDIO_UPLOAD_DIR=../data/uploads
+TRANSCRIPT_DIR=../data/transcripts
+ARCHIVE_DIR=../data/archive
 
 DEFAULT_ENGINE=fireredasr2
 DEFAULT_WHISPER_MODEL=base
@@ -553,7 +553,7 @@ WS /v1/stream
 默认数据库：
 
 ```text
-backend/data/asr.db
+data/asr.db
 ```
 
 表结构：
@@ -645,7 +645,7 @@ kaldi-native-fbank==1.15 没有 win_amd64 wheel
 10. `POST /v1/models/fireredasr2/load` 能加载默认模型。
 11. 短音频 `POST /v1/transcribe` 返回 `success` 和 `full_text`。
 12. Redis 和 Celery Worker 启动后，长音频返回 `pending`，轮询 `/v1/tasks/{task_id}` 最终得到 `success` 或明确错误。
-13. `backend/data/asr.db` 中生成 `asr_tasks` 和 `transcripts` 记录。
+13. `data/asr.db` 中生成 `asr_tasks` 和 `transcripts` 记录。
 14. `python -m compileall backend/app` 通过。
 15. Linux/WSL2 中 `uv run pytest backend/tests -q` 通过。
 
@@ -728,7 +728,7 @@ ASR-Backend/README.md
 
 ```text
 ASR-Backend/.venv/
-ASR-Backend/backend/data/
+ASR-Backend/data/
 ASR-Backend/backend/models/
 ASR-Backend/backend/.env
 ASR-Backend/backend/__pycache__/
@@ -739,6 +739,7 @@ ASR-Backend/backend/.pytest_cache/
 
 ```gitignore
 backend/.env
+data/
 backend/data/
 backend/models/
 backend/.pytest_cache/

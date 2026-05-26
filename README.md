@@ -73,7 +73,7 @@ asr-app/
 uv sync --all-extras
 
 # 2. 启动服务（开发模式，无 Redis）
-cd backend
+cd /home/yami/AI/asrapp/backend
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
 ## 后台启动

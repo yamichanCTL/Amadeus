@@ -194,6 +194,20 @@ def get_model_manager() -> ModelManager:
             device=settings.default_whisper_device,
             compute_type=settings.default_whisper_compute_type,
         )
+        _manager.configure(
+            "sensevoice",
+            model_dir=str(settings.sensevoice_model_dir),
+            device=settings.default_sensevoice_device,
+            src_path=str(settings.sensevoice_src_path),
+            batch_size_s=settings.sensevoice_batch_size_s,
+        )
+        _manager.configure(
+            "qwen3asr",
+            model_name=settings.default_qwen3asr_model,
+            model_dir=str(settings.qwen3asr_model_dir),
+            device=settings.default_qwen3asr_device,
+            torch_dtype=settings.qwen3asr_torch_dtype,
+        )
         _manager.configure("vosk", model_name=settings.default_vosk_model)
         _manager.configure("sherpa", model_name=settings.default_sherpa_model)
     return _manager
