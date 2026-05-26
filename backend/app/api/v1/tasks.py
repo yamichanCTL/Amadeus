@@ -13,14 +13,14 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi import Depends
 
 from app.db import crud
 from app.db.models import TaskStatus
 from app.db.session import get_db
 from app.dependencies import OptionalUser
+from app.schemas.llm import LLMOutputs
 from app.schemas.task import TaskListResponse, TaskStatusResponse
 from app.schemas.transcribe import TranscriptSegment
 
@@ -62,6 +62,18 @@ def _build_response(task: object) -> TaskStatusResponse:  # type: ignore[type-ar
                 resp.segments = [TranscriptSegment(**s) for s in raw_segs]
             except Exception:
                 resp.segments = []
+        if tr.raw_results:
+            try:
+                raw_results = json.loads(tr.raw_results)
+                if isinstance(raw_results, dict):
+                    raw_outputs = raw_results.get("llm_outputs")
+                    if isinstance(raw_outputs, dict):
+                        resp.llm_outputs = LLMOutputs.model_validate(raw_outputs)
+                    raw_error = raw_results.get("llm_error")
+                    if isinstance(raw_error, str):
+                        resp.llm_error = raw_error
+            except Exception:
+                pass
 
     return resp
 

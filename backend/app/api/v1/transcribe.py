@@ -23,16 +23,16 @@ import logging
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Annotated
 
 import soundfile as sf  # type: ignore[import]
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, Form, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.core.archive import archive_file_error_record, archive_file_record
 from app.core.asr.base import EngineOptions
 from app.core.asr.router import ModelRouter
-from app.core.model_manager import ModelManager
+from app.core.llm import run_auto_processing
 from app.core.pipeline.post.diarize import assign_speakers
 from app.core.pipeline.post.punctuation import restore_punctuation
 from app.db.crud import (
@@ -47,8 +47,8 @@ from app.dependencies import (
     Manager,
     OptionalUser,
     ValidAudioFile,
-    validate_audio_upload,
 )
+from app.schemas.llm import LLMOutputs
 from app.schemas.transcribe import (
     EngineResult,
     TranscribeAsyncResponse,
@@ -56,7 +56,6 @@ from app.schemas.transcribe import (
     TranscribeResponse,
     TranscriptSegment,
 )
-from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/transcribe", tags=["transcription"])
@@ -129,6 +128,49 @@ async def _save_audio(
     dest = root / f"{uuid.uuid4().hex}{suffix}"
     dest.write_bytes(audio_bytes)
     return dest
+
+
+async def _run_llm_auto(text: str, opts: TranscribeOptions) -> tuple[LLMOutputs | None, str | None]:
+    if opts.llm is None:
+        return None, None
+    outputs, error = await run_auto_processing(
+        text=text,
+        model=opts.llm.model,
+        base_url=opts.llm.base_url,
+        api_token=opts.llm.api_token,
+        target_language=opts.llm.target_language,
+        style=opts.llm.style,
+        enable_polish=opts.llm.enable_polish,
+        enable_translate=opts.llm.enable_translate,
+    )
+    llm_outputs = LLMOutputs(
+        polish=outputs.get("polish"),
+        translate=outputs.get("translate"),
+    )
+    if not llm_outputs.polish and not llm_outputs.translate:
+        llm_outputs = None
+    return llm_outputs, error
+
+
+def _raw_results_with_llm(
+    raw: dict | None,
+    llm_outputs: LLMOutputs | None,
+    llm_error: str | None,
+) -> dict | None:
+    raw_results = dict(raw or {})
+    if llm_outputs:
+        raw_results["llm_outputs"] = llm_outputs.model_dump(mode="json", exclude_none=True)
+    if llm_error:
+        raw_results["llm_error"] = llm_error
+    return raw_results or None
+
+
+def _llm_celery_options(opts: TranscribeOptions) -> dict | None:
+    if opts.llm is None:
+        return None
+    if not (opts.llm.enable_polish or opts.llm.enable_translate):
+        return None
+    return opts.llm.model_dump(mode="json")
 
 
 # ── POST /v1/transcribe ───────────────────────────────────────────────────────
@@ -205,6 +247,11 @@ async def transcribe(
             "merge_strategy": opts.merge_strategy,
             "allow_server_data_collection": opts.allow_server_data_collection,
             "archive_category": opts.archive_category,
+            "llm": (
+                opts.llm.model_dump(mode="json", exclude={"api_token"}, exclude_none=True)
+                if opts.llm
+                else None
+            ),
             "extra": (
                 {"model_size": opts.whisper_model} if opts.whisper_model else {}
             ),
@@ -224,7 +271,7 @@ async def transcribe(
         await db.commit()
 
         from app.tasks.asr_task import run_asr_task
-        celery_result = run_asr_task.delay(task.id)
+        celery_result = run_asr_task.delay(task.id, _llm_celery_options(opts))
         await update_task_status(
             db, task.id, TaskStatus.PENDING, celery_task_id=celery_result.id
         )
@@ -265,6 +312,8 @@ async def transcribe(
             audio_arr, sr = sf.read(io.BytesIO(audio_bytes), dtype="float32", always_2d=False)
             result.segments = await assign_speakers(result.segments, audio_arr, sr)
 
+        llm_outputs, llm_error = await _run_llm_auto(result.full_text, opts)
+
         # Persist
         segments_data = [
             {"start": s.start, "end": s.end, "text": s.text,
@@ -279,7 +328,7 @@ async def transcribe(
             language=result.language,
             engine_used=result.engine_name,
             confidence=result.confidence,
-            raw_results=result.raw,
+            raw_results=_raw_results_with_llm(result.raw, llm_outputs, llm_error),
         )
         archive_file_record(
             audio_bytes=audio_bytes,
@@ -331,6 +380,8 @@ async def transcribe(
             confidence=result.confidence,
             duration_sec=duration,
             engine_results=engine_results,
+            llm_outputs=llm_outputs,
+            llm_error=llm_error,
         )
 
     except Exception as exc:

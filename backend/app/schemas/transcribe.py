@@ -11,6 +11,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.asr.registry import available_engines
+from app.schemas.llm import LLMAutoOptions, LLMOutputs
 
 
 # ── Segment (one time-stamped chunk in the result) ────────────────────────────
@@ -69,6 +70,7 @@ class TranscribeOptions(BaseModel):
     allow_server_data_collection: bool = True
     archive_dir: str | None = None
     archive_category: str | None = None
+    llm: LLMAutoOptions | None = None
 
     @field_validator("engines")
     @classmethod
@@ -99,6 +101,8 @@ class TranscribeResponse(BaseModel):
 
     # Present only in multi-engine runs
     engine_results: list[EngineResult] | None = None
+    llm_outputs: LLMOutputs | None = None
+    llm_error: str | None = None
 
     model_config = {"from_attributes": True}
 

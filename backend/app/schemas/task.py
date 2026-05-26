@@ -7,10 +7,10 @@ Schemas for task status queries and auth endpoints.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.schemas.llm import LLMOutputs
 from app.schemas.transcribe import TranscriptSegment
 
 
@@ -34,6 +34,8 @@ class TaskStatusResponse(BaseModel):
     language: str | None = None
     engine_used: str | None = None
     confidence: float | None = None
+    llm_outputs: LLMOutputs | None = None
+    llm_error: str | None = None
 
     model_config = {"from_attributes": True}
 

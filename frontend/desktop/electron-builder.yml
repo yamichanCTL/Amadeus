@@ -1,0 +1,23 @@
+appId: com.asrapp.desktop
+productName: ASR Desktop
+directories:
+  output: release
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - "!dist-electron/electron/**/*"
+win:
+  signAndEditExecutable: false
+  signDlls: false
+  target:
+    - target: nsis
+      arch:
+        - x64
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+linux:
+  target:
+    - AppImage

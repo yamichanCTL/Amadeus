@@ -7,10 +7,55 @@ Uses the async_client fixture (no real models, in-memory DB).
 
 from __future__ import annotations
 
+import httpx
 import pytest
 from httpx import AsyncClient
 
 from tests.conftest import make_wav_bytes
+
+
+class _FakeLLMResponse:
+    def __init__(self, payload: dict | None = None, status_code: int = 200) -> None:
+        self._payload = payload or {
+            "choices": [{"message": {"content": "润色后的文本"}}],
+        }
+        self.status_code = status_code
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            request = httpx.Request("POST", "https://llm.test/v1/chat/completions")
+            response = httpx.Response(self.status_code, request=request)
+            raise httpx.HTTPStatusError("provider failed", request=request, response=response)
+
+    def json(self) -> dict:
+        return self._payload
+
+
+class _FakeLLMClient:
+    calls: list[dict] = []
+    status_code = 200
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args) -> None:
+        return None
+
+    async def post(self, url: str, json: dict, headers: dict) -> _FakeLLMResponse:
+        self.calls.append({"url": url, "json": json, "headers": headers})
+        content = f"{json['messages'][1]['content'].splitlines()[0]} OK"
+        return _FakeLLMResponse({"choices": [{"message": {"content": content}}]}, self.status_code)
+
+
+@pytest.fixture
+def fake_llm(monkeypatch):
+    _FakeLLMClient.calls = []
+    _FakeLLMClient.status_code = 200
+    monkeypatch.setattr("app.core.llm.httpx.AsyncClient", _FakeLLMClient)
+    return _FakeLLMClient
 
 
 # ── Health endpoints ──────────────────────────────────────────────────────────
@@ -77,6 +122,111 @@ async def test_transcribe_invalid_options_json(async_client: AsyncClient) -> Non
         data={"options": "not valid json"},
     )
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_transcribe_auto_llm_success(async_client: AsyncClient, fake_llm) -> None:
+    wav = make_wav_bytes(0.5)
+    token = "secret-token"
+    resp = await async_client.post(
+        "/v1/transcribe",
+        files={"file": ("test.wav", wav, "audio/wav")},
+        data={
+            "options": (
+                '{"engines":["mock"],"llm":{"enable_polish":true,'
+                '"model":"demo-model","base_url":"https://llm.test/v1",'
+                f'"api_token":"{token}"'
+                '}}'
+            )
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["full_text"] == "测试识别结果"
+    assert data["llm_outputs"]["polish"]["model"] == "demo-model"
+    assert token not in resp.text
+    assert fake_llm.calls[0]["headers"]["Authorization"] == f"Bearer {token}"
+
+
+@pytest.mark.asyncio
+async def test_transcribe_auto_llm_failure_keeps_asr_success(
+    async_client: AsyncClient, fake_llm
+) -> None:
+    fake_llm.status_code = 500
+    wav = make_wav_bytes(0.5)
+    resp = await async_client.post(
+        "/v1/transcribe",
+        files={"file": ("test.wav", wav, "audio/wav")},
+        data={
+            "options": (
+                '{"engines":["mock"],"llm":{"enable_translate":true,'
+                '"model":"demo-model","base_url":"https://llm.test/v1",'
+                '"api_token":"secret-token","target_language":"English"}}'
+            )
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["status"] == "success"
+    assert data["full_text"] == "测试识别结果"
+    assert data["llm_outputs"] is None
+    assert "translate" in data["llm_error"]
+
+
+# ── LLM endpoint ──────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_llm_process_success(async_client: AsyncClient, fake_llm) -> None:
+    resp = await async_client.post(
+        "/v1/llm/process",
+        json={
+            "text": "测试识别结果",
+            "operation": "translate",
+            "model": "demo-model",
+            "base_url": "https://llm.test/v1",
+            "api_token": "secret-token",
+            "target_language": "English",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["operation"] == "translate"
+    assert data["model"] == "demo-model"
+    assert "OK" in data["text"]
+    call = fake_llm.calls[0]
+    assert call["url"] == "https://llm.test/v1/chat/completions"
+    assert call["headers"]["Authorization"] == "Bearer secret-token"
+
+
+@pytest.mark.asyncio
+async def test_llm_process_missing_token(async_client: AsyncClient) -> None:
+    resp = await async_client.post(
+        "/v1/llm/process",
+        json={
+            "text": "测试识别结果",
+            "operation": "polish",
+            "model": "demo-model",
+            "base_url": "https://llm.test/v1",
+            "api_token": "",
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_llm_process_provider_failure(async_client: AsyncClient, fake_llm) -> None:
+    fake_llm.status_code = 502
+    resp = await async_client.post(
+        "/v1/llm/process",
+        json={
+            "text": "测试识别结果",
+            "operation": "polish",
+            "model": "demo-model",
+            "base_url": "https://llm.test/v1",
+            "api_token": "secret-token",
+        },
+    )
+    assert resp.status_code == 502
 
 
 # ── Tasks endpoint ────────────────────────────────────────────────────────────

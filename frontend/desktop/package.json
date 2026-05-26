@@ -1,0 +1,33 @@
+{
+  "name": "asr-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ASRAPP Electron desktop client",
+  "main": "dist-electron/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"node scripts/electron-dev.js\"",
+    "build": "tsc && vite build && tsc -p tsconfig.node.json && electron-builder",
+    "build:win": "tsc && vite build && tsc -p tsconfig.node.json && electron-builder --win",
+    "build:linux": "tsc && vite build && tsc -p tsconfig.node.json && electron-builder --linux",
+    "preview": "vite preview"
+  },
+  "author": "ASRAPP",
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@babel/types": "^7.28.5",
+    "@types/node": "^20.14.15",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^8.2.2",
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.0"
+  }
+}

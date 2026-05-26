@@ -38,6 +38,22 @@ frontend/android/captures/
 *.keystore
 *.jks
 
+# Desktop / Electron / Vite
+frontend/desktop/node_modules/
+frontend/desktop/.vite/
+frontend/desktop/dist/
+frontend/desktop/dist-electron/
+frontend/desktop/build/
+frontend/desktop/release/
+frontend/desktop/out/
+frontend/desktop/*.tsbuildinfo
+frontend/desktop/npm-debug.log*
+frontend/desktop/yarn-debug.log*
+frontend/desktop/yarn-error.log*
+frontend/desktop/.env
+frontend/desktop/.env.*
+!frontend/desktop/.env.example
+
 # IDE and local OS files
 .idea/
 .vscode/

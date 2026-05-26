@@ -60,7 +60,7 @@ class ASRBaseTask(Task):
     default_retry_delay=10,
     throws=(),          # don't auto-retry on these (we handle all exceptions manually)
 )
-def run_asr_task(self: ASRBaseTask, task_id: str) -> dict:  # type: ignore[misc]
+def run_asr_task(self: ASRBaseTask, task_id: str, llm_options: dict | None = None) -> dict:  # type: ignore[misc]
     """
     Entry point called by the API layer.
 
@@ -73,16 +73,17 @@ def run_asr_task(self: ASRBaseTask, task_id: str) -> dict:  # type: ignore[misc]
     dict with keys: task_id, status, full_text, engine_used
     """
     logger.info("Starting ASR task %s", task_id)
-    return self.run_async(_run(task_id))  # type: ignore[return-value]
+    return self.run_async(_run(task_id, llm_options))  # type: ignore[return-value]
 
 
 # ── Async implementation ──────────────────────────────────────────────────────
 
-async def _run(task_id: str) -> dict:
+async def _run(task_id: str, llm_options: dict | None = None) -> dict:
     from app.config import get_settings
     from app.core.archive import archive_file_error_record, archive_file_record
     from app.core.asr.base import EngineOptions
     from app.core.asr.router import ModelRouter
+    from app.core.llm import run_auto_processing
     from app.core.model_manager import get_model_manager
     from app.core.pipeline.post.diarize import assign_speakers
     from app.core.pipeline.post.punctuation import restore_punctuation
@@ -94,6 +95,7 @@ async def _run(task_id: str) -> dict:
     )
     from app.db.models import TaskStatus
     from app.db.session import AsyncSessionLocal
+    from app.schemas.llm import LLMAutoOptions, LLMOutputs
 
     settings = get_settings()
 
@@ -133,7 +135,7 @@ async def _run(task_id: str) -> dict:
             # ── 5. Pre-pipeline (VAD) ─────────────────────────────────────
             if task.vad_enabled:
                 import io
-                import numpy as np
+
                 import soundfile as sf
 
                 buf = io.BytesIO(audio_bytes)
@@ -172,6 +174,27 @@ async def _run(task_id: str) -> dict:
                 audio_array, sr = sf.read(buf, dtype="float32", always_2d=False)
                 result.segments = await assign_speakers(result.segments, audio_array, sr)
 
+            llm_outputs = None
+            llm_error = None
+            if llm_options:
+                llm_opts = LLMAutoOptions.model_validate(llm_options)
+                outputs, llm_error = await run_auto_processing(
+                    text=result.full_text,
+                    model=llm_opts.model,
+                    base_url=llm_opts.base_url,
+                    api_token=llm_opts.api_token,
+                    target_language=llm_opts.target_language,
+                    style=llm_opts.style,
+                    enable_polish=llm_opts.enable_polish,
+                    enable_translate=llm_opts.enable_translate,
+                )
+                llm_outputs = LLMOutputs(
+                    polish=outputs.get("polish"),
+                    translate=outputs.get("translate"),
+                )
+                if not llm_outputs.polish and not llm_outputs.translate:
+                    llm_outputs = None
+
             # ── 8. Persist result ─────────────────────────────────────────
             segments_data = [
                 {
@@ -183,6 +206,11 @@ async def _run(task_id: str) -> dict:
                 }
                 for s in result.segments
             ]
+            raw_results = dict(result.raw or {})
+            if llm_outputs:
+                raw_results["llm_outputs"] = llm_outputs.model_dump(mode="json", exclude_none=True)
+            if llm_error:
+                raw_results["llm_error"] = llm_error
 
             transcript = await create_transcript(
                 db,
@@ -192,13 +220,16 @@ async def _run(task_id: str) -> dict:
                 language=result.language,
                 engine_used=result.engine_name,
                 confidence=result.confidence,
-                raw_results=result.raw,
+                raw_results=raw_results or None,
             )
             archive_file_record(
                 audio_bytes=audio_bytes,
                 suffix=Path(task.filename or "audio.wav").suffix or ".wav",
                 user_id=task.user_id,
-                category=engine_opts_raw.get("archive_category") or settings.upload_archive_category,
+                category=(
+                    engine_opts_raw.get("archive_category")
+                    or settings.upload_archive_category
+                ),
                 text=result.full_text,
                 engine=result.engine_name,
                 language=result.language,
@@ -231,11 +262,18 @@ async def _run(task_id: str) -> dict:
                     audio_bytes=audio_bytes,
                     suffix=Path(task.filename or "audio.wav").suffix or ".wav",
                     user_id=task.user_id,
-                    category=engine_opts_raw.get("archive_category") or settings.upload_archive_category
-                    if "engine_opts_raw" in locals()
-                    else settings.upload_archive_category,
+                    category=(
+                        engine_opts_raw.get("archive_category")
+                        or settings.upload_archive_category
+                        if "engine_opts_raw" in locals()
+                        else settings.upload_archive_category
+                    ),
                     engine=task.engines,
-                    language=engine_opts_raw.get("language") if "engine_opts_raw" in locals() else None,
+                    language=(
+                        engine_opts_raw.get("language")
+                        if "engine_opts_raw" in locals()
+                        else None
+                    ),
                     duration_sec=task.duration_sec,
                     error=str(exc),
                     metadata={"task_id": task_id},
