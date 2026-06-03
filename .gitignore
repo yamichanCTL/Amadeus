@@ -11,6 +11,10 @@ build/
 dist/
 wheels/
 *.egg-info
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
 
 # Virtual environments
 .venv/
@@ -22,9 +26,10 @@ env/
 .env.*
 !.env.example
 backend/.env
-data/
+/data/
 backend/data/
 backend/models/
+backend/app/core/asr/engines/FireRedASR2S/
 
 # Android / Gradle
 frontend/android/.gradle/
@@ -32,20 +37,29 @@ frontend/android/.kotlin/
 frontend/android/**/build/
 frontend/android/local.properties
 frontend/android/captures/
+frontend/android/.idea/
+frontend/android/*.iml
+frontend/android/app/release/
 *.apk
 *.ap_
 *.aab
 *.keystore
 *.jks
+*.hprof
 
 # Desktop / Electron / Vite
 frontend/desktop/node_modules/
 frontend/desktop/.vite/
+frontend/desktop/.vite-node/
 frontend/desktop/dist/
 frontend/desktop/dist-electron/
 frontend/desktop/build/
 frontend/desktop/release/
 frontend/desktop/out/
+frontend/desktop/coverage/
+frontend/desktop/playwright-report/
+frontend/desktop/test-results/
+frontend/desktop/.eslintcache
 frontend/desktop/*.tsbuildinfo
 frontend/desktop/npm-debug.log*
 frontend/desktop/yarn-debug.log*
@@ -59,6 +73,8 @@ frontend/desktop/.env.*
 .vscode/
 .DS_Store
 Thumbs.db
+*.swp
+*.swo
 
 # Local audio samples and temporary exports
 *.m4a

@@ -31,6 +31,26 @@ class _FakeLLMResponse:
         return self._payload
 
 
+class _FakeLLMStream:
+    def __init__(self, payload: dict) -> None:
+        self.status_code = 200
+        self._payload = payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args) -> None:
+        return None
+
+    def raise_for_status(self) -> None:
+        return None
+
+    async def aiter_lines(self):
+        for text in ("流式", "总结"):
+            yield 'data: {"choices":[{"delta":{"content":"' + text + '"}}]}'
+        yield "data: [DONE]"
+
+
 class _FakeLLMClient:
     calls: list[dict] = []
     status_code = 200
@@ -48,6 +68,10 @@ class _FakeLLMClient:
         self.calls.append({"url": url, "json": json, "headers": headers})
         content = f"{json['messages'][1]['content'].splitlines()[0]} OK"
         return _FakeLLMResponse({"choices": [{"message": {"content": content}}]}, self.status_code)
+
+    def stream(self, method: str, url: str, json: dict, headers: dict) -> _FakeLLMStream:
+        self.calls.append({"method": method, "url": url, "json": json, "headers": headers, "stream": True})
+        return _FakeLLMStream(json)
 
 
 @pytest.fixture
@@ -224,6 +248,7 @@ async def test_llm_process_provider_failure(async_client: AsyncClient, fake_llm)
             "model": "demo-model",
             "base_url": "https://llm.test/v1",
             "api_token": "secret-token",
+            "prompt": "我在会议里说了哪些待办？",
         },
     )
     assert resp.status_code == 502
@@ -289,11 +314,12 @@ async def test_list_models(async_client: AsyncClient) -> None:
 @pytest.mark.asyncio
 async def test_list_archived_records(async_client: AsyncClient) -> None:
     from datetime import datetime, timezone
+    from pathlib import Path
 
     from app.core.archive import archive_pcm_record
 
     started_at = datetime.now(timezone.utc)
-    archive_pcm_record(
+    archive_paths = archive_pcm_record(
         pcm_bytes=b"\x00\x00" * 1600,
         sample_rate=16_000,
         user_id="user-a",
@@ -312,6 +338,107 @@ async def test_list_archived_records(async_client: AsyncClient) -> None:
     assert data["count"] == 1
     assert data["items"][0]["text"] == "hello"
     assert data["items"][0]["audio_path"].endswith(".wav")
+    audio_name = Path(archive_paths["audio_path"]).name
+    expected_prefix = started_at.astimezone().strftime("%Y-%m-%d_%H-%M-%S_mock_")
+    assert audio_name.startswith(expected_prefix)
+
+
+@pytest.mark.asyncio
+async def test_archive_summary_uses_compact_transcript(async_client: AsyncClient, fake_llm) -> None:
+    from datetime import datetime, timezone
+
+    from app.core.archive import archive_pcm_record
+
+    started_at = datetime.now(timezone.utc)
+    date = started_at.astimezone().strftime("%Y-%m-%d")
+    archive_pcm_record(
+        pcm_bytes=b"\x00\x00" * 1600,
+        sample_rate=16_000,
+        user_id="dsm",
+        category="实时转写",
+        text="今天讨论项目进度和待办事项",
+        engine="mock",
+        language="zh",
+        started_at=started_at,
+        ended_at=started_at,
+        duration_sec=0.1,
+        metadata={"session_id": "should-not-be-sent", "job_id": 19},
+    )
+
+    resp = await async_client.post(
+        "/v1/llm/archive-summary",
+        json={
+            "date": date,
+            "user_id": "dsm",
+            "category": "实时转写",
+            "provider": "deepseek",
+            "model": "demo-model",
+            "base_url": "https://llm.test/v1",
+            "api_token": "secret-token",
+            "prompt": "我在会议里说了哪些待办？",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["source_count"] == 1
+    assert data["provider"] == "deepseek"
+    assert "secret-token" not in resp.text
+    prompt = fake_llm.calls[0]["json"]["messages"][1]["content"]
+    assert prompt.index("Prompt：我在会议里说了哪些待办？") < prompt.index("ASR：")
+    assert "今天讨论项目进度和待办事项" in prompt
+    assert "should-not-be-sent" not in prompt
+    assert "user_id" not in prompt
+    assert "dsm" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_archive_summary_streams_deltas(async_client: AsyncClient, fake_llm) -> None:
+    from datetime import datetime, timezone
+    import json
+
+    from app.core.archive import archive_pcm_record
+
+    started_at = datetime.now(timezone.utc)
+    date = started_at.astimezone().strftime("%Y-%m-%d")
+    archive_pcm_record(
+        pcm_bytes=b"\x00\x00" * 1600,
+        sample_rate=16_000,
+        user_id="stream-user",
+        category="实时转写",
+        text="需要边生成边显示总结",
+        engine="mock",
+        language="zh",
+        started_at=started_at,
+        ended_at=started_at,
+        duration_sec=0.1,
+        metadata={"user_id": "must-not-send"},
+    )
+
+    async with async_client.stream(
+        "POST",
+        "/v1/llm/archive-summary/stream",
+        json={
+            "date": date,
+            "user_id": "stream-user",
+            "category": "实时转写",
+            "provider": "deepseek",
+            "model": "demo-model",
+            "base_url": "https://llm.test/v1",
+            "api_token": "secret-token",
+            "prompt": "我刚才提到的关键结论是什么？",
+        },
+    ) as resp:
+        assert resp.status_code == 200, await resp.aread()
+        events = [json.loads(line) async for line in resp.aiter_lines() if line]
+
+    assert any(event["type"] == "delta" for event in events)
+    done = next(event for event in events if event["type"] == "done")
+    assert done["result"]["summary"] == "流式总结"
+    prompt = next(call for call in fake_llm.calls if call.get("stream"))["json"]["messages"][1]["content"]
+    assert prompt.index("Prompt：我刚才提到的关键结论是什么？") < prompt.index("ASR：")
+    assert "需要边生成边显示总结" in prompt
+    assert "stream-user" not in prompt
+    assert "must-not-send" not in prompt
 
 
 # ── Auth endpoints ────────────────────────────────────────────────────────────

@@ -108,63 +108,6 @@ export function SettingsPage() {
           />
           允许服务端保存调试数据
         </label>
-        <h2 className="wide">大模型</h2>
-        <label>
-          接口地址
-          <input
-            value={settings.llmBaseUrl}
-            placeholder="https://api.openai.com/v1"
-            onChange={(event) => updateSettings({ llmBaseUrl: event.target.value })}
-          />
-        </label>
-        <label>
-          模型
-          <input
-            value={settings.llmModel}
-            placeholder="填写 OpenAI 兼容模型名称"
-            onChange={(event) => updateSettings({ llmModel: event.target.value })}
-          />
-        </label>
-        <label>
-          API Token
-          <input
-            type="password"
-            value={settings.llmApiToken}
-            placeholder="仅保存在本机"
-            onChange={(event) => updateSettings({ llmApiToken: event.target.value })}
-          />
-        </label>
-        <label>
-          翻译目标语言
-          <input
-            value={settings.llmTargetLanguage}
-            onChange={(event) => updateSettings({ llmTargetLanguage: event.target.value })}
-          />
-        </label>
-        <label className="wide">
-          润色风格
-          <input
-            value={settings.llmStyle}
-            placeholder="例如：正式、简洁、会议纪要风格"
-            onChange={(event) => updateSettings({ llmStyle: event.target.value })}
-          />
-        </label>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={settings.llmAutoPolish}
-            onChange={(event) => updateSettings({ llmAutoPolish: event.target.checked })}
-          />
-          转写完成后自动润色
-        </label>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={settings.llmAutoTranslate}
-            onChange={(event) => updateSettings({ llmAutoTranslate: event.target.checked })}
-          />
-          转写完成后自动翻译
-        </label>
       </section>
     </div>
   )

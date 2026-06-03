@@ -7,6 +7,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.AudioAttributes
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
@@ -120,6 +122,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -128,16 +131,20 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.asrapp.android.R
 import com.asrapp.android.data.AppSettings
+import com.asrapp.android.data.ArchiveSummaryResult
 import com.asrapp.android.data.HistoryItem
 import com.asrapp.android.data.ModelInfo
 import com.asrapp.android.data.TranscriptSegment
+import com.asrapp.android.service.AudioRouteController
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sin
 
 private val Indigo = Color(0xFF4E63F6)
@@ -206,7 +213,7 @@ fun AsrApp(viewModel: MainViewModel) {
         ) {
             when (state.page) {
                 AppPage.Transcribe -> TranscribePage(viewModel)
-                AppPage.FileTranscribe -> FileTranscribePage(viewModel)
+                AppPage.Summary -> SummaryPage(viewModel)
                 AppPage.Models -> ModelsPage(viewModel)
                 AppPage.History -> HistoryPage(viewModel)
                 AppPage.Settings -> SettingsPage(viewModel)
@@ -239,16 +246,16 @@ private fun FloatingBottomNav(selected: AppPage, onSelect: (AppPage) -> Unit) {
                 onClick = { onSelect(AppPage.Transcribe) },
             )
             BottomNavItem(
-                selected = selected == AppPage.FileTranscribe,
-                title = "文件转写",
-                icon = Icons.Default.Description,
-                onClick = { onSelect(AppPage.FileTranscribe) },
-            )
-            BottomNavItem(
                 selected = selected == AppPage.History,
                 title = "历史记录",
                 icon = Icons.Default.History,
                 onClick = { onSelect(AppPage.History) },
+            )
+            BottomNavItem(
+                selected = selected == AppPage.Summary,
+                title = "当日总结",
+                icon = Icons.Default.Info,
+                onClick = { onSelect(AppPage.Summary) },
             )
             BottomNavItem(
                 selected = selected == AppPage.Settings || selected == AppPage.Models,
@@ -273,7 +280,7 @@ private fun BottomNavItem(
             .clip(RoundedCornerShape(18.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 4.dp, vertical = 2.dp)
-            .width(76.dp),
+            .width(66.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
@@ -356,7 +363,7 @@ private fun TranscribePage(viewModel: MainViewModel) {
                 state = state,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(if (compact) 0.14f else 0.15f),
+                    .weight(if (compact) 0.15f else 0.16f),
                 compact = compact,
                 onModels = { viewModel.selectPage(AppPage.Models) },
                 onSettings = { viewModel.selectPage(AppPage.Settings) },
@@ -366,20 +373,20 @@ private fun TranscribePage(viewModel: MainViewModel) {
                 state = state,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(if (veryCompact) 0.07f else 0.09f),
+                    .weight(if (veryCompact) 0.08f else 0.09f),
                 compact = compact,
             )
             TranscriptPanel(
                 state = state,
                 title = "实时转写",
-                modifier = Modifier.weight(if (compact) 0.43f else 0.42f),
+                modifier = Modifier.weight(if (compact) 0.52f else 0.49f),
                 onClear = viewModel::clearCurrentResult,
             )
             ReferenceControlStage(
                 state = state,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(if (veryCompact) 0.22f else 0.24f),
+                    .weight(if (veryCompact) 0.25f else 0.26f),
                 compact = compact,
                 onRealtimeClick = {
                     if (state.status == WorkStatus.Streaming) {
@@ -657,7 +664,7 @@ private fun TranscriptPanel(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = 260.dp),
+            .heightIn(min = 170.dp),
         shape = RoundedCornerShape(24.dp),
         color = Color.White.copy(alpha = 0.96f),
         border = BorderStroke(1.dp, Color(0xFFE0E8F6)),
@@ -904,7 +911,7 @@ private fun subtitleSnippets(state: AppUiState): List<String> {
         WorkStatus.Streaming -> listOf("正在监听语音", "实时内容会滚动显示", "说完后自动整理")
         WorkStatus.Recording -> listOf("正在录音", "结束后上传转写", "请保持声音清晰")
         WorkStatus.Uploading, WorkStatus.Polling, WorkStatus.Processing -> listOf("音频处理中", "等待后端返回", "结果即将显示")
-        else -> listOf("点击麦克风开始", "支持录音和文件转写", "结果可复制分享")
+        else -> listOf("点击麦克风开始", "支持实时识别和录音转写", "结果可复制分享")
     }
     return (parts + fallback).take(3)
 }
@@ -1078,7 +1085,7 @@ private fun ReferenceControlStage(
                     resId = assistantResourceForStatus(state.status),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(if (compact) 150.dp else 190.dp),
+                        .height(if (compact) 110.dp else 140.dp),
                 )
                 Surface(
                     modifier = Modifier
@@ -1146,7 +1153,7 @@ private fun CenterMicColumn(
     ) {
         Box(
             modifier = Modifier
-                .size(if (compact) 76.dp else 92.dp)
+                .size(if (compact) 66.dp else 78.dp)
                 .clip(CircleShape)
                 .background(Brush.linearGradient(listOf(Color(0xFF65CBFF), Indigo, Violet)))
                 .border(3.dp, Color.White.copy(alpha = 0.82f), CircleShape)
@@ -1157,7 +1164,7 @@ private fun CenterMicColumn(
                 if (streaming) Icons.Default.Stop else Icons.Default.Mic,
                 contentDescription = if (streaming) "停止实时识别" else "开始实时识别",
                 tint = Color.White,
-                modifier = Modifier.size(if (compact) 34.dp else 42.dp),
+                modifier = Modifier.size(if (compact) 30.dp else 36.dp),
             )
         }
         Text(
@@ -1309,46 +1316,6 @@ private fun StatusMetric(label: String, value: String) {
     ) {
         Text(label, color = MutedInk, fontSize = 11.sp, maxLines = 1)
         Text(value, color = Ink, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
-    }
-}
-
-@Composable
-private fun FileTranscribePage(viewModel: MainViewModel) {
-    val state = viewModel.uiState
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri?.let(viewModel::transcribeUri)
-    }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 18.dp, top = 16.dp, end = 18.dp, bottom = 116.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        item {
-            TopStatusBar(
-                state = state,
-                onModels = { viewModel.selectPage(AppPage.Models) },
-                onSettings = { viewModel.selectPage(AppPage.Settings) },
-                onRefresh = { viewModel.checkServer(); viewModel.refreshModels() },
-            )
-        }
-        item {
-            FileUploadHero(
-                busy = state.status in setOf(WorkStatus.Uploading, WorkStatus.Polling, WorkStatus.Processing),
-                message = state.statusMessage,
-                onPick = { picker.launch("audio/*") },
-            )
-        }
-        item {
-            StatusBlock(state.status, state.statusMessage)
-        }
-        item {
-            TranscriptPanel(
-                state = state,
-                title = "文件转写结果",
-                onClear = viewModel::clearCurrentResult,
-            )
-        }
     }
 }
 
@@ -1964,6 +1931,462 @@ private fun SegmentRow(segment: TranscriptSegment) {
 }
 
 @Composable
+private fun SummaryPage(viewModel: MainViewModel) {
+    val state = viewModel.uiState
+    val context = LocalContext.current
+    var settings by remember(state.settings) { mutableStateOf(prefillSummaryTimeRange(state.settings)) }
+    var activeTab by rememberSaveable { mutableStateOf("active") }
+    var selectedRange by remember(settings.passiveSummaryStartTime, settings.passiveSummaryEndTime) {
+        mutableStateOf(summaryRangeFromSettings(settings))
+    }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 96.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        item {
+            TopStatusBar(
+                state = state,
+                onModels = { viewModel.selectPage(AppPage.Models) },
+                onSettings = { viewModel.selectPage(AppPage.Settings) },
+                onRefresh = { viewModel.checkServer(); viewModel.refreshModels() },
+            )
+        }
+        item {
+            SectionHeader("总结") {
+                OutlinedButton(onClick = { viewModel.selectPage(AppPage.Models) }) {
+                    Text("模型管理")
+                }
+            }
+        }
+        item {
+            SummaryModeTabs(activeTab = activeTab, onSelect = { activeTab = it })
+        }
+        if (activeTab == "active") {
+            item {
+                ActiveSummaryControls(
+                    settings = settings,
+                    selectedRange = selectedRange,
+                    onSettingsChange = { settings = it },
+                    onRangeChange = { start, end ->
+                        val range = start.toFloat()..end.toFloat()
+                        selectedRange = range
+                        settings = settings.copy(
+                            passiveSummaryStartTime = minutesToClock(start),
+                            passiveSummaryEndTime = minutesToClock(end),
+                        )
+                    },
+                    onRun = {
+                        viewModel.updateSettings(settings)
+                        viewModel.runDailySummary()
+                    },
+                    message = state.summaryMessage,
+                )
+            }
+            item {
+                SummaryResultCard(
+                    summary = state.dailySummary,
+                    onCopy = { state.dailySummary?.summary?.let { copyText(context, it) } },
+                    onShare = { state.dailySummary?.summary?.let { shareText(context, it) } },
+                    onCloudSave = viewModel::saveDailySummaryCloud,
+                )
+            }
+        } else {
+            item {
+                PassiveSummaryControls(
+                    settings = settings,
+                    onSettingsChange = { settings = it },
+                    onSave = {
+                        viewModel.updateSettings(settings)
+                    },
+                    message = state.summaryMessage,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun SummaryModeTabs(activeTab: String, onSelect: (String) -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = Color.White.copy(alpha = 0.92f),
+        border = BorderStroke(1.dp, Color(0xFFE0E8F6)),
+    ) {
+        Row(
+            modifier = Modifier.padding(6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            SummaryTabButton(
+                label = "主动总结",
+                selected = activeTab == "active",
+                modifier = Modifier.weight(1f),
+                onClick = { onSelect("active") },
+            )
+            SummaryTabButton(
+                label = "被动总结",
+                selected = activeTab == "passive",
+                modifier = Modifier.weight(1f),
+                onClick = { onSelect("passive") },
+            )
+        }
+    }
+}
+
+@Composable
+private fun SummaryTabButton(label: String, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(14.dp)
+    Surface(
+        onClick = onClick,
+        modifier = modifier,
+        shape = shape,
+        color = if (selected) Indigo else Color.Transparent,
+    ) {
+        Text(
+            label,
+            modifier = Modifier.padding(vertical = 10.dp),
+            color = if (selected) Color.White else MutedInk,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun ActiveSummaryControls(
+    settings: AppSettings,
+    selectedRange: ClosedFloatingPointRange<Float>,
+    onSettingsChange: (AppSettings) -> Unit,
+    onRangeChange: (Int, Int) -> Unit,
+    onRun: () -> Unit,
+    message: String,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        color = Color.White.copy(alpha = 0.96f),
+        border = BorderStroke(1.dp, Color(0xFFE0E8F6)),
+        shadowElevation = 2.dp,
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("主动总结", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            OutlinedTextField(
+                value = settings.llmStyle,
+                onValueChange = { onSettingsChange(settings.copy(llmStyle = it)) },
+                label = { Text("Prompt") },
+                placeholder = { Text("我在 xx 说了啥来着？") },
+                modifier = Modifier.fillMaxWidth(),
+                minLines = 2,
+                maxLines = 4,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = settings.passiveSummaryUserId,
+                    onValueChange = { onSettingsChange(settings.copy(passiveSummaryUserId = it)) },
+                    label = { Text("用户") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = settings.passiveSummaryCategory,
+                    onValueChange = { onSettingsChange(settings.copy(passiveSummaryCategory = it)) },
+                    label = { Text("类别") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                )
+            }
+            DateTimeWheelRangeSelector(
+                range = selectedRange,
+                onRangeChange = onRangeChange,
+            )
+            Button(onClick = onRun, modifier = Modifier.fillMaxWidth()) {
+                Text("开始总结")
+            }
+            Text(
+                message.ifBlank { "Prompt 会作为本次总结的第一段指令，后面接时间戳 ASR 文本。" },
+                color = MutedInk,
+                fontSize = 12.sp,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PassiveSummaryControls(
+    settings: AppSettings,
+    onSettingsChange: (AppSettings) -> Unit,
+    onSave: () -> Unit,
+    message: String,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        color = Color.White.copy(alpha = 0.96f),
+        border = BorderStroke(1.dp, Color(0xFFE0E8F6)),
+        shadowElevation = 2.dp,
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("被动总结设置", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            SettingSwitch("启用被动总结", settings.passiveSummaryEnabled) {
+                onSettingsChange(settings.copy(passiveSummaryEnabled = it))
+            }
+            OutlinedTextField(
+                value = settings.passiveSummaryFrequencyMin.toString(),
+                onValueChange = { value ->
+                    onSettingsChange(settings.copy(passiveSummaryFrequencyMin = value.filter(Char::isDigit).toIntOrNull() ?: 60))
+                },
+                label = { Text("自动总结频率（分钟）") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = settings.passiveSummaryUserId,
+                    onValueChange = { onSettingsChange(settings.copy(passiveSummaryUserId = it)) },
+                    label = { Text("用户") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                )
+                OutlinedTextField(
+                    value = settings.passiveSummaryCategory,
+                    onValueChange = { onSettingsChange(settings.copy(passiveSummaryCategory = it)) },
+                    label = { Text("类别") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                )
+            }
+            SettingSwitch("总结后云端保存", settings.passiveSummaryAutoCloudSave) {
+                onSettingsChange(settings.copy(passiveSummaryAutoCloudSave = it))
+            }
+            Button(onClick = onSave, modifier = Modifier.fillMaxWidth()) {
+                Text("保存被动总结设置")
+            }
+            Text(
+                message.ifBlank { "被动总结只在后台按频率运行；主动总结不会受此开关影响。" },
+                color = MutedInk,
+                fontSize = 12.sp,
+            )
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun DateTimeWheelRangeSelector(
+    range: ClosedFloatingPointRange<Float>,
+    onRangeChange: (Int, Int) -> Unit,
+) {
+    val start = range.start.roundToInt().coerceIn(0, 1439)
+    val end = range.endInclusive.roundToInt().coerceIn(start, 1439)
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("时间范围", color = Ink, fontWeight = FontWeight.SemiBold)
+        TimeWheelPicker(
+            title = "开始",
+            minutes = start,
+            onMinutesChange = { onRangeChange(it.coerceAtMost(end), end) },
+        )
+        TimeWheelPicker(
+            title = "结束",
+            minutes = end,
+            onMinutesChange = { onRangeChange(start, it.coerceAtLeast(start)) },
+        )
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val now = currentMinuteOfDay()
+            SummaryQuickChip("今天 0 点到现在") { onRangeChange(0, now) }
+            SummaryQuickChip("30分钟") { onRangeChange(max(0, now - 30), now) }
+            SummaryQuickChip("1小时") { onRangeChange(max(0, now - 60), now) }
+            SummaryQuickChip("全天") { onRangeChange(0, 23 * 60 + 59) }
+        }
+    }
+}
+
+@Composable
+private fun TimeWheelPicker(title: String, minutes: Int, onMinutesChange: (Int) -> Unit) {
+    val hour = (minutes / 60).coerceIn(0, 23)
+    val minute = (minutes % 60).coerceIn(0, 59)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = Color(0xFFF7F9FF),
+        border = BorderStroke(1.dp, Color(0xFFE2E8F8)),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(title, color = Ink, fontWeight = FontWeight.Bold)
+                Text("今天 ${minutesToClock(minutes)}", color = Indigo, fontWeight = FontWeight.SemiBold)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                WheelColumn(
+                    label = "日",
+                    options = listOf("今天"),
+                    selected = "今天",
+                    modifier = Modifier.weight(1f),
+                    onSelect = {},
+                )
+                WheelColumn(
+                    label = "时",
+                    options = (0..23).map { "%02d".format(Locale.US, it) },
+                    selected = "%02d".format(Locale.US, hour),
+                    modifier = Modifier.weight(1f),
+                    onSelect = { selected -> onMinutesChange((selected.toIntOrNull() ?: hour) * 60 + minute) },
+                )
+                WheelColumn(
+                    label = "分",
+                    options = (0..59).map { "%02d".format(Locale.US, it) },
+                    selected = "%02d".format(Locale.US, minute),
+                    modifier = Modifier.weight(1f),
+                    onSelect = { selected -> onMinutesChange(hour * 60 + (selected.toIntOrNull() ?: minute)) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WheelColumn(
+    label: String,
+    options: List<String>,
+    selected: String,
+    modifier: Modifier = Modifier,
+    onSelect: (String) -> Unit,
+) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, color = MutedInk, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(116.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            items(options) { option ->
+                Surface(
+                    onClick = { onSelect(option) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    color = if (option == selected) Indigo.copy(alpha = 0.12f) else Color.Transparent,
+                    border = if (option == selected) BorderStroke(1.dp, Indigo.copy(alpha = 0.42f)) else null,
+                ) {
+                    Text(
+                        option,
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        color = if (option == selected) Indigo else Ink,
+                        fontWeight = if (option == selected) FontWeight.Bold else FontWeight.Medium,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+        }
+    }
+}
+@Composable
+private fun SummaryQuickChip(label: String, onClick: () -> Unit) {
+    AssistChip(onClick = onClick, label = { Text(label) })
+}
+
+private fun prefillSummaryTimeRange(settings: AppSettings): AppSettings {
+    if (settings.passiveSummaryStartTime.isNotBlank() && settings.passiveSummaryEndTime.isNotBlank()) {
+        return settings
+    }
+    val now = currentMinuteOfDay()
+    return settings.copy(
+        passiveSummaryStartTime = minutesToClock(0),
+        passiveSummaryEndTime = minutesToClock(now),
+    )
+}
+
+private fun summaryRangeFromSettings(settings: AppSettings): ClosedFloatingPointRange<Float> {
+    val now = currentMinuteOfDay()
+    val start = clockToMinutes(settings.passiveSummaryStartTime) ?: 0
+    val end = clockToMinutes(settings.passiveSummaryEndTime) ?: now
+    return normalizeMinuteRange(start.toFloat()..end.toFloat())
+}
+
+private fun normalizeMinuteRange(range: ClosedFloatingPointRange<Float>): ClosedFloatingPointRange<Float> {
+    val start = range.start.roundToInt().coerceIn(0, 1439)
+    val end = range.endInclusive.roundToInt().coerceIn(0, 1439)
+    val normalizedEnd = max(start, end)
+    return start.toFloat()..normalizedEnd.toFloat()
+}
+
+private fun currentMinuteOfDay(): Int {
+    val parts = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date()).split(":")
+    val hour = parts.getOrNull(0)?.toIntOrNull() ?: 0
+    val minute = parts.getOrNull(1)?.toIntOrNull() ?: 0
+    return (hour * 60 + minute).coerceIn(0, 1439)
+}
+
+private fun minutesToClock(minutes: Int): String {
+    val clamped = minutes.coerceIn(0, 1439)
+    return "%02d:%02d".format(Locale.US, clamped / 60, clamped % 60)
+}
+
+private fun clockToMinutes(value: String): Int? {
+    val parts = value.split(":")
+    val hour = parts.getOrNull(0)?.toIntOrNull() ?: return null
+    val minute = parts.getOrNull(1)?.toIntOrNull() ?: return null
+    if (hour !in 0..23 || minute !in 0..59) return null
+    return hour * 60 + minute
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+private fun SummaryResultCard(
+    summary: ArchiveSummaryResult?,
+    onCopy: () -> Unit,
+    onShare: () -> Unit,
+    onCloudSave: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(22.dp),
+        color = Color.White.copy(alpha = 0.96f),
+        border = BorderStroke(1.dp, Color(0xFFE0E8F6)),
+        shadowElevation = 2.dp,
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("总结结果", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(summary?.timeRange ?: "等待生成", color = MutedInk, fontSize = 12.sp)
+                }
+                IconButton(onClick = onCopy, enabled = summary != null) {
+                    Icon(Icons.Default.ContentCopy, contentDescription = "复制")
+                }
+                IconButton(onClick = onShare, enabled = summary != null) {
+                    Icon(Icons.Default.Share, contentDescription = "分享")
+                }
+                OutlinedButton(onClick = onCloudSave, enabled = summary != null) {
+                    Text("云端")
+                }
+            }
+            if (summary == null) {
+                EmptyState("还没有总结。")
+            } else {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AssistChip(onClick = {}, label = { Text("记录 ${summary.sourceCount}") })
+                    AssistChip(onClick = {}, label = { Text("输入 ${summary.estimatedInputTokens}") })
+                    AssistChip(onClick = {}, label = { Text("分块 ${summary.chunkCount}") })
+                    if (summary.truncated) AssistChip(onClick = {}, label = { Text("已截断") })
+                }
+                Text(
+                    summary.summary,
+                    color = Ink,
+                    fontSize = 14.sp,
+                    lineHeight = 22.sp,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun ModelsPage(viewModel: MainViewModel) {
     val state = viewModel.uiState
     var configFor by remember { mutableStateOf<ModelInfo?>(null) }
@@ -1971,10 +2394,14 @@ private fun ModelsPage(viewModel: MainViewModel) {
     var whisperModel by remember(state.settings.whisperModel) { mutableStateOf(state.settings.whisperModel) }
     var punctuation by remember(state.settings.enablePunctuation) { mutableStateOf(state.settings.enablePunctuation) }
     var diarize by remember(state.settings.enableDiarize) { mutableStateOf(state.settings.enableDiarize) }
+    var llmProvider by remember(state.settings.llmProvider) { mutableStateOf(state.settings.llmProvider) }
+    var llmBaseUrl by remember(state.settings.llmBaseUrl) { mutableStateOf(state.settings.llmBaseUrl) }
+    var llmModel by remember(state.settings.llmModel) { mutableStateOf(state.settings.llmModel) }
+    var llmToken by remember(state.settings.llmApiToken) { mutableStateOf(state.settings.llmApiToken) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 18.dp, top = 16.dp, end = 18.dp, bottom = 116.dp),
+        contentPadding = PaddingValues(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         item {
@@ -2031,6 +2458,83 @@ private fun ModelsPage(viewModel: MainViewModel) {
                 ) {
                     Text("保存识别选项")
                 }
+                }
+            }
+        }
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                color = Color.White.copy(alpha = 0.96f),
+                border = BorderStroke(1.dp, Color(0xFFE0E8F6)),
+                shadowElevation = 2.dp,
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("大模型设置", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    OutlinedTextField(
+                        value = llmProvider,
+                        onValueChange = { value ->
+                            llmProvider = value
+                            if (value == "deepseek") llmBaseUrl = "https://api.deepseek.com"
+                        },
+                        label = { Text("厂商") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = llmBaseUrl,
+                        onValueChange = { llmBaseUrl = it },
+                        label = { Text("官方地址") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = llmToken,
+                        onValueChange = { llmToken = it },
+                        label = { Text("API Token") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = llmModel,
+                        onValueChange = { llmModel = it },
+                        label = { Text("模型") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Button(
+                            onClick = {
+                                viewModel.updateSettings(
+                                    state.settings.copy(
+                                        llmProvider = llmProvider,
+                                        llmBaseUrl = llmBaseUrl,
+                                        llmModel = llmModel,
+                                        llmApiToken = llmToken,
+                                    )
+                                )
+                                viewModel.checkLlmModels()
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("连接并列出模型")
+                        }
+                        StatusPill(if (state.llmConnected) "连接成功" else state.llmMessage)
+                    }
+                    if (state.llmModels.isNotEmpty()) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            state.llmModels.forEach { model ->
+                                AssistChip(
+                                    onClick = {
+                                        llmModel = model
+                                        viewModel.updateSettings(state.settings.copy(llmModel = model))
+                                    },
+                                    label = { Text(model, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2152,7 +2656,7 @@ private fun HistoryPage(viewModel: MainViewModel) {
     val context = LocalContext.current
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 18.dp, top = 16.dp, end = 18.dp, bottom = 116.dp),
+        contentPadding = PaddingValues(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 96.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
@@ -2171,7 +2675,7 @@ private fun HistoryPage(viewModel: MainViewModel) {
             }
         }
         if (state.history.isEmpty()) {
-            item { EmptyState("暂无历史记录。完成一次实时识别、录音转写或文件转写后会出现在这里。") }
+            item { EmptyState("暂无历史记录。完成一次实时识别或录音转写后会出现在这里。") }
         } else {
             items(state.history, key = { it.taskId }) { item ->
                 Surface(
@@ -2223,17 +2727,20 @@ private fun HistoryPage(viewModel: MainViewModel) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun SettingsPage(viewModel: MainViewModel) {
     val state = viewModel.uiState
+    val context = LocalContext.current
     var settings by remember(state.settings) { mutableStateOf(state.settings) }
+    var deviceRefreshKey by remember { mutableStateOf(0) }
+    val audioInputs = remember(deviceRefreshKey, settings.audioInputDeviceKey) { audioInputOptions(context) }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
 
     Box(Modifier.fillMaxSize()) {
         Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 18.dp, top = 16.dp, end = 18.dp, bottom = 116.dp),
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(start = 16.dp, top = 14.dp, end = 16.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             TopStatusBar(
@@ -2296,6 +2803,36 @@ private fun SettingsPage(viewModel: MainViewModel) {
                     SettingSwitch("说话人区分", settings.enableDiarize) {
                         settings = settings.copy(enableDiarize = it)
                     }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("输入设备", color = Ink, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                audioInputs.firstOrNull { it.key == settings.audioInputDeviceKey }?.label ?: "跟随系统",
+                                color = MutedInk,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        TextButton(onClick = { deviceRefreshKey += 1 }) {
+                            Text("刷新")
+                        }
+                    }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        audioInputs.forEach { option ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                RadioButton(
+                                    selected = settings.audioInputDeviceKey == option.key,
+                                    onClick = { settings = settings.copy(audioInputDeviceKey = option.key) },
+                                )
+                                Text(option.label, color = Ink, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
                     OutlinedTextField(
                         value = settings.timeoutSec.toString(),
                         onValueChange = { value ->
@@ -2348,6 +2885,28 @@ private fun SettingSwitch(label: String, checked: Boolean, onCheckedChange: (Boo
         Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
+
+private data class AudioInputOption(val key: String, val label: String)
+
+private fun audioInputOptions(context: Context): List<AudioInputOption> {
+    val system = AudioInputOption("", "跟随系统")
+    val audioManager = context.getSystemService(AudioManager::class.java) ?: return listOf(system)
+    val devices = runCatching {
+        audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)
+            .filter { it.isSource && it.isSupportedInputForUi() }
+            .map { device -> AudioInputOption(AudioRouteController.keyFor(device), AudioRouteController.label(device)) }
+            .distinctBy { it.key }
+    }.getOrDefault(emptyList())
+    return listOf(system) + devices
+}
+
+private fun AudioDeviceInfo.isSupportedInputForUi(): Boolean =
+    type == AudioDeviceInfo.TYPE_BUILTIN_MIC ||
+        type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+        type == AudioDeviceInfo.TYPE_USB_HEADSET ||
+        type == AudioDeviceInfo.TYPE_USB_DEVICE ||
+        type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+        (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && type == AudioDeviceInfo.TYPE_BLE_HEADSET)
 
 private fun copyText(context: Context, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager

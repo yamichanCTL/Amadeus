@@ -41,8 +41,16 @@ export async function saveResult(result: TranscribeResponse, filename: string, t
 export async function saveText(content: string, filename: string) {
   const api = window.electronAPI
   const target = await api?.saveFileDialog(filename)
-  if (!target) return false
-  return api?.writeFile(target, content)
+  if (target) return api?.writeFile(target, content)
+  if (api) return false
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+  return true
 }
 
 export async function copyText(text: string) {

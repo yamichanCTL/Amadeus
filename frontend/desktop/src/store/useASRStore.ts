@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { ModelInfo, TranscribeResponse } from '@/services/api'
 
-export type AppPage = 'transcribe' | 'history' | 'models' | 'settings'
+export type AppPage = 'home' | 'realtime' | 'transcribe' | 'history' | 'summary' | 'events' | 'models' | 'settings'
 export type TranscribeStatus = 'idle' | 'uploading' | 'processing' | 'polling' | 'done' | 'error' | 'cancelled'
 export type ServerStatus = 'connected' | 'disconnected' | 'checking'
 export type RecordStatus = 'idle' | 'recording' | 'processing'
@@ -43,12 +43,25 @@ export type Settings = {
   archiveDir: string
   audioInputDeviceId: string
   llmBaseUrl: string
+  llmProvider: string
   llmModel: string
   llmApiToken: string
   llmTargetLanguage: string
   llmStyle: string
   llmAutoPolish: boolean
   llmAutoTranslate: boolean
+  translationProvider: string
+  translationBaseUrl: string
+  translationModel: string
+  translationApiToken: string
+  passiveSummaryEnabled: boolean
+  passiveSummaryFrequencyMin: number
+  passiveSummaryUserId: string
+  passiveSummaryCategory: string
+  passiveSummaryStartTime: string
+  passiveSummaryEndTime: string
+  passiveSummaryAutoCloudSave: boolean
+  passiveSummaryLastRunAt: string
 }
 
 export type HistoryItem = TranscribeResponse & {
@@ -57,10 +70,11 @@ export type HistoryItem = TranscribeResponse & {
   filename: string
   archived_audio?: string
   archived_json?: string
+  audio_url?: string
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  serverUrl: 'http://10.154.39.91:8001',
+  serverUrl: 'http://112.124.13.120:18000',
   defaultEngine: 'fireredasr2',
   selectedEngines: ['fireredasr2'],
   defaultLanguage: 'zh',
@@ -88,13 +102,26 @@ export const DEFAULT_SETTINGS: Settings = {
   allowServerDataCollection: false,
   archiveDir: '',
   audioInputDeviceId: '',
-  llmBaseUrl: 'https://api.openai.com/v1',
+  llmBaseUrl: 'https://api.deepseek.com',
+  llmProvider: 'deepseek',
   llmModel: '',
   llmApiToken: '',
   llmTargetLanguage: 'English',
   llmStyle: '',
   llmAutoPolish: false,
-  llmAutoTranslate: false
+  llmAutoTranslate: false,
+  translationProvider: 'deepseek',
+  translationBaseUrl: 'https://api.deepseek.com',
+  translationModel: '',
+  translationApiToken: '',
+  passiveSummaryEnabled: false,
+  passiveSummaryFrequencyMin: 60,
+  passiveSummaryUserId: 'dsm',
+  passiveSummaryCategory: '实时转写',
+  passiveSummaryStartTime: '',
+  passiveSummaryEndTime: '',
+  passiveSummaryAutoCloudSave: false,
+  passiveSummaryLastRunAt: ''
 }
 
 type ASRState = {
@@ -127,19 +154,30 @@ type ASRState = {
 
 function normalizeSettings(value: Partial<Settings> | undefined): Settings {
   const merged = { ...DEFAULT_SETTINGS, ...(value || {}) }
+  if (merged.serverUrl === 'http://10.154.39.91:8001') {
+    merged.serverUrl = DEFAULT_SETTINGS.serverUrl
+  }
   merged.liveCaptionChunkSec = Math.min(15, Math.max(2, Number(merged.liveCaptionChunkSec) || 4))
   merged.captionFontSize = Math.min(48, Math.max(12, Number(merged.captionFontSize) || 20))
   merged.captionBackgroundOpacity = Math.min(1, Math.max(0, Number(merged.captionBackgroundOpacity) || 0.86))
   merged.captionBoxWidth = Math.min(1200, Math.max(320, Number(merged.captionBoxWidth) || 760))
   merged.captionBoxHeight = Math.min(500, Math.max(96, Number(merged.captionBoxHeight) || 150))
   merged.selectedEngines = merged.selectedEngines.length ? merged.selectedEngines : [merged.defaultEngine]
+  merged.translationProvider = merged.translationProvider || merged.llmProvider
+  merged.translationBaseUrl = merged.translationBaseUrl || merged.llmBaseUrl
+  merged.passiveSummaryFrequencyMin = Math.min(1440, Math.max(5, Number(merged.passiveSummaryFrequencyMin) || 60))
+  merged.passiveSummaryUserId = merged.passiveSummaryUserId ?? 'dsm'
+  merged.passiveSummaryCategory = merged.passiveSummaryCategory ?? '实时转写'
+  merged.passiveSummaryStartTime = merged.passiveSummaryStartTime || ''
+  merged.passiveSummaryEndTime = merged.passiveSummaryEndTime || ''
+  merged.passiveSummaryLastRunAt = merged.passiveSummaryLastRunAt || ''
   return merged
 }
 
 export const useASRStore = create<ASRState>()(
   persist(
     (set) => ({
-      page: 'transcribe',
+      page: 'home',
       serverStatus: 'checking',
       transcribeStatus: 'idle',
       recordStatus: 'idle',
@@ -172,7 +210,7 @@ export const useASRStore = create<ASRState>()(
     }),
     {
       name: 'asr-desktop-store',
-      version: 12,
+      version: 16,
       partialize: (state) => ({ settings: state.settings, history: state.history }),
       migrate: (persisted) => {
         const state = persisted as Partial<ASRState>

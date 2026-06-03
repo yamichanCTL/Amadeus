@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 import wave
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +34,7 @@ def archive_pcm_record(
 
     now = datetime.now(timezone.utc)
     root = _record_root(user_id, category, now)
-    stem = f"{started_at.strftime('%H%M%S')}_{_safe(engine)}_{now.strftime('%f')}"
+    stem = _archive_stem(started_at, engine, now)
     wav_path = root / f"{stem}.wav"
     json_path = root / f"{stem}.json"
 
@@ -78,7 +78,7 @@ def archive_file_record(
     now = datetime.now(timezone.utc)
     root = _record_root(user_id, category, now)
     clean_suffix = suffix if suffix.startswith(".") else f".{suffix}"
-    stem = f"{now.strftime('%H%M%S')}_{_safe(engine)}_{now.strftime('%f')}"
+    stem = _archive_stem(now, engine, now)
     audio_path = root / f"{stem}{clean_suffix or '.audio'}"
     json_path = root / f"{stem}.json"
 
@@ -178,6 +178,84 @@ def list_archived_records(
     return [item for _, item in records[start:end]]
 
 
+def build_summary_transcript(
+    *,
+    user_id: str | None,
+    date: str,
+    category: str | None,
+    start_time: str | None,
+    end_time: str | None,
+    max_chars: int,
+) -> tuple[str, int, int, bool]:
+    """Build a compact transcript from archived JSON records for LLM input."""
+
+    records = list_archived_records(
+        user_id=user_id,
+        date=date,
+        category=category,
+        limit=20000,
+        offset=0,
+    )
+    range_start = _parse_clock(start_time)
+    range_end = _parse_clock(end_time)
+    lines: list[tuple[datetime | None, str]] = []
+    for record in records:
+        text = _record_text(record)
+        if not text:
+            continue
+        started_at = _parse_datetime(
+            _nested_get(record, "spoken_at", "start")
+            or record.get("real_time_start")
+            or record.get("created_at")
+        )
+        ended_at = _parse_datetime(
+            _nested_get(record, "spoken_at", "end")
+            or record.get("real_time_end")
+            or record.get("created_at")
+        )
+        if not _within_clock_range(started_at, ended_at, range_start, range_end):
+            continue
+        prefix = _format_time_prefix(started_at, ended_at)
+        lines.append((started_at, f"{prefix} {text}"))
+
+    lines.sort(key=lambda entry: entry[0].timestamp() if entry[0] else 0)
+    compact_lines = _drop_adjacent_duplicates([line for _, line in lines])
+
+    used_chars = 0
+    selected: list[str] = []
+    truncated = False
+    for line in compact_lines:
+        next_size = used_chars + len(line) + 1
+        if next_size > max_chars:
+            truncated = True
+            break
+        selected.append(line)
+        used_chars = next_size
+
+    return "\n".join(selected), len(compact_lines), used_chars, truncated
+
+
+def save_summary_record(
+    *,
+    summary: dict[str, Any],
+    user_id: str | None,
+    category: str | None,
+) -> str:
+    now = datetime.now(timezone.utc)
+    root = _record_root(user_id, category or "当日总结", now)
+    stem = _archive_stem(now, "summary", now)
+    path = root / f"{stem}.json"
+    payload = {
+      "user_id": user_id or "anonymous",
+      "category": category or "当日总结",
+      "type": "当日总结",
+      "created_at": now.astimezone().isoformat(),
+      "summary": summary,
+    }
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return str(path)
+
+
 def _record_root(user_id: str | None, category: str | None, when: datetime) -> Path:
     user_part = _safe(user_id or "anonymous")
     category_part = _safe(category or settings.stream_archive_category)
@@ -185,6 +263,12 @@ def _record_root(user_id: str | None, category: str | None, when: datetime) -> P
     root = settings.archive_dir / user_part / day / category_part
     root.mkdir(parents=True, exist_ok=True)
     return root
+
+
+def _archive_stem(event_time: datetime, label: str, unique_time: datetime | None = None) -> str:
+    local_time = event_time.astimezone()
+    unique = unique_time or event_time
+    return f"{local_time.strftime('%Y-%m-%d_%H-%M-%S')}_{_safe(label)}_{unique.strftime('%f')}"
 
 
 def _write_wav(path: Path, pcm_bytes: bytes, sample_rate: int) -> None:
@@ -209,3 +293,95 @@ def _child_dirs(path: Path) -> list[Path]:
         return [child for child in path.iterdir() if child.is_dir()]
     except OSError:
         return []
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _parse_clock(value: str | None) -> time | None:
+    if not value:
+        return None
+    try:
+        parts = [int(part) for part in value.split(":")]
+    except ValueError:
+        return None
+    if len(parts) == 2:
+        parts.append(0)
+    try:
+        return time(parts[0], parts[1], parts[2])
+    except ValueError:
+        return None
+
+
+def _within_clock_range(
+    started_at: datetime | None,
+    ended_at: datetime | None,
+    range_start: time | None,
+    range_end: time | None,
+) -> bool:
+    if range_start is None and range_end is None:
+        return True
+    start_clock = started_at.timetz().replace(tzinfo=None) if started_at else None
+    end_clock = ended_at.timetz().replace(tzinfo=None) if ended_at else start_clock
+    if start_clock is None:
+        return False
+    if range_start and end_clock and end_clock < range_start:
+        return False
+    if range_end and start_clock > range_end:
+        return False
+    return True
+
+
+def _nested_get(record: dict[str, Any], key: str, child: str) -> object:
+    value = record.get(key)
+    if not isinstance(value, dict):
+        return None
+    return value.get(child)
+
+
+def _record_text(record: dict[str, Any]) -> str:
+    text = record.get("text") or record.get("full_text")
+    if not isinstance(text, str):
+        return ""
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _record_speaker(record: dict[str, Any]) -> str:
+    speaker = record.get("speaker")
+    if isinstance(speaker, str) and speaker.strip():
+        return speaker.strip()[:32]
+    metadata = record.get("metadata")
+    if isinstance(metadata, dict):
+        value = metadata.get("speaker")
+        if isinstance(value, str) and value.strip():
+            return value.strip()[:32]
+    return ""
+
+
+def _format_time_prefix(started_at: datetime | None, ended_at: datetime | None) -> str:
+    if not started_at:
+        return "[--:--:--]"
+    start = started_at.strftime("%H:%M:%S")
+    end = ended_at.strftime("%H:%M:%S") if ended_at else start
+    return f"[{start}-{end}]"
+
+
+def _drop_adjacent_duplicates(lines: list[str]) -> list[str]:
+    compact: list[str] = []
+    previous_text = ""
+    for line in lines:
+        text = line.split("] ", 1)[-1]
+        if text and text == previous_text:
+            continue
+        compact.append(line)
+        previous_text = text
+    return compact

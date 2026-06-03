@@ -11,7 +11,7 @@ export function StatusBar() {
       <span>{settings.serverUrl}</span>
       <span>转写：{transcribeStatus}</span>
       <span>录音：{recordStatus}</span>
-      <span>字幕：{liveCaptionStatus}</span>
+      <span>实时识别：{liveCaptionStatus}</span>
     </footer>
   )
 }

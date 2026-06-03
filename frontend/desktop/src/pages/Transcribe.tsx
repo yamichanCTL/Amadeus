@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { AssistantFigure } from '@/components/AssistantFigure'
+import { AudioPlayer } from '@/components/AudioPlayer'
 import { DropZone, type LocalAudioFile } from '@/components/DropZone'
 import { RecordButton } from '@/components/RecordButton'
 import { ASRApi, isAsyncResponse, type LLMOperation, type TranscribeOptions, type TranscribeResponse } from '@/services/api'
@@ -46,6 +47,13 @@ export function TranscribePage() {
   const [liveText, setLiveText] = useState('')
   const [llmStatus, setLlmStatus] = useState<LLMOperation | 'idle'>('idle')
 
+  const translationConfig = () => ({
+    provider: settings.translationProvider || settings.llmProvider,
+    model: settings.translationModel.trim() || settings.llmModel,
+    baseUrl: settings.translationBaseUrl.trim() || settings.llmBaseUrl,
+    apiToken: settings.translationApiToken.trim() || settings.llmApiToken
+  })
+
   useEffect(() => {
     return window.electronAPI?.onHotkeyTriggered(() => {
       if (liveCaptionStatus === 'idle') void toggleRecording(true)
@@ -66,19 +74,21 @@ export function TranscribePage() {
       allow_server_data_collection: settings.allowServerDataCollection,
       archive_dir: settings.archiveDir || undefined
     }
-    if (
-      (settings.llmAutoPolish || settings.llmAutoTranslate) &&
-      settings.llmModel.trim() &&
-      settings.llmBaseUrl.trim() &&
-      settings.llmApiToken.trim()
-    ) {
+    const translate = translationConfig()
+    const onlyTranslate = settings.llmAutoTranslate && !settings.llmAutoPolish
+    const autoModel = onlyTranslate ? translate.model : settings.llmModel
+    const autoBaseUrl = onlyTranslate ? translate.baseUrl : settings.llmBaseUrl
+    const autoToken = onlyTranslate ? translate.apiToken : settings.llmApiToken
+    const autoProvider = onlyTranslate ? translate.provider : settings.llmProvider
+    if ((settings.llmAutoPolish || settings.llmAutoTranslate) && autoModel.trim() && autoBaseUrl.trim() && autoToken.trim()) {
       options.llm = {
         enable_polish: settings.llmAutoPolish,
         enable_translate: settings.llmAutoTranslate,
         target_language: settings.llmTargetLanguage || 'English',
-        model: settings.llmModel,
-        base_url: settings.llmBaseUrl,
-        api_token: settings.llmApiToken,
+        provider: autoProvider,
+        model: autoModel,
+        base_url: autoBaseUrl,
+        api_token: autoToken,
         style: settings.llmStyle || undefined
       }
     }
@@ -98,7 +108,9 @@ export function TranscribePage() {
   }
 
   const persistResult = async (result: TranscribeResponse, filename: string, blob: Blob, autoInject: boolean) => {
-    setCurrentResult(result)
+    const audio_url = URL.createObjectURL(blob)
+    const resultWithAudio = { ...result, audio_url }
+    setCurrentResult(resultWithAudio)
     setTranscribeStatus('done')
     setError('')
 
@@ -134,7 +146,7 @@ export function TranscribePage() {
     }
 
     addHistory({
-      ...result,
+      ...resultWithAudio,
       id: result.task_id,
       created_at: new Date().toISOString(),
       filename,
@@ -266,8 +278,13 @@ export function TranscribePage() {
 
   const processCurrentText = async (operation: LLMOperation) => {
     if (!currentResult?.full_text.trim()) return
-    if (!settings.llmModel.trim() || !settings.llmBaseUrl.trim() || !settings.llmApiToken.trim()) {
-      setError('请先在设置中填写大模型接口、模型和 API Token')
+    const translate = translationConfig()
+    const model = operation === 'translate' ? translate.model : settings.llmModel
+    const baseUrl = operation === 'translate' ? translate.baseUrl : settings.llmBaseUrl
+    const apiToken = operation === 'translate' ? translate.apiToken : settings.llmApiToken
+    const provider = operation === 'translate' ? translate.provider : settings.llmProvider
+    if (!model.trim() || !baseUrl.trim() || !apiToken.trim()) {
+      setError('请先在模型管理中填写对应模型接口、模型和 API Token')
       return
     }
     setLlmStatus(operation)
@@ -276,9 +293,10 @@ export function TranscribePage() {
       const processed = await api.processText({
         text: currentResult.full_text,
         operation,
-        model: settings.llmModel,
-        base_url: settings.llmBaseUrl,
-        api_token: settings.llmApiToken,
+        model,
+        base_url: baseUrl,
+        api_token: apiToken,
+        provider,
         target_language: settings.llmTargetLanguage || 'English',
         style: settings.llmStyle || undefined
       })
@@ -335,7 +353,7 @@ export function TranscribePage() {
               </div>
               {history.slice(0, 5).map((item, index) => (
                 <article key={item.id} className="task-row">
-                  <span className="play-dot">▶</span>
+                  <button type="button" className="play-dot" onClick={() => setCurrentResult(item)} title="播放录音">▶</button>
                   <strong>{item.filename}</strong>
                   <span>{formatDuration(item.duration_sec)}</span>
                   <span>{item.language || '自动'}</span>
@@ -398,6 +416,7 @@ export function TranscribePage() {
                 {llmStatus === 'translate' ? '翻译中' : '翻译'}
               </button>
             </div>
+            {currentResult && <AudioPlayer item={currentResult} />}
           </section>
 
           <section className="panel quick-settings">
@@ -449,7 +468,7 @@ export function TranscribePage() {
         </div>
         <RecordButton onToggle={() => void toggleRecording(false)} />
         <button type="button" className={liveCaptionStatus !== 'idle' ? 'primary' : ''} onClick={() => void toggleLiveCaption()}>
-          {liveCaptionStatus === 'idle' ? '实时字幕' : '停止字幕'}
+          {liveCaptionStatus === 'idle' ? '实时识别' : '停止识别'}
         </button>
         <div className="network-meter">
           <span />

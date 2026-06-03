@@ -211,6 +211,11 @@ class StreamingASRSession:
             return
         if job_id < self._latest_partial_id or self._finalizing_job:
             return
+        text = _clean_asr_text(text)
+        if not text:
+            if self._state == StreamState.PARTIAL_RECOGNIZING:
+                self._state = StreamState.SPEAKING
+            return
         stable, unstable = self._stabilize(text)
         if self._state == StreamState.PARTIAL_RECOGNIZING:
             self._state = StreamState.SPEAKING
@@ -247,6 +252,23 @@ class StreamingASRSession:
                     pcm_bytes,
                     self.config.final_engine,
                 )
+            text = _clean_asr_text(text)
+            if not text:
+                logger.info("Skipping empty final ASR result for stream job %s", job_id)
+                await self._queue.put(
+                    {
+                        "type": "no_speech",
+                        "session_id": self.session_id,
+                        "job_id": job_id,
+                        "duration_sec": round(duration_ms / 1000.0, 3),
+                        "engine": engine,
+                        "partial_engine": self.config.engine,
+                        "final_engine": self.config.final_engine,
+                        "language": language,
+                        "state": StreamState.IDLE.value,
+                    }
+                )
+                return
             archive_paths: dict[str, str] = {}
             if self.config.archive:
                 archive_paths = archive_pcm_record(
@@ -405,6 +427,10 @@ def _longest_common_prefix(a: str, b: str) -> str:
     while idx < limit and a[idx] == b[idx]:
         idx += 1
     return a[:idx]
+
+
+def _clean_asr_text(text: str | None) -> str:
+    return (text or "").strip()
 
 
 def parse_stream_config(raw: str) -> dict[str, Any]:

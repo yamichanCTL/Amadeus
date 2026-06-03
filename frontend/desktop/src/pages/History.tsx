@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { ResultPanel } from '@/components/ResultPanel'
+import { AudioPlayer } from '@/components/AudioPlayer'
 import { copyText, saveResult } from '@/services/export'
 import { useASRStore, type HistoryItem } from '@/store/useASRStore'
 
@@ -88,6 +89,7 @@ export function HistoryPage() {
                   <button type="button" className="danger" onClick={() => removeHistory(selected.id)}>删除</button>
                 </div>
               </div>
+              <AudioPlayer item={selected} />
               <ResultPanel result={selected} />
             </>
           ) : (

@@ -1,12 +1,13 @@
 import { AppPage, useASRStore } from '@/store/useASRStore'
 
 const items: Array<{ page?: AppPage; label: string; icon: string }> = [
-  { label: '首页', icon: '⌂' },
-  { label: '实时对话', icon: '☏' },
+  { page: 'home', label: '首页', icon: '⌂' },
+  { page: 'realtime', label: '实时对话', icon: '☏' },
   { page: 'transcribe', label: '文件转写', icon: '▤' },
   { page: 'history', label: '历史记录', icon: '◷' },
-  { label: '事件检测', icon: '♨' },
-  { page: 'models', label: '设备控制', icon: '▣' },
+  { page: 'summary', label: '当日总结', icon: '☷' },
+  { page: 'events', label: '事件检测', icon: '♨' },
+  { page: 'models', label: '模型管理', icon: '▣' },
   { page: 'settings', label: '设置', icon: '⚙' }
 ]
 

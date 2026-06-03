@@ -15,8 +15,12 @@ import androidx.lifecycle.viewModelScope
 import androidx.core.content.ContextCompat
 import com.asrapp.android.data.AppPrefs
 import com.asrapp.android.data.AppSettings
+import com.asrapp.android.data.ArchiveSummaryRequest
+import com.asrapp.android.data.ArchiveSummaryResult
+import com.asrapp.android.data.ArchiveSummarySaveRequest
 import com.asrapp.android.data.AsrApiClient
 import com.asrapp.android.data.HistoryItem
+import com.asrapp.android.data.LlmModelsRequest
 import com.asrapp.android.data.ModelInfo
 import com.asrapp.android.data.SubmitResult
 import com.asrapp.android.data.TaskStatusResponse
@@ -25,8 +29,10 @@ import com.asrapp.android.data.TranscribeResponse
 import com.asrapp.android.service.RecordingService
 import com.asrapp.android.service.StreamingRecognitionService
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.URLEncoder
 import java.text.SimpleDateFormat
@@ -35,7 +41,7 @@ import java.util.Locale
 
 enum class AppPage(val title: String) {
     Transcribe("录音识别"),
-    FileTranscribe("文件转写"),
+    Summary("总结"),
     Models("模型"),
     History("历史"),
     Settings("设置"),
@@ -61,9 +67,14 @@ data class AppUiState(
     val status: WorkStatus = WorkStatus.Idle,
     val statusMessage: String = "就绪",
     val models: List<ModelInfo> = emptyList(),
+    val llmModels: List<String> = emptyList(),
+    val llmConnected: Boolean = false,
+    val llmMessage: String = "未检查",
     val backendDefaultEngine: String = "fireredasr2",
     val history: List<HistoryItem> = emptyList(),
     val currentResult: HistoryItem? = null,
+    val dailySummary: ArchiveSummaryResult? = null,
+    val summaryMessage: String = "",
     val currentTaskId: String? = null,
     val streamCommittedText: String = "",
     val streamPartialText: String = "",
@@ -74,6 +85,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val api = AsrApiClient()
     private val prefs = AppPrefs(app, api.json)
     private var pollJob: Job? = null
+    private var passiveSummaryJob: Job? = null
     private var streamSpeechStartSec: Double? = null
     private var streamPlaybackCursorSec = 0.0
     private val pendingAudio = mutableMapOf<String, PendingAudio>()
@@ -113,9 +125,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         )
         checkServer()
         refreshModels()
+        startPassiveSummaryLoop()
     }
 
     override fun onCleared() {
+        passiveSummaryJob?.cancel()
         val app = getApplication<Application>()
         runCatching { app.unregisterReceiver(recordingReceiver) }
         runCatching { app.unregisterReceiver(streamReceiver) }
@@ -133,6 +147,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             serverUrl = settings.serverUrl.trim().trimEnd('/'),
             offlineEngines = listOf(offlineEngine),
             realtimeEngines = listOf(bounceEngine),
+            llmProvider = settings.llmProvider.trim().ifBlank { "deepseek" },
+            llmBaseUrl = settings.llmBaseUrl.trim().trimEnd('/'),
+            llmModel = settings.llmModel.trim(),
+            llmApiToken = settings.llmApiToken.trim(),
+            audioInputDeviceKey = settings.audioInputDeviceKey.trim(),
+            passiveSummaryFrequencyMin = settings.passiveSummaryFrequencyMin.coerceIn(5, 1440),
         )
         prefs.saveSettings(clean)
         uiState = uiState.copy(settings = clean)
@@ -178,6 +198,64 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     )
                 }
                 .onFailure { err -> uiState = uiState.copy(error = err.message) }
+        }
+    }
+
+    fun checkLlmModels() {
+        val settings = uiState.settings
+        if (settings.llmBaseUrl.isBlank() || settings.llmApiToken.length < 6) {
+            uiState = uiState.copy(llmConnected = false, llmMessage = "请填写大模型地址和 Token")
+            return
+        }
+        viewModelScope.launch {
+            uiState = uiState.copy(llmMessage = "连接中")
+            runCatching {
+                api.listLlmModels(
+                    settings.serverUrl,
+                    LlmModelsRequest(
+                        baseUrl = settings.llmBaseUrl,
+                        apiToken = settings.llmApiToken,
+                        provider = settings.llmProvider,
+                    ),
+                )
+            }.onSuccess { result ->
+                uiState = uiState.copy(
+                    llmModels = result.models,
+                    llmConnected = result.connected,
+                    llmMessage = result.message ?: if (result.connected) "连接成功" else "连接失败",
+                    error = if (result.connected) null else uiState.error,
+                )
+            }.onFailure { err ->
+                uiState = uiState.copy(llmConnected = false, llmMessage = "连接失败", error = err.message)
+            }
+        }
+    }
+
+    fun runDailySummary() {
+        viewModelScope.launch {
+            runDailySummaryInternal(auto = false)
+        }
+    }
+
+    fun saveDailySummaryCloud() {
+        val summary = uiState.dailySummary ?: return
+        val settings = uiState.settings
+        viewModelScope.launch {
+            uiState = uiState.copy(summaryMessage = "云端保存中")
+            runCatching {
+                api.saveArchiveSummary(
+                    settings.serverUrl,
+                    ArchiveSummarySaveRequest(
+                        summary = summary,
+                        userId = settings.passiveSummaryUserId.takeIf { it.isNotBlank() },
+                        category = "当日总结",
+                    ),
+                )
+            }.onSuccess { result ->
+                uiState = uiState.copy(summaryMessage = "云端已保存：${result.path}", error = null)
+            }.onFailure { err ->
+                uiState = uiState.copy(summaryMessage = "云端保存失败", error = err.message)
+            }
         }
     }
 
@@ -261,8 +339,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     fun startRecording() {
         val context = getApplication<Application>()
+        val settings = uiState.settings
         val intent = Intent(context, RecordingService::class.java).apply {
             action = RecordingService.ACTION_START
+            putExtra(RecordingService.EXTRA_INPUT_DEVICE_KEY, settings.audioInputDeviceKey)
         }
         ContextCompat.startForegroundService(context, intent)
         uiState = uiState.copy(status = WorkStatus.Recording, statusMessage = "录音中", error = null)
@@ -290,6 +370,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             putExtra(StreamingRecognitionService.EXTRA_LANGUAGE, settings.defaultLanguage)
             putExtra(StreamingRecognitionService.EXTRA_USER_ID, settings.streamUserId.ifBlank { "android" })
             putExtra(StreamingRecognitionService.EXTRA_CATEGORY, CATEGORY_STREAM)
+            putExtra(StreamingRecognitionService.EXTRA_INPUT_DEVICE_KEY, settings.audioInputDeviceKey)
         }
         ContextCompat.startForegroundService(context, intent)
         streamSpeechStartSec = null
@@ -442,6 +523,167 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             currentTaskId = null,
             error = null,
         )
+    }
+
+    private fun startPassiveSummaryLoop() {
+        passiveSummaryJob = viewModelScope.launch {
+            while (true) {
+                runCatching { runPassiveSummaryIfNeeded() }
+                delay(60_000)
+            }
+        }
+    }
+
+    private suspend fun runPassiveSummaryIfNeeded() {
+        val settings = uiState.settings
+        if (!settings.passiveSummaryEnabled) return
+        if (settings.llmModel.isBlank() || settings.llmBaseUrl.isBlank() || settings.llmApiToken.isBlank()) return
+        val now = System.currentTimeMillis()
+        val frequencyMs = settings.passiveSummaryFrequencyMin.coerceIn(5, 1440) * 60_000L
+        if (settings.passiveSummaryLastRunMillis > 0 && now - settings.passiveSummaryLastRunMillis < frequencyMs) return
+        if (!isWithinSummaryWindow(Date(now), settings.passiveSummaryStartTime, settings.passiveSummaryEndTime)) return
+        runDailySummaryInternal(auto = true)
+    }
+
+    private suspend fun runDailySummaryInternal(auto: Boolean) {
+        val settings = uiState.settings
+        if (settings.llmModel.isBlank() || settings.llmBaseUrl.isBlank() || settings.llmApiToken.isBlank()) {
+            if (!auto) uiState = uiState.copy(error = "请先在模型管理中配置大模型")
+            return
+        }
+        if (!auto) {
+            uiState = uiState.copy(
+                status = WorkStatus.Processing,
+                statusMessage = "生成当日总结",
+                summaryMessage = "总结中",
+                dailySummary = null,
+                error = null,
+            )
+        }
+        val attemptedAt = System.currentTimeMillis()
+        val request = ArchiveSummaryRequest(
+            date = localDate(),
+            userId = settings.passiveSummaryUserId.takeIf { it.isNotBlank() },
+            category = settings.passiveSummaryCategory.takeIf { it.isNotBlank() },
+            startTime = settings.passiveSummaryStartTime.takeIf { it.isNotBlank() },
+            endTime = settings.passiveSummaryEndTime.takeIf { it.isNotBlank() },
+            provider = settings.llmProvider,
+            model = settings.llmModel,
+            baseUrl = settings.llmBaseUrl,
+            apiToken = settings.llmApiToken,
+            prompt = settings.llmStyle.takeIf { it.isNotBlank() },
+            style = null,
+            maxInputChars = 24000,
+        )
+        var streamedText = ""
+        var finalSummary: ArchiveSummaryResult? = null
+        var streamSourceCount = 0
+        var streamInputChars = 0
+        var streamEstimatedTokens = 0
+        var streamTimeRange = summaryTimeRange(request.startTime, request.endTime)
+        runCatching {
+            api.summarizeArchiveStream(
+                settings.serverUrl,
+                request,
+                onMeta = { sourceCount, inputChars, estimatedTokens, timeRange ->
+                    streamSourceCount = sourceCount
+                    streamInputChars = inputChars
+                    streamEstimatedTokens = estimatedTokens
+                    streamTimeRange = timeRange ?: streamTimeRange
+                    withContext(Dispatchers.Main) {
+                        uiState = uiState.copy(
+                            dailySummary = ArchiveSummaryResult(
+                                summary = streamedText,
+                                model = request.model,
+                                provider = request.provider,
+                                sourceCount = streamSourceCount,
+                                inputChars = streamInputChars,
+                                estimatedInputTokens = streamEstimatedTokens,
+                                chunkCount = 1,
+                                truncated = false,
+                                date = request.date,
+                                timeRange = streamTimeRange,
+                            )
+                        )
+                    }
+                },
+                onStatus = { message ->
+                    withContext(Dispatchers.Main) {
+                        uiState = uiState.copy(summaryMessage = message)
+                    }
+                },
+                onDelta = { delta ->
+                    streamedText += delta
+                    withContext(Dispatchers.Main) {
+                        uiState = uiState.copy(
+                            dailySummary = ArchiveSummaryResult(
+                                summary = streamedText,
+                                model = request.model,
+                                provider = request.provider,
+                                sourceCount = streamSourceCount,
+                                inputChars = streamInputChars,
+                                estimatedInputTokens = streamEstimatedTokens,
+                                chunkCount = uiState.dailySummary?.chunkCount ?: 1,
+                                truncated = uiState.dailySummary?.truncated ?: false,
+                                date = request.date,
+                                timeRange = streamTimeRange,
+                            ),
+                            summaryMessage = "总结生成中",
+                        )
+                    }
+                },
+                onResult = { summary ->
+                    finalSummary = summary
+                    withContext(Dispatchers.Main) {
+                        uiState = uiState.copy(dailySummary = summary)
+                    }
+                },
+            )
+            finalSummary ?: ArchiveSummaryResult(
+                summary = streamedText,
+                model = request.model,
+                provider = request.provider,
+                sourceCount = 0,
+                inputChars = streamedText.length,
+                estimatedInputTokens = 0,
+                chunkCount = 1,
+                truncated = false,
+                date = request.date,
+                timeRange = summaryTimeRange(request.startTime, request.endTime),
+            )
+        }
+            .onSuccess { summary ->
+                uiState = uiState.copy(
+                    dailySummary = summary,
+                    summaryMessage = if (auto) "被动总结已生成" else "总结完成",
+                    status = if (auto) uiState.status else WorkStatus.Done,
+                    statusMessage = if (auto) uiState.statusMessage else "总结完成",
+                    error = null,
+                )
+                if (settings.passiveSummaryAutoCloudSave || auto && settings.passiveSummaryAutoCloudSave) {
+                    runCatching {
+                        api.saveArchiveSummary(
+                            settings.serverUrl,
+                            ArchiveSummarySaveRequest(
+                                summary = summary,
+                                userId = settings.passiveSummaryUserId.takeIf { it.isNotBlank() },
+                                category = if (auto) "被动总结" else "当日总结",
+                            ),
+                        )
+                    }.onSuccess { result ->
+                        uiState = uiState.copy(summaryMessage = "云端已保存：${result.path}")
+                    }
+                }
+            }
+            .onFailure { err ->
+                uiState = uiState.copy(
+                    summaryMessage = if (auto) "被动总结失败" else "总结失败",
+                    status = if (auto) uiState.status else WorkStatus.Error,
+                    statusMessage = if (auto) uiState.statusMessage else "总结失败",
+                    error = if (auto) uiState.error else err.message,
+                )
+            }
+        updateSettings(uiState.settings.copy(passiveSummaryLastRunMillis = attemptedAt))
     }
 
     private fun buildOptions(category: String): TranscribeOptions {
@@ -758,6 +1000,39 @@ private fun archiveAudioUrl(baseUrl: String, archiveAudioPath: String?): String?
 
     private fun formatClockTime(timeMillis: Long): String =
         SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(timeMillis))
+
+    private fun localDate(date: Date = Date()): String =
+        SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(date)
+
+    private fun summaryTimeRange(startTime: String?, endTime: String?): String? =
+        when {
+            !startTime.isNullOrBlank() && !endTime.isNullOrBlank() -> "$startTime-$endTime"
+            !startTime.isNullOrBlank() -> "$startTime 之后"
+            !endTime.isNullOrBlank() -> "$endTime 之前"
+            else -> null
+        }
+
+    private fun isWithinSummaryWindow(now: Date, startTime: String, endTime: String): Boolean {
+        val start = minutesOfDay(startTime)
+        val end = minutesOfDay(endTime)
+        if (start == null && end == null) return true
+        val current = SimpleDateFormat("HH:mm", Locale.US).format(now).let { minutesOfDay(it) } ?: return true
+        if (start != null && end == null) return current >= start
+        if (start == null && end != null) return current <= end
+        return if (start != null && end != null && start <= end) {
+            current in start..end
+        } else {
+            start == null || end == null || current >= start || current <= end
+        }
+    }
+
+    private fun minutesOfDay(value: String): Int? {
+        val parts = value.split(":")
+        if (parts.size < 2) return null
+        val hour = parts[0].toIntOrNull() ?: return null
+        val minute = parts[1].toIntOrNull() ?: return null
+        return hour.coerceIn(0, 23) * 60 + minute.coerceIn(0, 59)
+    }
 
     private fun offlineEngines(settings: AppSettings): List<String> =
         settings.offlineEngines.ifEmpty { listOf("fireredasr2") }

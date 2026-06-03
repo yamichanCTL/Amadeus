@@ -75,6 +75,17 @@ class FakeManager:
         return self.engines[name]
 
 
+class EmptyFinalManager:
+    def __init__(self) -> None:
+        self.engines = {
+            "sensevoice": NamedEngine("sensevoice", ""),
+            "fireredasr2": NamedEngine("fireredasr2", "   "),
+        }
+
+    async def get_engine(self, name: str) -> BaseASREngine:
+        return self.engines[name]
+
+
 @pytest.mark.asyncio
 async def test_streaming_session_uses_final_engine_for_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     import app.core.streaming.session as session_module
@@ -106,3 +117,34 @@ async def test_streaming_session_uses_final_engine_for_endpoint(monkeypatch: pyt
     assert final["partial_engine"] == "sensevoice"
     assert final["final_engine"] == "fireredasr2"
     assert final["replace_previous"] is True
+
+
+@pytest.mark.asyncio
+async def test_streaming_session_suppresses_empty_final_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.streaming.session as session_module
+    from app.core.streaming.session import StreamConfig, StreamingASRSession
+
+    monkeypatch.setattr(session_module, "get_model_manager", lambda: EmptyFinalManager())
+    session = StreamingASRSession(
+        config=StreamConfig(
+            engine="sensevoice",
+            final_engine="fireredasr2",
+            archive=False,
+        ),
+        vad=SequenceVad(),
+    )
+
+    pcm_400ms = b"\x01\x00" * 6400
+    await session.accept_audio(pcm_400ms)
+    await session.accept_audio(pcm_400ms)
+    await session.accept_audio(pcm_400ms)
+    await session.finish()
+
+    events: list[dict[str, Any]] = []
+    while not session.queue.empty():
+        events.append(await session.queue.get())
+
+    assert not any(event["type"] == "partial" for event in events)
+    assert not any(event["type"] == "final" for event in events)
+    no_speech = next(event for event in events if event["type"] == "no_speech")
+    assert no_speech["engine"] == "fireredasr2"

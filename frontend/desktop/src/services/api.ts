@@ -24,6 +24,61 @@ export type LLMTextResult = {
   elapsed_sec?: number | null
 }
 
+export type LLMModelsRequest = {
+  base_url: string
+  api_token: string
+  provider?: string
+}
+
+export type LLMModelsResult = {
+  connected: boolean
+  models: string[]
+  provider?: string | null
+  base_url: string
+  status_code?: number | null
+  message?: string | null
+  elapsed_sec?: number | null
+}
+
+export type ArchiveSummaryRequest = {
+  date: string
+  user_id?: string
+  category?: string
+  start_time?: string
+  end_time?: string
+  provider?: string
+  model: string
+  base_url: string
+  api_token: string
+  style?: string
+  max_input_chars?: number
+}
+
+export type ArchiveSummaryResult = {
+  summary: string
+  model: string
+  provider?: string | null
+  elapsed_sec?: number | null
+  source_count: number
+  input_chars: number
+  estimated_input_tokens: number
+  chunk_count: number
+  truncated: boolean
+  date: string
+  time_range?: string | null
+}
+
+export type ArchiveSummarySaveRequest = {
+  summary: ArchiveSummaryResult
+  user_id?: string
+  category?: string
+}
+
+export type ArchiveSummarySaveResult = {
+  saved: boolean
+  path: string
+}
+
 export type LLMOutputs = {
   polish?: LLMTextResult | null
   translate?: LLMTextResult | null
@@ -44,6 +99,8 @@ export type TranscribeResponse = {
   engine_results?: EngineResult[] | null
   llm_outputs?: LLMOutputs | null
   llm_error?: string | null
+  audio_url?: string
+  archived_audio?: string
 }
 
 export type AsyncResponse = {
@@ -63,6 +120,11 @@ export type ModelInfo = {
   extra: Record<string, unknown>
 }
 
+export type ModelsListResponse = {
+  engines: ModelInfo[]
+  default_engine?: string
+}
+
 export type TranscribeOptions = {
   engines: string[]
   language?: string
@@ -77,6 +139,7 @@ export type TranscribeOptions = {
     enable_polish?: boolean
     enable_translate?: boolean
     target_language?: string
+    provider?: string
     model?: string
     base_url?: string
     api_token?: string
@@ -90,11 +153,12 @@ export type LLMProcessRequest = {
   model: string
   base_url: string
   api_token: string
+  provider?: string
   target_language?: string
   style?: string
 }
 
-const DEFAULT_SERVER = 'http://10.154.39.91:8001'
+const DEFAULT_SERVER = 'http://112.124.13.120:18000'
 
 function normalizeServerUrl(url: string) {
   return (url || DEFAULT_SERVER).replace(/\/+$/, '')
@@ -110,6 +174,12 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return data as T
 }
 
+function withTimeout(ms: number) {
+  const controller = new AbortController()
+  const timer = window.setTimeout(() => controller.abort(), ms)
+  return { controller, timer }
+}
+
 export class ASRApi {
   constructor(private readonly serverUrl = DEFAULT_SERVER) {}
 
@@ -122,7 +192,11 @@ export class ASRApi {
   }
 
   models() {
-    return fetch(this.url('/v1/models')).then((res) => parseResponse<ModelInfo[]>(res))
+    const { controller, timer } = withTimeout(8000)
+    return fetch(this.url('/v1/models'), { signal: controller.signal })
+      .then((res) => parseResponse<ModelInfo[] | ModelsListResponse>(res))
+      .then((data) => (Array.isArray(data) ? data : data.engines || []))
+      .finally(() => window.clearTimeout(timer))
   }
 
   loadModel(engine: string, payload: Record<string, unknown>) {
@@ -176,6 +250,30 @@ export class ASRApi {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     }).then((res) => parseResponse<LLMTextResult>(res))
+  }
+
+  listLLMModels(payload: LLMModelsRequest) {
+    return fetch(this.url('/v1/llm/models'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then((res) => parseResponse<LLMModelsResult>(res))
+  }
+
+  summarizeArchive(payload: ArchiveSummaryRequest) {
+    return fetch(this.url('/v1/llm/archive-summary'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then((res) => parseResponse<ArchiveSummaryResult>(res))
+  }
+
+  saveArchiveSummary(payload: ArchiveSummarySaveRequest) {
+    return fetch(this.url('/v1/llm/archive-summary/save'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then((res) => parseResponse<ArchiveSummarySaveResult>(res))
   }
 }
 

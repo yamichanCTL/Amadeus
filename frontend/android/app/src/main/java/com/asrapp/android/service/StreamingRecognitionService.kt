@@ -54,6 +54,7 @@ class StreamingRecognitionService : Service() {
     private var sessionWriter: WavSessionWriter? = null
     private var latestSessionId: String? = null
     private var currentParams: StreamParams? = null
+    private var currentInputDeviceKey: String = ""
     private var stopping = false
     private val audioLock = Any()
     private val pendingAudio = ArrayDeque<ByteArray>()
@@ -101,6 +102,7 @@ class StreamingRecognitionService : Service() {
 
         startMicForeground()
         acquireRuntimeLocks()
+        currentInputDeviceKey = intent?.getStringExtra(EXTRA_INPUT_DEVICE_KEY).orEmpty()
         startAudioRouting()
 
         val params = StreamParams(
@@ -194,7 +196,8 @@ class StreamingRecognitionService : Service() {
                 var emptyReads = 0
                 try {
                     recorder.startRecording()
-                    broadcastStatus("audio_route", "音频输入：${AudioRouteController.label(route.inputDevice)}")
+                    val routedDevice = runCatching { recorder.routedDevice }.getOrNull()
+                    broadcastStatus("audio_route", "音频输入：${AudioRouteController.label(routedDevice ?: route.inputDevice)}")
                     while (recordJob?.isActive == true && !stopping) {
                         val read = recorder.read(buffer, 0, buffer.size)
                         when {
@@ -288,7 +291,7 @@ class StreamingRecognitionService : Service() {
 
     private fun startAudioRouting() {
         if (audioRouteController != null) return
-        audioRouteController = AudioRouteController(this) { route ->
+        audioRouteController = AudioRouteController(this, currentInputDeviceKey) { route ->
             runCatching { audioRecord?.setPreferredDevice(route.inputDevice) }
             broadcastStatus("audio_route", "音频输入：${AudioRouteController.label(route.inputDevice)}")
         }.also { controller ->
@@ -599,6 +602,7 @@ class StreamingRecognitionService : Service() {
         const val EXTRA_LANGUAGE = "language"
         const val EXTRA_USER_ID = "user_id"
         const val EXTRA_CATEGORY = "category"
+        const val EXTRA_INPUT_DEVICE_KEY = "input_device_key"
         const val EXTRA_TYPE = "type"
         const val EXTRA_TEXT = "text"
         const val EXTRA_SESSION_ID = "session_id"

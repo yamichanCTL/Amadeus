@@ -33,7 +33,7 @@ class RecordingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> stopRecording()
-            else -> startRecording()
+            else -> startRecording(intent)
         }
         return START_REDELIVER_INTENT
     }
@@ -45,8 +45,9 @@ class RecordingService : Service() {
         super.onDestroy()
     }
 
-    private fun startRecording() {
+    private fun startRecording(intent: Intent?) {
         if (recorder != null) return
+        currentInputDeviceKey = intent?.getStringExtra(EXTRA_INPUT_DEVICE_KEY).orEmpty()
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             broadcastError("缺少麦克风权限")
             stopSelf()
@@ -78,7 +79,12 @@ class RecordingService : Service() {
             mediaRecorder.start()
             recorder = mediaRecorder
             recordFile = file
-            broadcastStatus("recording_started", "正在使用${AudioRouteController.label(route.inputDevice)}")
+            val routedDevice = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                runCatching { mediaRecorder.routedDevice }.getOrNull()
+            } else {
+                null
+            }
+            broadcastStatus("recording_started", "正在使用${AudioRouteController.label(routedDevice ?: route.inputDevice)}")
         }.onFailure { err ->
             broadcastError(err.message ?: "无法开始录音")
             cleanup()
@@ -141,7 +147,8 @@ class RecordingService : Service() {
 
     private fun startAudioRouting() {
         if (audioRouteController != null) return
-        audioRouteController = AudioRouteController(this) { route ->
+        val inputDeviceKey = intentDeviceKey()
+        audioRouteController = AudioRouteController(this, inputDeviceKey) { route ->
             runCatching { recorder?.setPreferredDevice(route.inputDevice) }
             broadcastStatus("audio_route", "音频输入：${AudioRouteController.label(route.inputDevice)}")
         }.also { controller ->
@@ -223,7 +230,12 @@ class RecordingService : Service() {
         const val EXTRA_PATH = "path"
         const val EXTRA_FILENAME = "filename"
         const val EXTRA_MIME = "mime"
+        const val EXTRA_INPUT_DEVICE_KEY = "input_device_key"
         private const val CHANNEL_ID = "asr_recording"
         private const val NOTIFICATION_ID = 1002
     }
+
+    private var currentInputDeviceKey: String = ""
+
+    private fun intentDeviceKey(): String = currentInputDeviceKey
 }

@@ -17,11 +17,15 @@ internal data class AudioRouteSelection(
 
 internal class AudioRouteController(
     context: Context,
+    private val preferredDeviceKey: String = "",
     private val onRouteChanged: (AudioRouteSelection) -> Unit = {},
 ) {
     private val appContext = context.applicationContext
     private val audioManager = appContext.getSystemService(AudioManager::class.java)
     private var callbackRegistered = false
+    private var originalMode: Int? = null
+    private var originalScoOn: Boolean? = null
+    private var bluetoothRouteConfigured = false
 
     private val callback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>) {
@@ -43,6 +47,7 @@ internal class AudioRouteController(
 
     fun prepareForRecording(): AudioRouteSelection {
         val inputDevice = preferredInputDevice()
+        configureRoute(inputDevice)
         return AudioRouteSelection(
             inputDevice = inputDevice,
             audioSource = audioSourceFor(inputDevice),
@@ -54,12 +59,18 @@ internal class AudioRouteController(
             runCatching { audioManager.unregisterAudioDeviceCallback(callback) }
             callbackRegistered = false
         }
+        restoreRoute()
     }
 
     private fun preferredInputDevice(): AudioDeviceInfo? {
         val devices = runCatching {
             audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS).filter { it.isSource }
         }.getOrDefault(emptyList())
+
+        if (preferredDeviceKey.isNotBlank()) {
+            devices.firstOrNull { keyFor(it) == preferredDeviceKey && it.isSupportedInput() }
+                ?.let { return it }
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && hasBluetoothConnectPermission()) {
             val communicationDevice = runCatching { audioManager.communicationDevice }.getOrNull()
@@ -71,17 +82,64 @@ internal class AudioRouteController(
             }
         }
 
-        val priority = listOf(
-            AudioDeviceInfo.TYPE_USB_HEADSET,
-            AudioDeviceInfo.TYPE_USB_DEVICE,
-            AudioDeviceInfo.TYPE_WIRED_HEADSET,
-            AudioDeviceInfo.TYPE_BUILTIN_MIC,
-        )
-        return priority
-            .asSequence()
-            .filter { it >= 0 }
-            .mapNotNull { type -> devices.firstOrNull { it.type == type && it.isSupportedInput() } }
-            .firstOrNull()
+        if (preferredDeviceKey.isBlank()) {
+            devices.firstOrNull { it.isBluetoothInput() && it.isSupportedInput() }
+                ?.let { return it }
+        }
+
+        return null
+    }
+
+    private fun configureRoute(inputDevice: AudioDeviceInfo?) {
+        if (inputDevice?.isBluetoothInput() != true || !hasBluetoothConnectPermission()) {
+            if (bluetoothRouteConfigured) restoreRoute()
+            return
+        }
+        if (originalMode == null) originalMode = audioManager.mode
+        if (originalScoOn == null) {
+            @Suppress("DEPRECATION")
+            originalScoOn = audioManager.isBluetoothScoOn
+        }
+
+        bluetoothRouteConfigured = true
+        audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            communicationRouteFor(inputDevice)?.let { route ->
+                runCatching { audioManager.setCommunicationDevice(route) }
+            }
+        } else {
+            @Suppress("DEPRECATION")
+            runCatching {
+                audioManager.startBluetoothSco()
+                audioManager.isBluetoothScoOn = true
+            }
+        }
+    }
+
+    private fun restoreRoute() {
+        if (!bluetoothRouteConfigured && originalMode == null && originalScoOn == null) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching { audioManager.clearCommunicationDevice() }
+        } else {
+            @Suppress("DEPRECATION")
+            runCatching {
+                audioManager.stopBluetoothSco()
+                audioManager.isBluetoothScoOn = originalScoOn ?: false
+            }
+        }
+        originalMode?.let { runCatching { audioManager.mode = it } }
+        originalMode = null
+        originalScoOn = null
+        bluetoothRouteConfigured = false
+    }
+
+    private fun communicationRouteFor(inputDevice: AudioDeviceInfo): AudioDeviceInfo? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return null
+        return runCatching {
+            audioManager.availableCommunicationDevices.firstOrNull { it.id == inputDevice.id }
+                ?: audioManager.availableCommunicationDevices.firstOrNull { it.type == inputDevice.type }
+                ?: audioManager.availableCommunicationDevices.firstOrNull { it.isBluetoothInput() }
+        }.getOrNull()
     }
 
     private fun hasBluetoothConnectPermission(): Boolean =
@@ -89,6 +147,9 @@ internal class AudioRouteController(
             ContextCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
 
     companion object {
+        fun keyFor(device: AudioDeviceInfo): String =
+            "${device.type}:${device.productName?.toString().orEmpty()}"
+
         fun audioSourceFor(device: AudioDeviceInfo?): Int =
             if (device?.isBluetoothInput() == true) {
                 MediaRecorder.AudioSource.VOICE_COMMUNICATION
