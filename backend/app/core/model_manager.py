@@ -208,6 +208,4 @@ def get_model_manager() -> ModelManager:
             device=settings.default_qwen3asr_device,
             torch_dtype=settings.qwen3asr_torch_dtype,
         )
-        _manager.configure("vosk", model_name=settings.default_vosk_model)
-        _manager.configure("sherpa", model_name=settings.default_sherpa_model)
     return _manager

@@ -1,6 +1,6 @@
 import { useASRStore } from '@/store/useASRStore'
 
-const engines = ['whisper', 'vosk', 'sherpa', 'fireredasr2', 'wenet']
+const engines = ['fireredasr2', 'sensevoice', 'qwen3asr', 'whisper']
 
 export function Toolbar({ onCancel }: { onCancel: () => void }) {
   const settings = useASRStore((state) => state.settings)

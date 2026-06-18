@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.uv-cache/
 .coverage
 coverage.xml
 htmlcov/
@@ -26,7 +27,9 @@ env/
 .env.*
 !.env.example
 backend/.env
+/tmp/
 /data/
+.runtime/
 backend/data/
 backend/models/
 backend/app/core/asr/engines/FireRedASR2S/
@@ -67,6 +70,12 @@ frontend/desktop/yarn-error.log*
 frontend/desktop/.env
 frontend/desktop/.env.*
 !frontend/desktop/.env.example
+
+# Documentation site generated files
+doc/node_modules/
+doc/.vitepress/cache/
+doc/.vitepress/dist/
+doc/.vitepress/.temp/
 
 # IDE and local OS files
 .idea/

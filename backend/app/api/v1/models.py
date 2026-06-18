@@ -135,7 +135,10 @@ async def load_model(
     if body.device:
         kwargs["device"] = body.device
     if body.compute_type:
-        kwargs["compute_type"] = body.compute_type
+        if name == "qwen3asr":
+            kwargs["torch_dtype"] = body.compute_type
+        else:
+            kwargs["compute_type"] = body.compute_type
     kwargs.update(body.extra)
 
     try:

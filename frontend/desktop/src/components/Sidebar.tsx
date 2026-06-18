@@ -6,7 +6,7 @@ const items: Array<{ page?: AppPage; label: string; icon: string }> = [
   { page: 'transcribe', label: '文件转写', icon: '▤' },
   { page: 'history', label: '历史记录', icon: '◷' },
   { page: 'summary', label: '当日总结', icon: '☷' },
-  { page: 'events', label: '事件检测', icon: '♨' },
+  { page: 'voice', label: '变声器/TTS', icon: '🎤' },
   { page: 'models', label: '模型管理', icon: '▣' },
   { page: 'settings', label: '设置', icon: '⚙' }
 ]

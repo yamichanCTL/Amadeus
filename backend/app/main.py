@@ -95,7 +95,7 @@ def create_app() -> FastAPI:
         title="ASR Backend",
         description=(
             "Offline-first Automatic Speech Recognition service.\n\n"
-            "Supports multiple engines (FireRedASR2, Whisper, Vosk, Sherpa-onnx) with "
+            "Supports multiple engines (FireRedASR2, SenseVoice, Whisper, Qwen3-ASR) with "
             "sync and async transcription, multi-engine parallel runs, "
             "and a pluggable pre/post processing pipeline."
         ),

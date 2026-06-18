@@ -69,7 +69,7 @@ class BaseASREngine(abc.ABC):
     """
     Every concrete engine subclass must implement:
 
-      - name          : str  –  unique identifier (e.g. "whisper", "vosk")
+      - name          : str  –  unique identifier (e.g. "sensevoice", "whisper")
       - load()        –  load model weights into memory
       - unload()      –  release GPU/RAM resources
       - is_loaded     : bool

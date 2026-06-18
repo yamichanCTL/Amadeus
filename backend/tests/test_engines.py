@@ -13,7 +13,7 @@ from app.core.asr.base import ASRResult, EngineOptions
 from app.core.asr.router import ModelRouter
 from app.core.model_manager import ModelManager
 from app.core.asr.registry import available_engines, get_engine_class
-from tests.conftest import MockASREngine, make_wav_bytes
+from backend.tests.conftest import MockASREngine, make_wav_bytes
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -24,8 +24,9 @@ def test_registry_contains_default_engines() -> None:
     assert "sensevoice" in engines
     assert "qwen3asr" in engines
     assert "whisper" in engines
-    assert "vosk" in engines
-    assert "sherpa" in engines
+    assert "vosk" not in engines
+    assert "sherpa" not in engines
+    assert "stream" not in engines
     assert "mock" in engines
 
 

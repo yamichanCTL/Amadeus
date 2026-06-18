@@ -32,12 +32,27 @@ function removeGreenScreen(source: string, onReady: (value: string) => void) {
   image.src = source
 }
 
-export function AssistantFigure({ className = '' }: { className?: string }) {
+export function AssistantFigure({
+  action = 'idle',
+  className = '',
+  emotion = 'neutral'
+}: {
+  action?: string
+  className?: string
+  emotion?: string
+}) {
   const [source, setSource] = useState(assistantHappy)
 
   useEffect(() => {
     removeGreenScreen(assistantHappy, setSource)
   }, [])
 
-  return <img className={className} src={source} alt="ASRAPP 助手" draggable={false} />
+  return (
+    <img
+      className={`${className} emotion-${emotion} action-${action}`.trim()}
+      src={source}
+      alt="ASRAPP 助手"
+      draggable={false}
+    />
+  )
 }

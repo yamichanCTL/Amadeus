@@ -24,6 +24,255 @@ export type LLMTextResult = {
   elapsed_sec?: number | null
 }
 
+export type LLMChatRole = 'system' | 'user' | 'assistant'
+
+export type LLMChatTextPart = {
+  type: 'text'
+  text: string
+}
+
+export type LLMChatImagePart = {
+  type: 'image_url'
+  image_url: {
+    url: string
+  }
+}
+
+export type LLMChatContent = string | Array<LLMChatTextPart | LLMChatImagePart>
+
+export type LLMChatMessage = {
+  role: LLMChatRole
+  content: LLMChatContent
+}
+
+export type LLMChatRequest = {
+  messages: LLMChatMessage[]
+  model: string
+  base_url: string
+  api_token: string
+  provider?: string
+  temperature?: number
+}
+
+export type LLMChatResult = {
+  message: LLMChatMessage
+  model: string
+  provider?: string | null
+  elapsed_sec?: number | null
+}
+
+export type LLMChatStreamEvent =
+  | { type: 'delta'; text: string }
+  | { type: 'done'; result: LLMChatResult }
+  | { type: 'error'; message: string }
+
+export type LLMSpeechRequest = {
+  text: string
+  model: string
+  voice: string
+  base_url: string
+  api_token: string
+  provider?: string
+  response_format?: 'mp3' | 'opus' | 'aac' | 'flac' | 'wav' | 'pcm'
+  speed?: number
+}
+
+export type HiggsTTSRequest = {
+  text: string
+  higgs_base_url: string
+  voice?: string
+  response_format?: 'wav' | 'mp3' | 'flac' | 'opus' | 'aac' | 'pcm'
+  speed?: number
+  temperature?: number
+  top_p?: number
+  top_k?: number
+  seed?: number
+  max_new_tokens?: number
+  reference_audio?: string
+  reference_url?: string
+  reference_text?: string
+  reference_codes_json?: string
+  emotion?: string
+  style?: string
+  prosody_speed?: string
+  pitch?: string
+  expressiveness?: string
+  initial_codec_chunk_frames?: number
+  stream?: boolean
+}
+
+export type HiggsTiming = {
+  asr_sec: number
+  tts_sec: number
+  total_sec: number
+  higgs_network_sec: number
+  client_total_sec?: number
+}
+
+export type HiggsAudioResult = {
+  audio: Blob
+  timing: HiggsTiming
+  text?: string
+  asr_engine?: string
+  language?: string
+  confidence?: number | null
+  sample_rate?: string
+}
+
+export type HiggsHealthResult = {
+  connected: boolean
+  base_url: string
+  elapsed_sec: number
+  data?: unknown
+  message?: string
+}
+
+export type HiggsVoicesResult = {
+  voices: string[]
+  presets?: HiggsVoicePreset[]
+  raw?: unknown
+  message?: string
+}
+
+export type HiggsVoicePreset = {
+  id?: string
+  name: string
+  higgs_base_url?: string
+  reference_audio?: string
+  reference_audio_path?: string
+  reference_audio_name?: string
+  reference_url?: string
+  reference_text?: string
+  reference_codes_json?: string
+  created_at?: string
+  updated_at?: string
+}
+
+export type HiggsVoicePresetRequest = {
+  name: string
+  higgs_base_url: string
+  reference_audio?: string
+  reference_url?: string
+  reference_text?: string
+  reference_codes_json?: string
+}
+
+export type HiggsVoicePresetsResult = {
+  presets: HiggsVoicePreset[]
+  voices: string[]
+  path?: string
+}
+
+export type HiggsReferenceAsrResult = {
+  text: string
+  engine: string
+  language?: string | null
+  confidence?: number | null
+  elapsed_sec?: number | null
+}
+
+// ── AgentCore types ─────────────────────────────────────────────────────
+
+export type AgentChatRequest = {
+  text: string
+  session_id?: string
+  persona?: string
+  memory?: string
+  llm_base_url?: string
+  llm_api_token?: string
+  llm_model?: string
+  llm_provider?: string
+  use_skills?: boolean
+  use_emotions?: boolean
+  use_context?: boolean
+  context?: Record<string, string>
+}
+
+export type AgentChatResponse = {
+  text: string
+  emotion: string
+  action: string
+  tool_calls: Array<{ name: string; args: Record<string, string> }>
+  tool_results: string[]
+  error: string | null
+  elapsed_sec: number
+  session_id: string
+}
+
+export type AgentStreamEvent =
+  | { type: 'delta'; text: string }
+  | { type: 'state'; emotion: string; action: string }
+  | { type: 'tool'; name: string; result: string }
+  | { type: 'done'; turn: AgentChatResponse }
+  | { type: 'error'; message: string }
+
+export type AgentContextResponse = {
+  session_id: string
+  turn_count: number
+  message_count: number
+  task_count: number
+  open_tasks: Array<{ id: string; text: string }>
+  memory: string
+  emotion: string
+  action: string
+}
+
+// ── Delegate types ───────────────────────────────────────────────────────
+
+export type AgentDelegateRequest = {
+  agent?: 'codex' | 'claude' | 'claudecode'
+  prompt: string
+  cwd?: string
+  model?: string
+  sandbox?: 'read-only' | 'workspace-write'
+  timeout_sec?: number
+}
+
+export type AgentDelegateResult = {
+  agent: 'codex' | 'claude' | 'claudecode'
+  cwd: string
+  command: string[]
+  exit_code: number | null
+  timed_out: boolean
+  stdout: string
+  stderr: string
+  final_message: string
+  elapsed_sec: number
+}
+
+export type SkillParameter = {
+  name: string
+  type: string
+  description: string
+  required: boolean
+  default?: unknown
+}
+
+export type SkillDefinition = {
+  name: string
+  description: string
+  parameters: SkillParameter[]
+  category: string
+}
+
+export type SkillListResponse = {
+  skills: SkillDefinition[]
+  total: number
+}
+
+export type SkillExecuteRequest = {
+  skill: string
+  parameters: Record<string, unknown>
+}
+
+export type SkillExecuteResult = {
+  skill: string
+  success: boolean
+  output: string
+  error: string | null
+  metadata: Record<string, unknown>
+}
+
 export type LLMModelsRequest = {
   base_url: string
   api_token: string
@@ -158,10 +407,14 @@ export type LLMProcessRequest = {
   style?: string
 }
 
-const DEFAULT_SERVER = 'http://112.124.13.120:18000'
+const DEFAULT_SERVER = 'http://localhost:8000'
 
 function normalizeServerUrl(url: string) {
-  return (url || DEFAULT_SERVER).replace(/\/+$/, '')
+  // empty / '' / '/' → same-origin (works with Vite proxy, or standalone backend on same port)
+  const trimmed = (url || '').trim()
+  if (!trimmed || trimmed === '/') return ''
+  const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`
+  return withScheme.replace(/\/+$/, '')
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {
@@ -178,6 +431,50 @@ function withTimeout(ms: number) {
   const controller = new AbortController()
   const timer = window.setTimeout(() => controller.abort(), ms)
   return { controller, timer }
+}
+
+function headerNumber(headers: Headers, name: string) {
+  const value = Number(headers.get(name) || 0)
+  return Number.isFinite(value) ? value : 0
+}
+
+function decodeBase64Utf8(value: string | null) {
+  if (!value) return ''
+  try {
+    const binary = atob(value)
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+    return new TextDecoder().decode(bytes)
+  } catch {
+    return ''
+  }
+}
+
+async function parseAudioResponse(response: Response, clientStartedAt: number): Promise<HiggsAudioResult> {
+  if (!response.ok) {
+    const text = await response.text()
+    const data = text ? JSON.parse(text) : null
+    throw new Error(data?.detail || data?.message || response.statusText)
+  }
+  const audio = await response.blob()
+  const timing: HiggsTiming = {
+    asr_sec: headerNumber(response.headers, 'x-timing-asr'),
+    tts_sec: headerNumber(response.headers, 'x-timing-tts'),
+    total_sec: headerNumber(response.headers, 'x-timing-total'),
+    higgs_network_sec: headerNumber(response.headers, 'x-timing-higgs-network'),
+    client_total_sec: (performance.now() - clientStartedAt) / 1000
+  }
+  const confidenceHeader = response.headers.get('x-asr-confidence')
+  const confidence = confidenceHeader ? Number(confidenceHeader) : null
+  return {
+    audio,
+    timing,
+    text: decodeBase64Utf8(response.headers.get('x-asr-text-b64')),
+    asr_engine: response.headers.get('x-asr-engine') || undefined,
+    language: response.headers.get('x-asr-language') || undefined,
+    confidence: Number.isFinite(confidence) ? confidence : null,
+    sample_rate: response.headers.get('x-higgs-sample-rate') || undefined
+  }
 }
 
 export class ASRApi {
@@ -252,12 +549,161 @@ export class ASRApi {
     }).then((res) => parseResponse<LLMTextResult>(res))
   }
 
+  chat(payload: LLMChatRequest) {
+    return fetch(this.url('/v1/llm/chat'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then((res) => parseResponse<LLMChatResult>(res))
+  }
+
+  async streamChat(payload: LLMChatRequest, onEvent: (event: LLMChatStreamEvent) => void, signal?: AbortSignal) {
+    const response = await fetch(this.url('/v1/llm/chat/stream'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal
+    })
+    if (!response.ok) {
+      const text = await response.text()
+      const data = text ? JSON.parse(text) : null
+      throw new Error(data?.detail || data?.message || response.statusText)
+    }
+    if (!response.body) throw new Error('当前运行环境不支持流式响应')
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let finalResult: LLMChatResult | null = null
+
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        const event = line.trim() ? JSON.parse(line) as LLMChatStreamEvent : null
+        if (!event) continue
+        onEvent(event)
+        if (event.type === 'error') throw new Error(event.message)
+        if (event.type === 'done') finalResult = event.result
+      }
+    }
+
+    const tail = buffer.trim()
+    if (tail) {
+      const event = JSON.parse(tail) as LLMChatStreamEvent
+      onEvent(event)
+      if (event.type === 'error') throw new Error(event.message)
+      if (event.type === 'done') finalResult = event.result
+    }
+    if (!finalResult) throw new Error('流式回复缺少完成事件')
+    return finalResult
+  }
+
   listLLMModels(payload: LLMModelsRequest) {
     return fetch(this.url('/v1/llm/models'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     }).then((res) => parseResponse<LLMModelsResult>(res))
+  }
+
+  async synthesizeSpeech(payload: LLMSpeechRequest) {
+    const response = await fetch(this.url('/v1/llm/speech'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    if (!response.ok) {
+      const text = await response.text()
+      const data = text ? JSON.parse(text) : null
+      throw new Error(data?.detail || data?.message || response.statusText)
+    }
+    return response.blob()
+  }
+
+  delegateAgent(payload: AgentDelegateRequest) {
+    return fetch(this.url('/v1/agents/delegate'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then((res) => parseResponse<AgentDelegateResult>(res))
+  }
+
+  listSkills(category?: string) {
+    const query = category ? `?category=${encodeURIComponent(category)}` : ''
+    return fetch(this.url(`/v1/skills${query}`)).then((res) => parseResponse<SkillListResponse>(res))
+  }
+
+  executeSkill(payload: SkillExecuteRequest) {
+    return fetch(this.url('/v1/skills/execute'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then((res) => parseResponse<SkillExecuteResult>(res))
+  }
+
+  // ── AgentCore API ──────────────────────────────────────────────────────
+
+  agentChat(payload: AgentChatRequest) {
+    return fetch(this.url('/v1/agent/chat'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then((res) => parseResponse<AgentChatResponse>(res))
+  }
+
+  async agentChatStream(payload: AgentChatRequest, onEvent: (event: AgentStreamEvent) => void, signal?: AbortSignal) {
+    const response = await fetch(this.url('/v1/agent/chat/stream'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal
+    })
+    if (!response.ok) {
+      const text = await response.text()
+      const data = text ? JSON.parse(text) : null
+      throw new Error(data?.detail || data?.message || response.statusText)
+    }
+    if (!response.body) throw new Error('Streaming not supported')
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (!line.trim()) continue
+        try {
+          const event = JSON.parse(line) as AgentStreamEvent
+          onEvent(event)
+          if (event.type === 'error') throw new Error(event.message)
+        } catch (err) {
+          if (err instanceof SyntaxError) continue
+          throw err
+        }
+      }
+    }
+    if (buffer.trim()) {
+      try { onEvent(JSON.parse(buffer)) } catch { /* ignore tail */ }
+    }
+  }
+
+  agentContext(sessionId: string = 'default') {
+    return fetch(this.url(`/v1/agent/context?session_id=${encodeURIComponent(sessionId)}`))
+      .then((res) => parseResponse<AgentContextResponse>(res))
+  }
+
+  agentReset(sessionId: string = 'default') {
+    return fetch(this.url(`/v1/agent/reset?session_id=${encodeURIComponent(sessionId)}`), { method: 'POST' })
+      .then((res) => parseResponse<{ ok: boolean }>(res))
   }
 
   summarizeArchive(payload: ArchiveSummaryRequest) {
@@ -274,6 +720,134 @@ export class ASRApi {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     }).then((res) => parseResponse<ArchiveSummarySaveResult>(res))
+  }
+
+  // ── GPT-SoVITS TTS ──────────────────────────────────────────────────────
+
+  async ttsSpeak(text: string, textLang: string = 'zh', speed: number = 1.0, engine: string = 'gpt_sovits'): Promise<Blob> {
+    const response = await fetch(this.url('/v1/tts/speak'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, text_lang: textLang, speed, engine }),
+    })
+    if (!response.ok) {
+      const err = await response.text()
+      throw new Error(err ? JSON.parse(err).detail || err : `TTS failed: ${response.status}`)
+    }
+    return response.blob()
+  }
+
+  higgsHealth(higgsBaseUrl: string) {
+    const query = new URLSearchParams({ higgs_base_url: higgsBaseUrl }).toString()
+    return fetch(this.url(`/v1/tts/higgs/health?${query}`)).then((res) => parseResponse<HiggsHealthResult>(res))
+  }
+
+  higgsVoices(higgsBaseUrl: string) {
+    const query = new URLSearchParams({ higgs_base_url: higgsBaseUrl }).toString()
+    return fetch(this.url(`/v1/tts/higgs/voices?${query}`)).then((res) => parseResponse<HiggsVoicesResult>(res))
+  }
+
+  higgsVoicePresets() {
+    return fetch(this.url('/v1/tts/higgs/voice-presets')).then((res) => parseResponse<HiggsVoicePresetsResult>(res))
+  }
+
+  saveHiggsVoicePreset(payload: HiggsVoicePresetRequest) {
+    return fetch(this.url('/v1/tts/higgs/voice-presets'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then((res) => parseResponse<HiggsVoicePresetsResult & { preset: HiggsVoicePreset }>(res))
+  }
+
+  referenceAudioAsr(audioBlob: Blob, engine = 'sensevoice', language = 'zh') {
+    const form = new FormData()
+    form.append('audio', audioBlob, 'reference_audio.wav')
+    form.append('engine', engine)
+    form.append('language', language)
+    return fetch(this.url('/v1/tts/higgs/reference-asr'), {
+      method: 'POST',
+      body: form,
+    }).then((res) => parseResponse<HiggsReferenceAsrResult>(res))
+  }
+
+  async higgsSpeak(payload: HiggsTTSRequest): Promise<HiggsAudioResult> {
+    const startedAt = performance.now()
+    const response = await fetch(this.url('/v1/tts/higgs/speak'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    return parseAudioResponse(response, startedAt)
+  }
+
+  async higgsAudioToSpeech(audioBlob: Blob, payload: Omit<HiggsTTSRequest, 'text'> & { engine?: string; language?: string }): Promise<HiggsAudioResult> {
+    const startedAt = performance.now()
+    const form = new FormData()
+    form.append('audio', audioBlob, 'voice_input.webm')
+    form.append('higgs_base_url', payload.higgs_base_url)
+    form.append('voice', payload.voice || 'default')
+    form.append('response_format', payload.response_format || 'wav')
+    form.append('speed', String(payload.speed ?? 1))
+    form.append('temperature', String(payload.temperature ?? 0.7))
+    form.append('top_p', String(payload.top_p ?? 0.95))
+    form.append('top_k', String(payload.top_k ?? 50))
+    form.append('seed', String(payload.seed ?? -1))
+    form.append('max_new_tokens', String(payload.max_new_tokens ?? 2048))
+    form.append('reference_audio', payload.reference_audio || '')
+    form.append('reference_url', payload.reference_url || '')
+    form.append('reference_text', payload.reference_text || '')
+    form.append('reference_codes_json', payload.reference_codes_json || '')
+    form.append('emotion', payload.emotion || '')
+    form.append('style', payload.style || '')
+    form.append('prosody_speed', payload.prosody_speed || '')
+    form.append('pitch', payload.pitch || '')
+    form.append('expressiveness', payload.expressiveness || '')
+    form.append('initial_codec_chunk_frames', String(payload.initial_codec_chunk_frames ?? 1))
+    form.append('engine', payload.engine || 'fireredasr2')
+    form.append('language', payload.language || 'zh')
+    const response = await fetch(this.url('/v1/tts/higgs/audio-to-speech'), {
+      method: 'POST',
+      body: form,
+    })
+    return parseAudioResponse(response, startedAt)
+  }
+
+  async ttsPipeline(audioBlob: Blob, task: string = '', agent: string = ''): Promise<Blob> {
+    const form = new FormData()
+    form.append('audio', audioBlob, 'voice_input.wav')
+    form.append('task', task)
+    form.append('agent', agent)
+    const response = await fetch(this.url('/v1/tts/pipeline'), {
+      method: 'POST',
+      body: form,
+    })
+    if (!response.ok) {
+      const err = await response.text()
+      throw new Error(err ? JSON.parse(err).detail || err : `Pipeline failed: ${response.status}`)
+    }
+    return response.blob()
+  }
+
+  // ── Voice Conversion ────────────────────────────────────────────────────
+
+  async listVoices(): Promise<{ voices: Array<{ id: string; name: string; description: string; prompt_lang: string }> }> {
+    return fetch(this.url('/v1/voice/voices')).then((res) => parseResponse<any>(res))
+  }
+
+  async convertVoice(audioBlob: Blob, voiceId: string = 'elysia', speed: number = 1.0): Promise<Blob> {
+    const form = new FormData()
+    form.append('audio', audioBlob, 'input.wav')
+    form.append('voice_id', voiceId)
+    form.append('speed', String(speed))
+    const response = await fetch(this.url('/v1/voice/convert'), {
+      method: 'POST',
+      body: form,
+    })
+    if (!response.ok) {
+      const err = await response.text()
+      throw new Error(err ? JSON.parse(err).detail || err : `Voice convert failed: ${response.status}`)
+    }
+    return response.blob()
   }
 }
 

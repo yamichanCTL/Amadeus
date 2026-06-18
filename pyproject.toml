@@ -90,6 +90,9 @@ vad = [
 punctuation = [
     "deepmultilingualpunctuation>=1.0.1",  # reserved
 ]
+voxcpm = [
+    "voxcpm>=0.1.0",
+]
 dev = [
     "pytest>=8.2.0",
     "pytest-asyncio>=0.23.0",
@@ -103,8 +106,8 @@ all = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["backend"]
-include = ["app*"]
+where = [".", "backend"]
+include = ["runner*", "app*"]
 
 [tool.ruff]
 line-length = 100
@@ -115,7 +118,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["backend/tests"]
+testpaths = ["tests", "backend/tests"]
 
 [tool.mypy]
 python_version = "3.10"

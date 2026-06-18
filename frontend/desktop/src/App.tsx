@@ -5,12 +5,14 @@ import { useASRStore } from '@/store/useASRStore'
 import { TitleBar } from '@/components/TitleBar'
 import { Sidebar } from '@/components/Sidebar'
 import { StatusBar } from '@/components/StatusBar'
+import { RealtimeAgentPage } from '@/pages/RealtimeAgent'
 import { TranscribePage } from '@/pages/Transcribe'
 import { HistoryPage } from '@/pages/History'
 import { SummaryPage } from '@/pages/Summary'
 import { ModelsPage } from '@/pages/Models'
 import { SettingsPage } from '@/pages/Settings'
 import { PlaceholderPage } from '@/pages/Placeholder'
+import { VoiceChangerPage } from '@/pages/VoiceChanger'
 
 function localDateValue(date = new Date()) {
   const offsetMs = date.getTimezoneOffset() * 60_000
@@ -176,13 +178,13 @@ export default function App() {
         <main className="content">
           <AppTopBar />
           {page === 'home' && <PlaceholderPage kind="home" />}
-          {page === 'realtime' && <PlaceholderPage kind="realtime" />}
+          {page === 'realtime' && <RealtimeAgentPage />}
           {page === 'transcribe' && <TranscribePage />}
           {page === 'history' && <HistoryPage />}
           {page === 'summary' && <SummaryPage />}
-          {page === 'events' && <PlaceholderPage kind="events" />}
           {page === 'models' && <ModelsPage />}
           {page === 'settings' && <SettingsPage />}
+          {page === 'voice' && <VoiceChangerPage />}
         </main>
       </div>
       <StatusBar />

@@ -21,6 +21,83 @@ class LLMTextResult(BaseModel):
     elapsed_sec: float | None = None
 
 
+LLMChatRole = Literal["system", "user", "assistant"]
+
+
+class LLMChatTextPart(BaseModel):
+    type: Literal["text"] = "text"
+    text: str = Field(..., min_length=1)
+
+    @field_validator("text")
+    @classmethod
+    def text_non_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
+class LLMChatImageUrl(BaseModel):
+    url: str = Field(..., min_length=1)
+
+    @field_validator("url")
+    @classmethod
+    def url_non_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
+class LLMChatImagePart(BaseModel):
+    type: Literal["image_url"] = "image_url"
+    image_url: LLMChatImageUrl
+
+
+LLMChatContent = str | list[LLMChatTextPart | LLMChatImagePart]
+
+
+class LLMChatMessage(BaseModel):
+    role: LLMChatRole
+    content: LLMChatContent
+
+    @field_validator("content")
+    @classmethod
+    def content_non_blank(cls, value: LLMChatContent) -> LLMChatContent:
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                raise ValueError("must not be blank")
+            return value
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
+class LLMChatRequest(BaseModel):
+    messages: list[LLMChatMessage] = Field(..., min_length=1, max_length=40)
+    model: str = Field(..., min_length=1)
+    base_url: str = Field(..., min_length=1)
+    api_token: str = Field(..., min_length=1)
+    provider: str | None = None
+    temperature: float = Field(0.7, ge=0, le=2)
+
+    @field_validator("model", "base_url", "api_token")
+    @classmethod
+    def chat_non_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
+class LLMChatResult(BaseModel):
+    message: LLMChatMessage
+    model: str
+    provider: str | None = None
+    elapsed_sec: float | None = None
+
+
 class LLMProcessRequest(BaseModel):
     text: str = Field(..., min_length=1)
     operation: LLMOperation
@@ -78,6 +155,25 @@ class LLMModelsResult(BaseModel):
     status_code: int | None = None
     message: str | None = None
     elapsed_sec: float | None = None
+
+
+class LLMSpeechRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=4000)
+    model: str = Field(..., min_length=1)
+    voice: str = Field("alloy", min_length=1)
+    base_url: str = Field(..., min_length=1)
+    api_token: str = Field(..., min_length=1)
+    provider: str | None = None
+    response_format: str = Field("mp3", pattern=r"^(mp3|opus|aac|flac|wav|pcm)$")
+    speed: float = Field(1.0, ge=0.25, le=4.0)
+
+    @field_validator("text", "model", "voice", "base_url", "api_token", "response_format")
+    @classmethod
+    def speech_non_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
 
 
 class ArchiveSummaryRequest(BaseModel):

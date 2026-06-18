@@ -1,15 +1,89 @@
-import { useEffect, useMemo, useState } from 'react'
-import { ASRApi, type LLMModelsResult, type ModelInfo } from '@/services/api'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ASRApi, type HiggsHealthResult, type HiggsVoicePreset, type HiggsVoicesResult, type LLMModelsResult, type ModelInfo } from '@/services/api'
 import { getProviderPreset, LLM_PROVIDER_PRESETS, type LLMProvider } from '@/services/llmProviders'
-import { useASRStore } from '@/store/useASRStore'
+import { useASRStore, type AsrModelConfig } from '@/store/useASRStore'
 
-const builtInEngines = ['whisper', 'vosk', 'sherpa', 'fireredasr2', 'wenet']
-type ModelTab = 'asr' | 'llm' | 'translate'
+const builtInEngines = ['fireredasr2', 'sensevoice', 'qwen3asr', 'whisper']
+type ModelTab = 'asr' | 'llm' | 'translate' | 'tts'
 
-const defaultPayloads: Record<string, Record<string, unknown>> = {
-  whisper: { model_name: 'base', device: 'cuda', compute_type: 'int8' },
-  fireredasr2: { model_name: 'FireRedASR2-AED', device: 'cuda' },
-  wenet: { model_name: 'FireRed-Wenet-1B', device: 'cuda', extra: { decode_mode: 'ctc_greedy_search', dtype: 'fp32', is_1b: true } }
+const defaultAsrConfigs: Record<string, AsrModelConfig> = {
+  fireredasr2: { modelName: 'FireRedASR2-AED', device: 'cuda', computeType: '', extraJson: '{"beam_size":3,"batch_size":1}' },
+  sensevoice: { modelName: 'SenseVoiceSmall', device: 'cuda:0', computeType: '', extraJson: '{"batch_size_s":60}' },
+  qwen3asr: { modelName: 'Qwen/Qwen3-ASR-1.7B', device: 'cuda:0', computeType: 'bfloat16', extraJson: '{}' },
+  whisper: { modelName: 'base', device: 'cpu', computeType: 'int8', extraJson: '{}' }
+}
+
+const engineLabels: Record<string, string> = {
+  fireredasr2: 'FireRedASR2',
+  sensevoice: 'SenseVoice',
+  qwen3asr: 'Qwen3-ASR',
+  whisper: 'Whisper'
+}
+
+const higgsEmotionOptions = [
+  ['', '无'],
+  ['affection', '亲切 / 爱意'],
+  ['amusement', '愉快 / 好笑'],
+  ['anger', '愤怒'],
+  ['arousal', '高唤醒 / 强烈感'],
+  ['awe', '敬畏 / 惊叹'],
+  ['bitterness', '苦涩 / 怨恨'],
+  ['confusion', '困惑'],
+  ['contemplation', '沉思'],
+  ['contentment', '满足 / 平静'],
+  ['determination', '坚定'],
+  ['disgust', '厌恶'],
+  ['elation', '喜悦 / 兴高采烈'],
+  ['enthusiasm', '热情 / 兴奋'],
+  ['fear', '恐惧'],
+  ['helplessness', '无助'],
+  ['longing', '渴望 / 思念'],
+  ['pride', '自豪 / 自信'],
+  ['relief', '如释重负'],
+  ['sadness', '悲伤'],
+  ['shame', '羞愧'],
+  ['surprise', '惊讶']
+] as const
+
+const higgsStyleOptions = [
+  ['', '无'],
+  ['singing', '歌唱式'],
+  ['shouting', '喊叫'],
+  ['whispering', '耳语']
+] as const
+
+const higgsProsodySpeedOptions = [
+  ['', '无'],
+  ['speed_very_slow', '很慢 ≈0.65x'],
+  ['speed_slow', '慢 ≈0.85x'],
+  ['speed_fast', '快 ≈1.2x'],
+  ['speed_very_fast', '很快 ≈1.4x']
+] as const
+
+const higgsPitchOptions = [
+  ['', '无'],
+  ['pitch_low', '低音高 ≈-3 半音'],
+  ['pitch_high', '高音高 ≈+2.5 半音']
+] as const
+
+const higgsExpressivenessOptions = [
+  ['', '无'],
+  ['expressive_high', '高表现力'],
+  ['expressive_low', '低表现力 / 平直']
+] as const
+
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('参考音频读取失败'))
+    reader.readAsDataURL(file)
+  })
+}
+
+async function dataUrlToBlob(dataUrl: string) {
+  const response = await fetch(dataUrl)
+  return response.blob()
 }
 
 export function ModelsPage() {
@@ -22,10 +96,29 @@ export function ModelsPage() {
   const [error, setError] = useState('')
   const [llmModels, setLlmModels] = useState<LLMModelsResult | null>(null)
   const [translationModels, setTranslationModels] = useState<LLMModelsResult | null>(null)
+  const [ttsHealth, setTtsHealth] = useState<HiggsHealthResult | null>(null)
+  const [ttsProbe, setTtsProbe] = useState(false)
+  const [ttsDialogOpen, setTtsDialogOpen] = useState(false)
+  const [voicePresets, setVoicePresets] = useState<HiggsVoicePreset[]>([])
+  const [voicePresetBusy, setVoicePresetBusy] = useState(false)
+  const [referenceTextBusy, setReferenceTextBusy] = useState(false)
+  const [expandedAsrEngine, setExpandedAsrEngine] = useState<string>('sensevoice')
   const [modelProbe, setModelProbe] = useState<'llm' | 'translate' | ''>('')
+  const referenceAudioRef = useRef<HTMLAudioElement | null>(null)
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
   const llmPreset = getProviderPreset(settings.llmProvider)
   const translationPreset = getProviderPreset(settings.translationProvider)
+  const currentVoicePreset = voicePresets.find((preset) => preset.name === settings.higgsTtsVoice)
+  const ttsVoiceCount = Array.from(new Set([...settings.higgsTtsVoices, ...voicePresets.map((preset) => preset.name)])).filter(Boolean).length
+  const referenceSource = settings.higgsTtsReferenceCodesJson.trim()
+    ? 'Code JSON'
+    : settings.higgsTtsReferenceAudioName
+      ? settings.higgsTtsReferenceAudioName
+      : settings.higgsTtsReferenceUrl.trim()
+        ? '参考音频链接'
+        : currentVoicePreset
+          ? '已保存音色'
+          : '未设置'
 
   const refresh = async () => {
     try {
@@ -72,10 +165,18 @@ export function ModelsPage() {
     api
   ])
 
+  useEffect(() => {
+    if (activeTab !== 'tts') return
+    const timer = window.setTimeout(() => {
+      void refreshTtsRuntime()
+    }, 500)
+    return () => window.clearTimeout(timer)
+  }, [activeTab, settings.higgsTtsBaseUrl, api])
+
   const modelList = Array.isArray(models) ? models : []
   const rows: ModelInfo[] = builtInEngines.map((engine) => modelList.find((model) => model.engine === engine) || {
     engine,
-    model_name: defaultPayloads[engine]?.model_name as string || engine,
+    model_name: settings.asrModelConfigs[engine]?.modelName || defaultAsrConfigs[engine]?.modelName || engine,
     is_loaded: false,
     device: null,
     compute_type: null,
@@ -83,10 +184,36 @@ export function ModelsPage() {
     extra: {}
   })
 
+  const updateAsrConfig = (engine: string, patch: Partial<AsrModelConfig>) => {
+    const current = settings.asrModelConfigs[engine] || defaultAsrConfigs[engine]
+    updateSettings({
+      asrModelConfigs: {
+        ...settings.asrModelConfigs,
+        [engine]: { ...current, ...patch }
+      }
+    })
+  }
+
+  const asrLoadPayload = (engine: string) => {
+    const config = settings.asrModelConfigs[engine] || defaultAsrConfigs[engine]
+    let extra: Record<string, unknown> = {}
+    try {
+      extra = config.extraJson.trim() ? JSON.parse(config.extraJson) as Record<string, unknown> : {}
+    } catch {
+      throw new Error(`${engine} 的参数 JSON 无效`)
+    }
+    return {
+      model_name: config.modelName,
+      device: config.device,
+      compute_type: config.computeType || undefined,
+      extra
+    }
+  }
+
   const load = async (engine: string) => {
     setBusy(engine)
     try {
-      await api.loadModel(engine, defaultPayloads[engine] || {})
+      await api.loadModel(engine, asrLoadPayload(engine))
       await refresh()
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '模型加载失败')
@@ -171,6 +298,130 @@ export function ModelsPage() {
     else updateSettings({ llmModel: model })
   }
 
+  const refreshVoicePresets = async () => {
+    const result = await api.higgsVoicePresets()
+    setVoicePresets(result.presets)
+    const voices = Array.from(new Set(['default', ...settings.higgsTtsVoices, ...result.voices, settings.higgsTtsVoice]
+      .filter((voice): voice is string => typeof voice === 'string' && Boolean(voice.trim()))
+      .map((voice) => voice.trim())))
+    updateSettings({ higgsTtsVoices: voices })
+    return result.presets
+  }
+
+  const refreshTtsRuntime = async () => {
+    const baseUrl = settings.higgsTtsBaseUrl.trim() || 'http://localhost:8002'
+    setTtsProbe(true)
+    setError('')
+    try {
+      const health = await api.higgsHealth(baseUrl)
+      setTtsHealth(health)
+      const voiceResult: HiggsVoicesResult = await api.higgsVoices(baseUrl).catch(() => ({ voices: [] }))
+      const localPresets = voiceResult.presets || await refreshVoicePresets().catch(() => [])
+      if (voiceResult.presets) setVoicePresets(voiceResult.presets)
+      const localVoices = localPresets.map((preset) => preset.name)
+      const voices = Array.from(new Set(['default', ...settings.higgsTtsVoices, ...voiceResult.voices, ...localVoices, settings.higgsTtsVoice]
+        .filter((voice): voice is string => typeof voice === 'string' && Boolean(voice.trim()))
+        .map((voice) => voice.trim())))
+      updateSettings({
+        higgsTtsBaseUrl: baseUrl,
+        higgsTtsVoices: voices,
+        higgsTtsVoice: voices.includes(settings.higgsTtsVoice) ? settings.higgsTtsVoice : 'default'
+      })
+    } catch (ttsError) {
+      setTtsHealth({
+        connected: false,
+        base_url: baseUrl,
+        elapsed_sec: 0,
+        message: ttsError instanceof Error ? ttsError.message : 'TTS 服务检查失败'
+      })
+    } finally {
+      setTtsProbe(false)
+    }
+  }
+
+  const applyVoicePreset = (preset: HiggsVoicePreset) => {
+    updateSettings({
+      higgsTtsVoice: preset.name,
+      higgsTtsReferenceAudioDataUrl: preset.reference_audio || '',
+      higgsTtsReferenceAudioName: preset.reference_audio ? `${preset.name} · 已保存音频` : '',
+      higgsTtsReferenceUrl: preset.reference_url || '',
+      higgsTtsReferenceText: preset.reference_text || '',
+      higgsTtsReferenceCodesJson: preset.reference_codes_json || ''
+    })
+  }
+
+  const saveVoicePreset = async () => {
+    const name = settings.higgsTtsVoice.trim()
+    if (!name) {
+      setError('请先填写音色名')
+      return
+    }
+    if (!settings.higgsTtsReferenceAudioDataUrl && !settings.higgsTtsReferenceUrl.trim() && !settings.higgsTtsReferenceCodesJson.trim()) {
+      setError('请至少上传参考音频、填写参考音频链接或填写 Code JSON')
+      return
+    }
+    setVoicePresetBusy(true)
+    setError('')
+    try {
+      const result = await api.saveHiggsVoicePreset({
+        name,
+        higgs_base_url: settings.higgsTtsBaseUrl.trim() || 'http://localhost:8002',
+        reference_audio: settings.higgsTtsReferenceAudioDataUrl,
+        reference_url: settings.higgsTtsReferenceUrl,
+        reference_text: settings.higgsTtsReferenceText,
+        reference_codes_json: settings.higgsTtsReferenceCodesJson
+      })
+      setVoicePresets(result.presets)
+      const voices = Array.from(new Set(['default', ...settings.higgsTtsVoices, ...result.voices, name]
+        .filter((voice) => voice.trim())
+        .map((voice) => voice.trim())))
+      updateSettings({ higgsTtsVoice: result.preset.name, higgsTtsVoices: voices })
+    } catch (presetError) {
+      setError(presetError instanceof Error ? presetError.message : '音色保存失败')
+    } finally {
+      setVoicePresetBusy(false)
+    }
+  }
+
+  const loadReferenceAudio = async (file: File | undefined) => {
+    if (!file) return
+    if (file.size > 50 * 1024 * 1024) {
+      setError('参考音频超过 50 MiB，请先裁剪或压缩')
+      return
+    }
+    try {
+      setError('')
+      updateSettings({
+        higgsTtsReferenceAudioDataUrl: await fileToDataUrl(file),
+        higgsTtsReferenceAudioName: file.name
+      })
+    } catch (audioError) {
+      setError(audioError instanceof Error ? audioError.message : '参考音频读取失败')
+    }
+  }
+
+  const generateReferenceText = async () => {
+    if (!settings.higgsTtsReferenceAudioDataUrl) {
+      setError('请先上传参考音频')
+      return
+    }
+    setReferenceTextBusy(true)
+    setError('')
+    try {
+      const audio = await dataUrlToBlob(settings.higgsTtsReferenceAudioDataUrl)
+      const result = await api.referenceAudioAsr(audio, settings.defaultEngine, settings.defaultLanguage)
+      if (!result.text.trim()) {
+        setError('ASR 未识别到参考音频文本')
+        return
+      }
+      updateSettings({ higgsTtsReferenceText: result.text.trim() })
+    } catch (asrError) {
+      setError(asrError instanceof Error ? asrError.message : '参考音频转文本失败')
+    } finally {
+      setReferenceTextBusy(false)
+    }
+  }
+
   const renderProviderProbe = (kind: 'llm' | 'translate', result: LLMModelsResult | null) => {
     const isChecking = modelProbe === kind
     const hasToken = kind === 'translate'
@@ -221,6 +472,7 @@ export function ModelsPage() {
           <button type="button" className={activeTab === 'asr' ? 'active' : ''} onClick={() => setActiveTab('asr')}>ASR 模型设置</button>
           <button type="button" className={activeTab === 'llm' ? 'active' : ''} onClick={() => setActiveTab('llm')}>大模型设置</button>
           <button type="button" className={activeTab === 'translate' ? 'active' : ''} onClick={() => setActiveTab('translate')}>翻译模型设置</button>
+          <button type="button" className={activeTab === 'tts' ? 'active' : ''} onClick={() => setActiveTab('tts')}>TTS 模型设置</button>
         </div>
         {error && <p className="error">{error}</p>}
         {activeTab === 'asr' && (
@@ -248,10 +500,6 @@ export function ModelsPage() {
                   <option value="concat">拼接结果</option>
                 </select>
               </label>
-              <label>
-                Whisper 模型
-                <input value={settings.whisperModel} onChange={(event) => updateSettings({ whisperModel: event.target.value })} />
-              </label>
               <label className="check">
                 <input type="checkbox" checked={settings.multiEngine} onChange={(event) => updateSettings({ multiEngine: event.target.checked })} />
                 启用多 ASR 引擎
@@ -266,27 +514,57 @@ export function ModelsPage() {
               </label>
             </div>
             <div className="model-table">
-              {rows.map((model) => (
-                <article key={model.engine} className="model-row">
-                  <div>
-                    <strong>{model.engine}</strong>
-                    <span>{model.model_name}</span>
-                  </div>
-                  <span className={model.is_loaded ? 'loaded' : 'unloaded'}>{model.is_loaded ? '已加载' : '未加载'}</span>
-                  <span>{model.device || '-'}</span>
-                  <span>{model.compute_type || '-'}</span>
-                  <div className="row-actions">
-                    <button type="button" onClick={() => updateSettings({ defaultEngine: model.engine, selectedEngines: [model.engine] })}>
-                      {settings.defaultEngine === model.engine ? '默认' : '设默认'}
+              {rows.map((model) => {
+                const config = settings.asrModelConfigs[model.engine] || defaultAsrConfigs[model.engine]
+                const isExpanded = expandedAsrEngine === model.engine
+                return (
+                  <article key={model.engine} className={isExpanded ? 'model-row expanded' : 'model-row'}>
+                    <button type="button" className="model-row-main" onClick={() => setExpandedAsrEngine(isExpanded ? '' : model.engine)}>
+                      <div>
+                        <strong>{engineLabels[model.engine] || model.engine}</strong>
+                        <span>{model.model_name}</span>
+                      </div>
+                      <span className={model.is_loaded ? 'loaded' : 'unloaded'}>{model.is_loaded ? '已加载' : '未加载'}</span>
+                      <span>{model.device || config.device || '-'}</span>
+                      <span>{model.compute_type || config.computeType || '-'}</span>
                     </button>
-                    {model.is_loaded ? (
-                      <button type="button" disabled={busy === model.engine} onClick={() => unload(model.engine)}>卸载</button>
-                    ) : (
-                      <button type="button" disabled={busy === model.engine} onClick={() => load(model.engine)}>加载</button>
+                    <div className="row-actions">
+                      <button type="button" onClick={() => updateSettings({ defaultEngine: model.engine, selectedEngines: [model.engine] })}>
+                        {settings.defaultEngine === model.engine ? '默认' : '设默认'}
+                      </button>
+                      {model.is_loaded ? (
+                        <button type="button" disabled={busy === model.engine} onClick={() => unload(model.engine)}>卸载</button>
+                      ) : (
+                        <button type="button" disabled={busy === model.engine} onClick={() => load(model.engine)}>加载</button>
+                      )}
+                    </div>
+                    {isExpanded && (
+                      <div className="model-detail-grid">
+                        <label>
+                          模型 / 路径
+                          <input value={config.modelName} onChange={(event) => updateAsrConfig(model.engine, { modelName: event.target.value })} />
+                        </label>
+                        <label>
+                          启动方式
+                          <select value={config.device} onChange={(event) => updateAsrConfig(model.engine, { device: event.target.value })}>
+                            <option value="cpu">CPU</option>
+                            <option value="cuda">CUDA</option>
+                            <option value="cuda:0">CUDA:0</option>
+                          </select>
+                        </label>
+                        <label>
+                          Compute / dtype
+                          <input value={config.computeType} placeholder={model.engine === 'qwen3asr' ? 'bfloat16' : 'int8 / float16 / float32'} onChange={(event) => updateAsrConfig(model.engine, { computeType: event.target.value })} />
+                        </label>
+                        <label className="wide">
+                          参数 JSON
+                          <textarea rows={3} value={config.extraJson} onChange={(event) => updateAsrConfig(model.engine, { extraJson: event.target.value })} />
+                        </label>
+                      </div>
                     )}
-                  </div>
-                </article>
-              ))}
+                  </article>
+                )
+              })}
             </div>
           </div>
         )}
@@ -358,6 +636,241 @@ export function ModelsPage() {
                 转写完成后自动翻译
               </label>
             </div>
+          </div>
+        )}
+        {activeTab === 'tts' && (
+          <div className="model-section">
+            <div className="tts-summary">
+              <div className={ttsHealth?.connected ? 'provider-status connected' : 'provider-status'}>
+                <div>
+                  <strong>{ttsProbe ? '正在连接 Higgs' : ttsHealth?.connected ? 'Higgs 已连接' : 'Higgs 未连接'}</strong>
+                  <span>{ttsHealth?.message || (ttsHealth ? `${ttsHealth.base_url} · ${ttsHealth.elapsed_sec.toFixed(3)}s` : '等待检测')}</span>
+                </div>
+                <button type="button" disabled={ttsProbe} onClick={() => void refreshTtsRuntime()}>
+                  {ttsProbe ? '刷新中' : '刷新'}
+                </button>
+              </div>
+              <div className="tts-summary-grid">
+                <article>
+                  <span>API 地址</span>
+                  <strong>{settings.higgsTtsBaseUrl || 'http://localhost:8002'}</strong>
+                </article>
+                <article>
+                  <span>当前音色</span>
+                  <strong>{settings.higgsTtsVoice || 'default'}</strong>
+                </article>
+                <article>
+                  <span>参考来源</span>
+                  <strong>{referenceSource}</strong>
+                </article>
+                <article>
+                  <span>已发现音色</span>
+                  <strong>{ttsVoiceCount}</strong>
+                </article>
+              </div>
+              <div className="model-settings-grid tts-inline-settings">
+                <label className="wide">
+                  Higgs API 地址
+                  <div className="inline-control">
+                    <input value={settings.higgsTtsBaseUrl} placeholder="localhost:8002 或 112.124.13.120:8002" onChange={(event) => updateSettings({ higgsTtsBaseUrl: event.target.value })} />
+                    <button type="button" disabled={ttsProbe} onClick={() => void refreshTtsRuntime()}>{ttsProbe ? '检查中' : '检查 / 刷新音色'}</button>
+                  </div>
+                </label>
+                <label>
+                  使用音色
+                  <select value={settings.higgsTtsVoice} onChange={(event) => updateSettings({ higgsTtsVoice: event.target.value })}>
+                    {Array.from(new Set(['default', ...settings.higgsTtsVoices, ...voicePresets.map((preset) => preset.name)])).map((voice) => (
+                      <option key={voice} value={voice}>{voice}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  输出格式
+                  <select value={settings.higgsTtsFormat} onChange={(event) => updateSettings({ higgsTtsFormat: event.target.value as typeof settings.higgsTtsFormat })}>
+                    <option value="wav">wav</option>
+                    <option value="mp3">mp3</option>
+                    <option value="flac">flac</option>
+                    <option value="opus">opus</option>
+                    <option value="aac">aac</option>
+                    <option value="pcm">pcm</option>
+                  </select>
+                </label>
+                <div className="wide model-subhead">
+                  <strong>句首控制标签</strong>
+                  <span>这些字段会作为官方控制标签加到每句文本开头。</span>
+                </div>
+                <label>
+                  情绪
+                  <select value={settings.higgsTtsEmotion} onChange={(event) => updateSettings({ higgsTtsEmotion: event.target.value })}>
+                    {higgsEmotionOptions.map(([value, label]) => <option key={value || 'none'} value={value}>{label}</option>)}
+                  </select>
+                </label>
+                <label>
+                  风格
+                  <select value={settings.higgsTtsStyle} onChange={(event) => updateSettings({ higgsTtsStyle: event.target.value })}>
+                    {higgsStyleOptions.map(([value, label]) => <option key={value || 'none'} value={value}>{label}</option>)}
+                  </select>
+                </label>
+                <label>
+                  模型韵律：语速
+                  <select value={settings.higgsTtsProsodySpeed} onChange={(event) => updateSettings({ higgsTtsProsodySpeed: event.target.value })}>
+                    {higgsProsodySpeedOptions.map(([value, label]) => <option key={value || 'none'} value={value}>{label}</option>)}
+                  </select>
+                </label>
+                <label>
+                  模型韵律：音高
+                  <select value={settings.higgsTtsPitch} onChange={(event) => updateSettings({ higgsTtsPitch: event.target.value })}>
+                    {higgsPitchOptions.map(([value, label]) => <option key={value || 'none'} value={value}>{label}</option>)}
+                  </select>
+                </label>
+                <label>
+                  模型韵律：表现力
+                  <select value={settings.higgsTtsExpressiveness} onChange={(event) => updateSettings({ higgsTtsExpressiveness: event.target.value })}>
+                    {higgsExpressivenessOptions.map(([value, label]) => <option key={value || 'none'} value={value}>{label}</option>)}
+                  </select>
+                </label>
+                <div className="wide model-subhead">
+                  <strong>生成参数</strong>
+                  <span>直接透传给 Higgs 语音接口。</span>
+                </div>
+                <label>
+                  API 播放速度 {settings.higgsTtsSpeed.toFixed(2)}x
+                  <input type="range" min="0.25" max="4" step="0.05" value={settings.higgsTtsSpeed} onChange={(event) => updateSettings({ higgsTtsSpeed: Number(event.target.value) })} />
+                </label>
+                <label>
+                  Temperature
+                  <input type="number" min="0" max="2" step="0.05" value={settings.higgsTtsTemperature} onChange={(event) => updateSettings({ higgsTtsTemperature: Number(event.target.value) })} />
+                </label>
+                <label>
+                  Top P
+                  <input type="number" min="0" max="1" step="0.01" value={settings.higgsTtsTopP} onChange={(event) => updateSettings({ higgsTtsTopP: Number(event.target.value) })} />
+                </label>
+                <label>
+                  Top K
+                  <input type="number" min="0" max="500" step="1" value={settings.higgsTtsTopK} onChange={(event) => updateSettings({ higgsTtsTopK: Number(event.target.value) })} />
+                </label>
+                <label>
+                  Seed
+                  <input type="number" min="-1" step="1" value={settings.higgsTtsSeed} onChange={(event) => updateSettings({ higgsTtsSeed: Number(event.target.value) })} />
+                </label>
+                <label>
+                  Max Tokens
+                  <input type="number" min="16" max="8192" step="64" value={settings.higgsTtsMaxNewTokens} onChange={(event) => updateSettings({ higgsTtsMaxNewTokens: Number(event.target.value) })} />
+                </label>
+                <label>
+                  流式首个 codec chunk 帧数
+                  <input type="number" min="0" max="16" step="1" value={settings.higgsTtsInitialCodecChunkFrames} onChange={(event) => updateSettings({ higgsTtsInitialCodecChunkFrames: Number(event.target.value) })} />
+                </label>
+              </div>
+              <div className="tts-summary-actions">
+                <button type="button" className="primary" onClick={() => setTtsDialogOpen(true)}>
+                  上传 / 保存音色
+                </button>
+                <button type="button" onClick={() => void refreshVoicePresets()}>
+                  刷新已保存音色
+                </button>
+              </div>
+            </div>
+            {ttsDialogOpen && (
+              <div className="modal-backdrop" role="presentation" onMouseDown={() => setTtsDialogOpen(false)}>
+                <section className="modal-panel tts-modal" role="dialog" aria-modal="true" aria-labelledby="tts-modal-title" onMouseDown={(event) => event.stopPropagation()}>
+                  <div className="modal-head">
+                    <div>
+                      <h2 id="tts-modal-title">TTS 模型设置</h2>
+                      <p>配置 Higgs 服务、上传并保存音色，或调整生成参数。</p>
+                    </div>
+                    <button type="button" onClick={() => setTtsDialogOpen(false)}>关闭</button>
+                  </div>
+                  <div className="tts-modal-body">
+                    <div className="model-settings-grid">
+                      <label className="wide">
+                        保存为音色名
+                        <input
+                          list="higgs-tts-voices"
+                          value={settings.higgsTtsVoice}
+                          placeholder="给音色起一个名字"
+                          onChange={(event) => updateSettings({ higgsTtsVoice: event.target.value })}
+                          onBlur={(event) => updateSettings({ higgsTtsVoice: event.currentTarget.value.trim() || 'default' })}
+                        />
+                        <datalist id="higgs-tts-voices">
+                          {settings.higgsTtsVoices.map((voice) => <option key={voice} value={voice} />)}
+                        </datalist>
+                      </label>
+                      <div className="wide model-subhead">
+                        <strong>上传 / 保存音色</strong>
+                        <span>保存后后端会永久记录音色；之后只选择这个音色名，也会自动套用保存的参考信息。</span>
+                      </div>
+                      <label className="wide">
+                        参考音频
+                        <div className="inline-control">
+                          <input
+                            type="file"
+                            accept="audio/*"
+                            onChange={(event) => {
+                              void loadReferenceAudio(event.currentTarget.files?.[0])
+                              event.currentTarget.value = ''
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => updateSettings({ higgsTtsReferenceAudioDataUrl: '', higgsTtsReferenceAudioName: '' })}
+                            disabled={!settings.higgsTtsReferenceAudioDataUrl}
+                          >
+                            清除
+                          </button>
+                        </div>
+                        <small>{settings.higgsTtsReferenceAudioName || '未上传参考音频'}</small>
+                        {settings.higgsTtsReferenceAudioDataUrl && (
+                          <audio
+                            ref={referenceAudioRef}
+                            controls
+                            src={settings.higgsTtsReferenceAudioDataUrl}
+                          />
+                        )}
+                      </label>
+                      <label className="wide">
+                        参考音频链接
+                        <input value={settings.higgsTtsReferenceUrl} placeholder="https://.../reference.wav" onChange={(event) => updateSettings({ higgsTtsReferenceUrl: event.target.value })} />
+                      </label>
+                      <label className="wide">
+                        参考音频准确文本
+                        <div className="inline-control top">
+                          <textarea rows={3} value={settings.higgsTtsReferenceText} placeholder="强烈建议填写音频中实际说出的完整文本" onChange={(event) => updateSettings({ higgsTtsReferenceText: event.target.value })} />
+                          <button type="button" disabled={referenceTextBusy || !settings.higgsTtsReferenceAudioDataUrl} onClick={() => void generateReferenceText()}>
+                            {referenceTextBusy ? '识别中' : '当前 ASR 生成'}
+                          </button>
+                        </div>
+                      </label>
+                      <label className="wide">
+                        Code JSON
+                        <textarea rows={4} value={settings.higgsTtsReferenceCodesJson} placeholder="[[1,2,3,4,5,6,7,8], ...]" onChange={(event) => updateSettings({ higgsTtsReferenceCodesJson: event.target.value })} />
+                      </label>
+                      <div className="wide tts-save-row">
+                        <button type="button" className="primary" disabled={voicePresetBusy} onClick={() => void saveVoicePreset()}>
+                          {voicePresetBusy ? '保存中' : '保存音色到后端'}
+                        </button>
+                        <button type="button" disabled={voicePresetBusy} onClick={() => void refreshVoicePresets()}>
+                          刷新音色库
+                        </button>
+                      </div>
+                      <div className="wide voice-preset-list">
+                        {voicePresets.length ? voicePresets.map((preset) => (
+                          <article key={preset.name}>
+                            <div>
+                              <strong>{preset.name}</strong>
+                              <span>{preset.reference_codes_json ? 'Code JSON' : preset.reference_audio ? '上传音频' : preset.reference_url ? preset.reference_url : '未记录来源'}</span>
+                            </div>
+                            <button type="button" onClick={() => applyVoicePreset(preset)}>使用</button>
+                          </article>
+                        )) : (
+                          <p className="empty">还没有保存的音色。</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </section>
+              </div>
+            )}
           </div>
         )}
       </section>

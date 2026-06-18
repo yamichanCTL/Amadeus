@@ -1,6 +1,6 @@
 import { useASRStore, type AppPage } from '@/store/useASRStore'
 
-const pageCopy: Record<'home' | 'realtime' | 'events', { title: string; body: string; action: string; target: AppPage }> = {
+const pageCopy: Record<'home' | 'realtime', { title: string; body: string; action: string; target: AppPage }> = {
   home: {
     title: '首页',
     body: '集中查看转写、实时识别、历史记录和模型状态。',
@@ -12,16 +12,10 @@ const pageCopy: Record<'home' | 'realtime' | 'events', { title: string; body: st
     body: '实时识别入口已接入文件转写工作台，可直接启动实时识别。',
     action: '进入实时识别',
     target: 'transcribe'
-  },
-  events: {
-    title: '事件检测',
-    body: '事件检测入口已开放，后续可接入关键词、异常声音和业务事件规则。',
-    action: '查看历史记录',
-    target: 'history'
   }
 }
 
-export function PlaceholderPage({ kind }: { kind: 'home' | 'realtime' | 'events' }) {
+export function PlaceholderPage({ kind }: { kind: 'home' | 'realtime' }) {
   const setPage = useASRStore((state) => state.setPage)
   const copy = pageCopy[kind]
 

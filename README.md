@@ -76,6 +76,28 @@ uv sync --all-extras
 cd /home/yami/AI/asrapp/backend
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
+
+## 1. tts启动 sglang-omni API 服务 (port 8002)
+cd /home/yami/AI/audio/TTS/higgs-audio/thirdparty/sglang-omni
+
+PATH="/home/yami/AI/audio/TTS/higgs-audio/thirdparty/sglang-omni/.venv/bin:$PATH" \
+FLASHINFER_CUDA_ARCH_LIST=9.0a \
+SGLANG_OMNI_STARTUP_TIMEOUT=1800 \
+.venv/bin/sgl-omni serve \
+  --model-path /home/yami/AI/audio/TTS/higgs-audio/higgs-audio-v3-tts-4b \
+  --port 8002 \
+  --stages.2.factory_args.server_args_overrides.mem_fraction_static 0.6 \
+  --stages.2.factory_args.server_args_overrides.max_running_requests 1
+
+
+## 2. tts启动 Gradio WebUI (port 8003)
+HIGGS_API_BASE=http://127.0.0.1:8002 \
+GRADIO_SERVER_NAME=0.0.0.0 \
+GRADIO_SERVER_PORT=8003 \
+HIGGS_OUTPUT_DIR=/home/yami/AI/audio/TTS/higgs-audio/webui/outputs \
+/home/yami/AI/audio/TTS/higgs-audio/.venv/bin/python /home/yami/AI/audio/TTS/higgs-audio/webui.py
+
+
 ## 后台启动
 nohup uv run uvicorn app.main:app \
   --host 0.0.0.0 \

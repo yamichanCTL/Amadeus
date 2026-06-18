@@ -88,14 +88,6 @@ class Settings(BaseSettings):
     default_qwen3asr_device: str = "cuda:0"
     qwen3asr_torch_dtype: str = "bfloat16"
 
-    # Vosk
-    default_vosk_model: str = "vosk-model-cn-0.22"
-
-    # Sherpa-onnx
-    default_sherpa_model: str = (
-        "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
-    )
-
     # ── Pipeline feature flags ─────────────────────────────────────────────
     enable_vad: bool = False
     enable_denoise: bool = False
@@ -131,6 +123,12 @@ class Settings(BaseSettings):
     # ── CORS ──────────────────────────────────────────────────────────────────
     allowed_origins: list[str] = ["http://localhost:3000", "http://localhost:5173"]
 
+    # ── LLM defaults (for frontend auto-configuration) ────────────────────────
+    llm_default_api_token: str = ""
+    llm_default_base_url: str = "https://api.deepseek.com"
+    llm_default_model: str = "deepseek-chat"
+    llm_default_provider: str = "deepseek"
+
     # ─────────────────────────────────────────────────────────────────────────
     @field_validator("allowed_origins", mode="before")
     @classmethod
@@ -153,7 +151,7 @@ class Settings(BaseSettings):
         ):
             path.mkdir(parents=True, exist_ok=True)
         # Create per-engine model subdirs
-        for engine in ("fireredasr2", "whisper", "vosk", "sherpa", "qwen3asr"):
+        for engine in ("fireredasr2", "whisper", "sensevoice", "qwen3asr"):
             (self.models_dir / engine).mkdir(parents=True, exist_ok=True)
         # DB directory
         if self.database_url.startswith("sqlite"):
@@ -217,14 +215,6 @@ class Settings(BaseSettings):
     def whisper_model_path(self, model_name: str | None = None) -> Path:
         name = model_name or self.default_whisper_model
         return self.models_dir / "whisper" / name
-
-    def vosk_model_path(self, model_name: str | None = None) -> Path:
-        name = model_name or self.default_vosk_model
-        return self.models_dir / "vosk" / name
-
-    def sherpa_model_path(self, model_name: str | None = None) -> Path:
-        name = model_name or self.default_sherpa_model
-        return self.models_dir / "sherpa" / name
 
     def fireredasr2_model_path(self, model_name: str | None = None) -> Path:
         if model_name is None or model_name == self.default_fireredasr2_model:

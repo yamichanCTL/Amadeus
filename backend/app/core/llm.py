@@ -16,11 +16,15 @@ from app.core.archive import build_summary_transcript
 from app.schemas.llm import (
     ArchiveSummaryRequest,
     ArchiveSummaryResult,
+    LLMChatMessage,
+    LLMChatRequest,
+    LLMChatResult,
     LLMModelsRequest,
     LLMModelsResult,
     LLMOperation,
     LLMProcessRequest,
     LLMTextResult,
+    LLMSpeechRequest,
 )
 
 
@@ -40,6 +44,15 @@ def _models_url(base_url: str, provider: str | None = None) -> str:
     if root.endswith("/models"):
         return root
     return f"{root}/models"
+
+
+def _audio_speech_url(base_url: str) -> str:
+    root = base_url.rstrip("/")
+    if root.endswith("/audio/speech"):
+        return root
+    if root.endswith("/chat/completions"):
+        root = root.removesuffix("/chat/completions")
+    return f"{root}/audio/speech"
 
 
 def _prompt_for(request: LLMProcessRequest) -> tuple[str, str]:
@@ -83,6 +96,47 @@ async def process_text(request: LLMProcessRequest) -> LLMTextResult:
         model=request.model,
         elapsed_sec=time.perf_counter() - started,
     )
+
+
+async def chat(request: LLMChatRequest) -> LLMChatResult:
+    started = time.perf_counter()
+    text = await _chat_completion_messages(
+        model=request.model,
+        base_url=request.base_url,
+        api_token=request.api_token,
+        messages=[message.model_dump() for message in request.messages],
+        temperature=request.temperature,
+        timeout=90.0,
+    )
+    return LLMChatResult(
+        message=LLMChatMessage(role="assistant", content=text),
+        model=request.model,
+        provider=request.provider,
+        elapsed_sec=time.perf_counter() - started,
+    )
+
+
+async def chat_stream(request: LLMChatRequest) -> AsyncIterator[dict]:
+    started = time.perf_counter()
+    parts: list[str] = []
+    async for delta in _chat_completion_messages_stream(
+        model=request.model,
+        base_url=request.base_url,
+        api_token=request.api_token,
+        messages=[message.model_dump() for message in request.messages],
+        temperature=request.temperature,
+        timeout=90.0,
+    ):
+        parts.append(delta)
+        yield {"type": "delta", "text": delta}
+
+    result = LLMChatResult(
+        message=LLMChatMessage(role="assistant", content="".join(parts).strip()),
+        model=request.model,
+        provider=request.provider,
+        elapsed_sec=time.perf_counter() - started,
+    )
+    yield {"type": "done", "result": result.model_dump(mode="json")}
 
 
 async def run_auto_processing(
@@ -170,6 +224,40 @@ async def list_provider_models(request: LLMModelsRequest) -> LLMModelsResult:
             message=f"模型列表响应不是有效 JSON: {exc}",
             elapsed_sec=time.perf_counter() - started,
         )
+
+
+async def synthesize_speech(request: LLMSpeechRequest) -> tuple[bytes, str]:
+    payload = {
+        "model": request.model,
+        "input": request.text,
+        "voice": request.voice,
+        "response_format": request.response_format,
+        "speed": request.speed,
+    }
+    headers = {
+        "Authorization": f"Bearer {request.api_token}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(
+            _audio_speech_url(request.base_url),
+            json=payload,
+            headers=headers,
+        )
+        response.raise_for_status()
+    content_type = response.headers.get("content-type") or _speech_media_type(request.response_format)
+    return response.content, content_type
+
+
+def _speech_media_type(response_format: str) -> str:
+    return {
+        "mp3": "audio/mpeg",
+        "opus": "audio/ogg",
+        "aac": "audio/aac",
+        "flac": "audio/flac",
+        "wav": "audio/wav",
+        "pcm": "application/octet-stream",
+    }.get(response_format, "application/octet-stream")
 
 
 async def summarize_archive(request: ArchiveSummaryRequest) -> ArchiveSummaryResult:
@@ -415,12 +503,31 @@ async def _chat_completion(
     temperature: float,
     timeout: float,
 ) -> str:
-    payload = {
-        "model": model,
-        "messages": [
+    return await _chat_completion_messages(
+        model=model,
+        base_url=base_url,
+        api_token=api_token,
+        messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
+        temperature=temperature,
+        timeout=timeout,
+    )
+
+
+async def _chat_completion_messages(
+    *,
+    model: str,
+    base_url: str,
+    api_token: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+    timeout: float,
+) -> str:
+    payload = {
+        "model": model,
+        "messages": messages,
         "temperature": temperature,
     }
     headers = {
@@ -450,12 +557,32 @@ async def _chat_completion_stream(
     temperature: float,
     timeout: float,
 ) -> AsyncIterator[str]:
-    payload = {
-        "model": model,
-        "messages": [
+    async for delta in _chat_completion_messages_stream(
+        model=model,
+        base_url=base_url,
+        api_token=api_token,
+        messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
+        temperature=temperature,
+        timeout=timeout,
+    ):
+        yield delta
+
+
+async def _chat_completion_messages_stream(
+    *,
+    model: str,
+    base_url: str,
+    api_token: str,
+    messages: list[dict[str, str]],
+    temperature: float,
+    timeout: float,
+) -> AsyncIterator[str]:
+    payload = {
+        "model": model,
+        "messages": messages,
         "temperature": temperature,
         "stream": True,
     }

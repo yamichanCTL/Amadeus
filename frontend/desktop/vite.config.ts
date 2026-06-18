@@ -12,7 +12,16 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    strictPort: true
+    strictPort: true,
+    // Proxy API + WebSocket to backend — essential for WSL2 where
+    // the Windows→WSL2 localhost forwarder can drop WebSocket upgrades.
+    proxy: {
+      '/v1': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+        ws: true,               // forward WebSocket upgrade
+      },
+    },
   },
   build: {
     outDir: 'dist',

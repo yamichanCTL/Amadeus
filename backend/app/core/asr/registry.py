@@ -25,17 +25,11 @@ def _register_defaults() -> None:
     from app.core.asr.engines.sensevoice import SenseVoiceEngine
     from app.core.asr.engines.qwen3asr import Qwen3ASREngine
     from app.core.asr.engines.whisper import WhisperEngine
-    from app.core.asr.engines.vosk import VoskEngine
-    from app.core.asr.engines.sherpa import SherpaEngine
-    from app.core.asr.engines.stream_stub import StreamStubEngine
 
     _REGISTRY["fireredasr2"] = FireRedASR2Engine
     _REGISTRY["sensevoice"] = SenseVoiceEngine
     _REGISTRY["qwen3asr"] = Qwen3ASREngine
     _REGISTRY["whisper"] = WhisperEngine
-    _REGISTRY["vosk"] = VoskEngine
-    _REGISTRY["sherpa"] = SherpaEngine
-    _REGISTRY["stream"] = StreamStubEngine
 
 
 # Populate on first import

@@ -7,6 +7,8 @@ Uses the async_client fixture (no real models, in-memory DB).
 
 from __future__ import annotations
 
+import json
+
 import httpx
 import pytest
 from httpx import AsyncClient
@@ -20,6 +22,8 @@ class _FakeLLMResponse:
             "choices": [{"message": {"content": "润色后的文本"}}],
         }
         self.status_code = status_code
+        self.content = b"fake-audio"
+        self.headers = {"content-type": "audio/mpeg"}
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -66,7 +70,14 @@ class _FakeLLMClient:
 
     async def post(self, url: str, json: dict, headers: dict) -> _FakeLLMResponse:
         self.calls.append({"url": url, "json": json, "headers": headers})
-        content = f"{json['messages'][1]['content'].splitlines()[0]} OK"
+        if url.endswith("/audio/speech"):
+            return _FakeLLMResponse({}, self.status_code)
+        raw_content = json["messages"][1]["content"]
+        if isinstance(raw_content, list):
+            first_text = next((part.get("text", "") for part in raw_content if part.get("type") == "text"), "multimodal")
+        else:
+            first_text = raw_content
+        content = f"{first_text.splitlines()[0]} OK"
         return _FakeLLMResponse({"choices": [{"message": {"content": content}}]}, self.status_code)
 
     def stream(self, method: str, url: str, json: dict, headers: dict) -> _FakeLLMStream:
@@ -252,6 +263,131 @@ async def test_llm_process_provider_failure(async_client: AsyncClient, fake_llm)
         },
     )
     assert resp.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_llm_chat_success(async_client: AsyncClient, fake_llm) -> None:
+    token = "secret-token"
+    resp = await async_client.post(
+        "/v1/llm/chat",
+        json={
+            "messages": [
+                {"role": "system", "content": "你是桌面语音 agent。"},
+                {"role": "user", "content": "刚才说了什么？"},
+            ],
+            "model": "demo-model",
+            "base_url": "https://llm.test/v1",
+            "api_token": token,
+            "provider": "deepseek",
+            "temperature": 0.6,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()
+    assert data["message"]["role"] == "assistant"
+    assert "OK" in data["message"]["content"]
+    assert data["model"] == "demo-model"
+    assert data["provider"] == "deepseek"
+    assert token not in resp.text
+    call = fake_llm.calls[0]
+    assert call["json"]["messages"][0]["role"] == "system"
+    assert call["json"]["messages"][1]["content"] == "刚才说了什么？"
+    assert call["json"]["temperature"] == 0.6
+
+
+@pytest.mark.asyncio
+async def test_llm_chat_accepts_image_content(async_client: AsyncClient, fake_llm) -> None:
+    resp = await async_client.post(
+        "/v1/llm/chat",
+        json={
+            "messages": [
+                {"role": "system", "content": "你是视觉 agent。"},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "请看截图"},
+                        {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,AAAA"}},
+                    ],
+                },
+            ],
+            "model": "vision-demo",
+            "base_url": "https://llm.test/v1",
+            "api_token": "secret-token",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    call = fake_llm.calls[0]
+    content = call["json"]["messages"][1]["content"]
+    assert content[0]["type"] == "text"
+    assert content[1]["type"] == "image_url"
+
+
+@pytest.mark.asyncio
+async def test_llm_chat_rejects_empty_messages(async_client: AsyncClient) -> None:
+    resp = await async_client.post(
+        "/v1/llm/chat",
+        json={
+            "messages": [],
+            "model": "demo-model",
+            "base_url": "https://llm.test/v1",
+            "api_token": "secret-token",
+        },
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_llm_chat_stream_success(async_client: AsyncClient, fake_llm) -> None:
+    resp = await async_client.post(
+        "/v1/llm/chat/stream",
+        json={
+            "messages": [
+                {"role": "system", "content": "你是桌面语音 agent。"},
+                {"role": "user", "content": "实时回复"},
+            ],
+            "model": "demo-model",
+            "base_url": "https://llm.test/v1",
+            "api_token": "secret-token",
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    events = [json.loads(line) for line in resp.text.splitlines()]
+    assert events[0] == {"type": "delta", "text": "流式"}
+    assert events[1] == {"type": "delta", "text": "总结"}
+    assert events[-1]["type"] == "done"
+    assert events[-1]["result"]["message"]["content"] == "流式总结"
+    call = fake_llm.calls[0]
+    assert call["stream"] is True
+    assert call["json"]["stream"] is True
+    assert call["json"]["messages"][1]["content"] == "实时回复"
+
+
+@pytest.mark.asyncio
+async def test_llm_speech_success(async_client: AsyncClient, fake_llm) -> None:
+    token = "secret-token"
+    resp = await async_client.post(
+        "/v1/llm/speech",
+        json={
+            "text": "你好，我是语音 agent。",
+            "model": "tts-demo",
+            "voice": "alloy",
+            "base_url": "https://llm.test/v1",
+            "api_token": token,
+            "response_format": "mp3",
+            "speed": 1.1,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.content == b"fake-audio"
+    assert resp.headers["content-type"].startswith("audio/mpeg")
+    assert token.encode() not in resp.content
+    call = fake_llm.calls[0]
+    assert call["url"] == "https://llm.test/v1/audio/speech"
+    assert call["headers"]["Authorization"] == f"Bearer {token}"
+    assert call["json"]["input"] == "你好，我是语音 agent。"
+    assert call["json"]["model"] == "tts-demo"
+    assert call["json"]["voice"] == "alloy"
+    assert call["json"]["speed"] == 1.1
 
 
 # ── Tasks endpoint ────────────────────────────────────────────────────────────
