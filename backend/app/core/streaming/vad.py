@@ -1,4 +1,4 @@
-"""VAD wrappers used by the pseudo-streaming ASR session."""
+"""VAD endpoint detectors for native streaming ASR sessions."""
 
 from __future__ import annotations
 
@@ -27,6 +27,8 @@ class VadDecision:
 
 
 class StreamingVad:
+    run_in_worker = False
+
     def reset(self) -> None:
         raise NotImplementedError
 
@@ -86,6 +88,8 @@ class EnergyVad(StreamingVad):
 class FireRedVad(StreamingVad):
     """FireRedVAD streaming endpoint detector."""
 
+    run_in_worker = True
+
     def __init__(self) -> None:
         src_path = Path(
             settings.firered_vad_src_path
@@ -116,21 +120,31 @@ class FireRedVad(StreamingVad):
             chunk_max_frame=30000,
         )
         self._vad: Any = FireRedStreamVad.from_pretrained(str(model_dir), config)
+        # FireRed is accurate at endpoints but can need more than one second
+        # before its first speech_start. Use an 80 ms energy onset in parallel
+        # so the native streaming ASR receives speech early enough for TTFA.
+        self._fast_vad = EnergyVad(
+            start_speech_ms=settings.stream_start_speech_ms,
+            end_silence_ms=settings.stream_end_silence_ms,
+            sample_rate=settings.stream_sample_rate,
+        )
 
     def reset(self) -> None:
         self._vad.reset()
+        self._fast_vad.reset()
 
     def accept_pcm(self, pcm_bytes: bytes) -> VadDecision:
         audio = np.frombuffer(pcm_bytes, dtype=np.int16)
         if audio.size == 0:
             return VadDecision(False)
+        fast = self._fast_vad.accept_pcm(pcm_bytes)
         results = self._vad.detect_chunk(audio)
         if not results:
-            return VadDecision(False)
+            return fast
         return VadDecision(
-            is_speech=any(bool(r.is_speech) for r in results),
-            speech_start=any(bool(r.is_speech_start) for r in results),
-            speech_end=any(bool(r.is_speech_end) for r in results),
+            is_speech=fast.is_speech or any(bool(r.is_speech) for r in results),
+            speech_start=fast.speech_start or any(bool(r.is_speech_start) for r in results),
+            speech_end=fast.speech_end or any(bool(r.is_speech_end) for r in results),
             confidence=max((float(r.smoothed_prob) for r in results), default=None),
         )
 

@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import time
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
+from typing import Any, AsyncGenerator
 
 import structlog  # type: ignore[import]
 from fastapi import FastAPI, Request, status
@@ -55,7 +55,7 @@ logger = structlog.get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # ── Startup ───────────────────────────────────────────────────────────────
-    logger.info("Starting ASR backend", env=settings.app_env)
+    logger.info("Starting Amadeus backend", env=settings.app_env)
 
     # Create DB tables (idempotent; use Alembic for migrations in prod)
     await init_db()
@@ -91,13 +91,36 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 # ── Application factory ────────────────────────────────────────────────────────
 
 def create_app() -> FastAPI:
+    # ── Raise multipart part size limit ─────────────────────────────────────
+    # Starlette hardcodes max_part_size=1 MiB in both Request._get_form()
+    # AND MultiPartParser.__init__ default arguments.  Monkey-patch the
+    # constructor to unconditionally use the app's upload limit instead,
+    # because every framework caller passes the same 1 MiB constant.
+    from starlette.formparsers import MultiPartParser
+
+    _orig_init = MultiPartParser.__init__
+
+    def _patched_init(
+        self,
+        *args: Any,
+        max_part_size: int = 1024 * 1024,
+        **kwargs: Any,
+    ) -> None:
+        _orig_init(
+            self,
+            *args,
+            max_part_size=settings.max_upload_size_bytes,
+            **kwargs,
+        )
+
+    MultiPartParser.__init__ = _patched_init  # type: ignore[method-assign]
+
     app = FastAPI(
-        title="ASR Backend",
+        title="Amadeus Backend",
         description=(
             "Offline-first Automatic Speech Recognition service.\n\n"
-            "Supports multiple engines (FireRedASR2, SenseVoice, Whisper, Qwen3-ASR) with "
-            "sync and async transcription, multi-engine parallel runs, "
-            "and a pluggable pre/post processing pipeline."
+            "Supports offline engines (FireRedASR2, SenseVoice, Whisper, Qwen3-ASR), "
+            "native X-ASR streaming, hotword correction, and a pluggable pipeline."
         ),
         version="0.1.0",
         docs_url="/docs",
@@ -112,10 +135,11 @@ def create_app() -> FastAPI:
         allow_origins=settings.allowed_origins,
         allow_origin_regex=(
             r"app://.*|file://.*|"
-            r"http://(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?|"
-            r"http://10\.\d+\.\d+\.\d+(:\d+)?|"
-            r"http://172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+(:\d+)?|"
-            r"http://192\.168\.\d+\.\d+(:\d+)?"
+            r"https?://(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?|"
+            r"https?://10\.\d+\.\d+\.\d+(:\d+)?|"
+            r"https?://172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+(:\d+)?|"
+            r"https?://192\.168\.\d+\.\d+(:\d+)?|"
+            r"https?://\d{1,3}(\.\d{1,3}){3}(:\d+)?"
         ),
         allow_credentials=True,
         allow_methods=["*"],
@@ -130,6 +154,7 @@ def create_app() -> FastAPI:
         response = await call_next(request)
         elapsed = time.perf_counter() - start
         response.headers["X-Process-Time"] = f"{elapsed:.4f}"
+        response.headers["Server-Timing"] = f"app;dur={elapsed * 1000:.2f}"
         return response
 
     # ── Global exception handler ───────────────────────────────────────────────
@@ -159,7 +184,7 @@ def create_app() -> FastAPI:
     @app.get("/", include_in_schema=False)
     async def root() -> JSONResponse:
         return JSONResponse(
-            {"message": "ASR Backend", "docs": "/docs", "health": "/v1/health"}
+            {"message": "Amadeus Backend", "docs": "/docs", "health": "/v1/health"}
         )
 
     return app

@@ -21,6 +21,7 @@ export type ArchiveTranscriptionArgs = {
 
 declare global {
   interface Window {
+    __amadeusE2EAudio?: () => Promise<unknown>
     electronAPI?: {
       minimize: () => void
       maximize: () => void
@@ -28,6 +29,8 @@ declare global {
       openAudioDialog: () => Promise<string[]>
       openDirectoryDialog: () => Promise<string>
       getDefaultArchiveDir: () => Promise<string>
+      getUserId: () => Promise<string>
+      saveUserId: (userId: string) => Promise<{ userId: string; path: string }>
       saveFileDialog: (name: string) => Promise<string>
       writeFile: (path: string, content: string) => Promise<boolean>
       readFileBase64: (path: string) => Promise<string>
@@ -43,7 +46,7 @@ declare global {
       unregisterMouseButton: () => Promise<boolean>
       injectText: (text: string) => Promise<boolean>
       textToClipboard: (text: string) => Promise<boolean>
-      showStatusOverlay: (status: string) => Promise<boolean>
+      showStatusOverlay: (status: string, level?: number, message?: string) => Promise<boolean>
       hideStatusOverlay: () => Promise<boolean>
       showCaptionOverlay: (text: string, options: CaptionOverlayOptions) => Promise<boolean>
       hideCaptionOverlay: () => Promise<boolean>

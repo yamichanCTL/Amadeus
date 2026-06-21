@@ -12,6 +12,7 @@ from app.api.v1 import (
     agents,
     auth,
     health,
+    hotwords,
     llm,
     models,
     records,
@@ -26,6 +27,7 @@ from app.api.v1 import (
 api_router = APIRouter(prefix="/v1")
 
 api_router.include_router(health.router)
+api_router.include_router(hotwords.router)
 api_router.include_router(auth.router)
 api_router.include_router(agents.router)
 api_router.include_router(agent_chat.router)

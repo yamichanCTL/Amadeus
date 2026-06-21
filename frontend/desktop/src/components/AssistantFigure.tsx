@@ -51,7 +51,7 @@ export function AssistantFigure({
     <img
       className={`${className} emotion-${emotion} action-${action}`.trim()}
       src={source}
-      alt="ASRAPP 助手"
+      alt="Amadeus 助手"
       draggable={false}
     />
   )

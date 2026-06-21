@@ -20,20 +20,9 @@ class TranscriptSegment(BaseModel):
     start: float = Field(..., ge=0, description="Start time in seconds")
     end: float = Field(..., ge=0, description="End time in seconds")
     text: str
-    speaker: str | None = None          # set when diarization is enabled
     confidence: float | None = Field(None, ge=0.0, le=1.0)
 
     model_config = {"from_attributes": True}
-
-
-# ── Per-engine result (used in multi-engine runs) ─────────────────────────────
-
-class EngineResult(BaseModel):
-    engine: str
-    full_text: str
-    segments: list[TranscriptSegment] = []
-    language: str | None = None
-    confidence: float | None = None
 
 
 # ── Transcription request (query params / form fields) ───────────────────────
@@ -44,10 +33,10 @@ class TranscribeOptions(BaseModel):
     All fields are optional; defaults come from app config.
     """
 
-    engines: list[str] = Field(
-        default=["fireredasr2"],
-        description="One or more engine names. Multiple = parallel run + merge.",
-        examples=[["fireredasr2"], ["fireredasr2", "whisper"]],
+    engine: str = Field(
+        default="fireredasr2",
+        description="Offline ASR engine name.",
+        examples=["fireredasr2", "sensevoice"],
     )
     language: str | None = Field(
         None,
@@ -60,27 +49,25 @@ class TranscribeOptions(BaseModel):
     # Pipeline toggles (override server-side defaults)
     enable_vad: bool | None = None
     enable_punctuation: bool | None = None
-    enable_diarize: bool | None = None
 
-    # Merge strategy when multiple engines are selected
-    merge_strategy: Literal["first", "vote", "concat"] = "first"
+    enable_hotwords: bool = True
 
     # Uploaded audio/result archive. Enabled by default so recognition records
     # are written under user/day/type for both short and long audio.
     allow_server_data_collection: bool = True
     archive_dir: str | None = None
     archive_category: str | None = None
+    user_id: str | None = Field(None, max_length=128, description="Desktop archive user ID.")
     llm: LLMAutoOptions | None = None
 
-    @field_validator("engines")
+    @field_validator("engine")
     @classmethod
-    def validate_engines(cls, v: list[str]) -> list[str]:
+    def validate_engine(cls, v: str) -> str:
         allowed = set(available_engines())
-        unknown = set(v) - allowed
-        if unknown:
-            raise ValueError(f"Unknown engine(s): {unknown}. Allowed: {allowed}")
-        if not v:
-            raise ValueError("At least one engine must be specified.")
+        if v not in allowed:
+            raise ValueError(f"Unknown engine: {v}. Allowed: {allowed}")
+        if v == "x-asr":
+            raise ValueError("x-asr is reserved for realtime streaming; choose an offline engine")
         return v
 
 
@@ -98,9 +85,8 @@ class TranscribeResponse(BaseModel):
     confidence: float | None = None
     duration_sec: float | None = None
     elapsed_sec: float | None = None
+    timing: dict[str, float] | None = None
 
-    # Present only in multi-engine runs
-    engine_results: list[EngineResult] | None = None
     llm_outputs: LLMOutputs | None = None
     llm_error: str | None = None
 

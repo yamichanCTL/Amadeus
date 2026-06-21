@@ -20,7 +20,7 @@
 
 | 端点 | 方法 | Content-Type | 说明 |
 |------|------|-------------|------|
-| `/v1/transcribe` | POST | `multipart/form-data` | 音频文件转写（<60s 同步，≥60s 异步） |
+| `/v1/transcribe` | POST | `multipart/form-data` | 音频文件识别（<60s 同步，≥60s 异步） |
 | `/v1/stream` | WS | — | WebSocket 流式转写 |
 
 **`POST /v1/transcribe` 表单字段：**
@@ -28,20 +28,48 @@
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `file` | File | 音频/视频文件 |
-| `options` | JSON string | 引擎、语言、标点、说话人分离等配置 |
+| `options` | JSON string | 引擎、语言、标点、热词和归档配置 |
 
 `options` 示例：
 
 ```json
 {
-  "engines": ["fireredasr2"],
+  "engine": "sensevoice",
   "language": "zh",
   "enable_punctuation": false,
-  "enable_diarize": false,
-  "merge_strategy": "first",
+  "enable_hotwords": true,
   "allow_server_data_collection": false
 }
 ```
+
+`WS /v1/stream` 和 `WS /v1/tts/higgs/stream` 的致命模型错误返回稳定结构：
+
+```json
+{
+  "type": "error",
+  "code": "gpu_out_of_memory",
+  "message": "显存不足：无法加载或运行 x-asr 模型，请先卸载其他 GPU 模型后重试。",
+  "model": "x-asr",
+  "fatal": true,
+  "session_id": "..."
+}
+```
+
+`code` 只取 `model_not_loaded` 或 `gpu_out_of_memory`。`fatal=true` 表示该错误发送后服务端将以 close code `1011` 结束 WebSocket，客户端不应继续发送音频。
+
+实时 ASR→Higgs WebSocket 还会在新 ASR job 命中近期 TTS 输出时返回非致命回声保护事件：
+
+```json
+{
+  "type": "echo_suppressed",
+  "job_id": 12,
+  "text": "我还有好多好多话",
+  "matched_tts_text": "我还有好多好多话",
+  "window_sec": 8.0
+}
+```
+
+该事件表示文本不会再次进入 TTS 队列，WebSocket 继续接收后续麦克风音频。
 
 **同步返回（短音频）：**
 
@@ -55,7 +83,13 @@
   "engine_used": "fireredasr2",
   "confidence": null,
   "duration_sec": 12.3,
-  "elapsed_sec": 1.2
+  "elapsed_sec": 1.2,
+  "timing": {
+    "model_ready_sec": 0.02,
+    "asr_sec": 0.43,
+    "punctuation_sec": 0.08,
+    "total_sec": 0.61
+  }
 }
 ```
 

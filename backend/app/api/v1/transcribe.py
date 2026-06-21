@@ -21,6 +21,7 @@ import io
 import json
 import logging
 import subprocess
+import time
 import uuid
 from pathlib import Path
 
@@ -31,9 +32,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.core.archive import archive_file_error_record, archive_file_record
 from app.core.asr.base import EngineOptions
-from app.core.asr.router import ModelRouter
+from app.core.asr.hotwords import get_hotword_manager
 from app.core.llm import run_auto_processing
-from app.core.pipeline.post.diarize import assign_speakers
 from app.core.pipeline.post.punctuation import restore_punctuation
 from app.db.crud import (
     create_task,
@@ -50,7 +50,6 @@ from app.dependencies import (
 )
 from app.schemas.llm import LLMOutputs
 from app.schemas.transcribe import (
-    EngineResult,
     TranscribeAsyncResponse,
     TranscribeOptions,
     TranscribeResponse,
@@ -67,7 +66,7 @@ settings = get_settings()
 def _parse_options(options_json: str | None) -> TranscribeOptions:
     """Parse the JSON `options` form field; fall back to defaults on error."""
     if not options_json:
-        return TranscribeOptions(engines=[settings.default_engine])
+        return TranscribeOptions(engine=settings.default_engine)
     try:
         data = json.loads(options_json)
         return TranscribeOptions.model_validate(data)
@@ -200,25 +199,30 @@ async def transcribe(
     `options` (optional JSON form field):
     ```json
     {
-      "engines": ["whisper"],
+      "engine": "whisper",
       "language": "zh",
       "whisper_model": "medium",
       "enable_punctuation": true,
-      "merge_strategy": "first"
+      "enable_hotwords": true
     }
     ```
     """
+    request_started = time.perf_counter()
+    timing: dict[str, float] = {}
     opts = _parse_options(options_json)
 
     # Read file bytes
     audio_bytes = await file.read()
+    timing["upload_read_sec"] = round(time.perf_counter() - request_started, 6)
     if len(audio_bytes) > settings.max_upload_size_bytes:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File exceeds {settings.max_upload_size_mb} MB limit.",
         )
 
+    probe_started = time.perf_counter()
     duration = _probe_duration(audio_bytes)
+    timing["audio_probe_sec"] = round(time.perf_counter() - probe_started, 6)
 
     # Resolve pipeline flags (request opts override server defaults)
     vad_on = opts.enable_vad if opts.enable_vad is not None else settings.enable_vad
@@ -227,16 +231,11 @@ async def transcribe(
         if opts.enable_punctuation is not None
         else settings.enable_punctuation
     )
-    diarize_on = (
-        opts.enable_diarize
-        if opts.enable_diarize is not None
-        else settings.enable_diarize
-    )
-
     # Create DB task row
+    task_started = time.perf_counter()
     task = await create_task(
         db,
-        engines=opts.engines,
+        engines=[opts.engine],
         filename=file.filename,
         duration_sec=duration,
         file_size_bytes=len(audio_bytes),
@@ -244,9 +243,10 @@ async def transcribe(
         engine_options={
             "language": opts.language,
             "task": opts.whisper_task,
-            "merge_strategy": opts.merge_strategy,
+            "enable_hotwords": opts.enable_hotwords,
             "allow_server_data_collection": opts.allow_server_data_collection,
             "archive_category": opts.archive_category,
+            "archive_user_id": opts.user_id,
             "llm": (
                 opts.llm.model_dump(mode="json", exclude={"api_token"}, exclude_none=True)
                 if opts.llm
@@ -258,10 +258,10 @@ async def transcribe(
         },
         vad_enabled=vad_on,
         punctuation_enabled=punc_on,
-        diarize_enabled=diarize_on,
         user_id=user.id if user else None,
     )
     await db.commit()
+    timing["task_create_sec"] = round(time.perf_counter() - task_started, 6)
 
     # ── Async path: long audio ─────────────────────────────────────────────
     is_long = duration is not None and duration > settings.sync_max_duration_sec
@@ -297,27 +297,41 @@ async def transcribe(
             extra={"model_size": opts.whisper_model} if opts.whisper_model else {},
         )
 
-        router_obj = ModelRouter(
-            manager=manager,
-            engines=opts.engines,
-            merge_strategy=opts.merge_strategy,
-        )
-        result = await router_obj.run(audio_bytes, engine_options)
+        model_started = time.perf_counter()
+        engine = await manager.get_engine(opts.engine)
+        timing["model_ready_sec"] = round(time.perf_counter() - model_started, 6)
+        asr_started = time.perf_counter()
+        result = await engine.transcribe(audio_bytes, engine_options)
+        timing["asr_sec"] = round(time.perf_counter() - asr_started, 6)
 
         # Post-pipeline
         if punc_on:
+            punctuation_started = time.perf_counter()
             result.full_text = await restore_punctuation(result.full_text, result.language)
+            timing["punctuation_sec"] = round(time.perf_counter() - punctuation_started, 6)
+            if len(result.segments) == 1:
+                result.segments[0].text = result.full_text
 
-        if diarize_on and result.segments:
-            audio_arr, sr = sf.read(io.BytesIO(audio_bytes), dtype="float32", always_2d=False)
-            result.segments = await assign_speakers(result.segments, audio_arr, sr)
+        hotword_started = time.perf_counter()
+        hotword_result = get_hotword_manager().apply(result.full_text, enabled=opts.enable_hotwords)
+        timing["hotword_sec"] = round(time.perf_counter() - hotword_started, 6)
+        result.full_text = hotword_result.text
+        if hotword_result.replacements or hotword_result.suggestions:
+            result.raw = dict(result.raw or {})
+            result.raw["hotwords"] = {
+                "replacements": hotword_result.replacements,
+                "suggestions": hotword_result.suggestions,
+            }
 
+        llm_started = time.perf_counter()
         llm_outputs, llm_error = await _run_llm_auto(result.full_text, opts)
+        timing["llm_sec"] = round(time.perf_counter() - llm_started, 6)
 
         # Persist
+        persist_started = time.perf_counter()
         segments_data = [
             {"start": s.start, "end": s.end, "text": s.text,
-             "speaker": s.speaker, "confidence": s.confidence}
+             "confidence": s.confidence}
             for s in result.segments
         ]
         transcript = await create_transcript(
@@ -328,12 +342,14 @@ async def transcribe(
             language=result.language,
             engine_used=result.engine_name,
             confidence=result.confidence,
-            raw_results=_raw_results_with_llm(result.raw, llm_outputs, llm_error),
+            raw_results=_raw_results_with_llm(
+                {**(result.raw or {}), "timing": timing}, llm_outputs, llm_error
+            ),
         )
         archive_file_record(
             audio_bytes=audio_bytes,
             suffix=Path(file.filename or "audio.wav").suffix or ".wav",
-            user_id=user.id if user else None,
+            user_id=user.id if user else opts.user_id,
             category=opts.archive_category or settings.upload_archive_category,
             text=result.full_text,
             engine=result.engine_name,
@@ -349,26 +365,16 @@ async def transcribe(
         # Reload task for elapsed_sec
         await update_task_status(db, task.id, TaskStatus.SUCCESS)
         await db.commit()
+        timing["persist_sec"] = round(time.perf_counter() - persist_started, 6)
+        timing["total_sec"] = round(time.perf_counter() - request_started, 6)
 
         segments_out = [
             TranscriptSegment(
                 start=s.start, end=s.end, text=s.text,
-                speaker=s.speaker, confidence=s.confidence,
+                confidence=s.confidence,
             )
             for s in result.segments
         ]
-
-        # Build multi-engine detail if applicable
-        engine_results = None
-        if len(opts.engines) > 1 and "all_engines" in result.raw:
-            engine_results = [
-                EngineResult(
-                    engine=eng,
-                    full_text=data.get("full_text", ""),
-                    confidence=data.get("confidence"),
-                )
-                for eng, data in result.raw["all_engines"].items()
-            ]
 
         return TranscribeResponse(
             task_id=task.id,
@@ -379,7 +385,7 @@ async def transcribe(
             engine_used=result.engine_name,
             confidence=result.confidence,
             duration_sec=duration,
-            engine_results=engine_results,
+            timing=timing,
             llm_outputs=llm_outputs,
             llm_error=llm_error,
         )
@@ -389,9 +395,9 @@ async def transcribe(
         archive_file_error_record(
             audio_bytes=audio_bytes,
             suffix=Path(file.filename or "audio.wav").suffix or ".wav",
-            user_id=user.id if user else None,
+            user_id=user.id if user else opts.user_id,
             category=opts.archive_category or settings.upload_archive_category,
-            engine=",".join(opts.engines),
+            engine=opts.engine,
             language=opts.language,
             duration_sec=duration,
             error=str(exc),

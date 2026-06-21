@@ -51,7 +51,6 @@ async def create_task(
     engine_options: dict[str, Any] | None = None,
     vad_enabled: bool = False,
     punctuation_enabled: bool = False,
-    diarize_enabled: bool = False,
     user_id: str | None = None,
 ) -> ASRTask:
     task = ASRTask(
@@ -65,7 +64,7 @@ async def create_task(
         engine_options=json.dumps(engine_options) if engine_options else None,
         vad_enabled=vad_enabled,
         punctuation_enabled=punctuation_enabled,
-        diarize_enabled=diarize_enabled,
+        diarize_enabled=False,
         status=TaskStatus.PENDING,
     )
     db.add(task)

@@ -72,6 +72,13 @@ def _build_response(task: object) -> TaskStatusResponse:  # type: ignore[type-ar
                     raw_error = raw_results.get("llm_error")
                     if isinstance(raw_error, str):
                         resp.llm_error = raw_error
+                    raw_timing = raw_results.get("timing")
+                    if isinstance(raw_timing, dict):
+                        resp.timing = {
+                            str(key): float(value)
+                            for key, value in raw_timing.items()
+                            if isinstance(value, (int, float))
+                        }
             except Exception:
                 pass
 

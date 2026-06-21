@@ -3,7 +3,7 @@ import { defineConfig } from 'vitepress'
 // https://vitepress.dev/reference/site-config
 export default defineConfig({
   lang: 'zh-CN',
-  title: 'ASRAPP',
+  title: 'Amadeus',
   description: 'Agentic Voice Assistant 项目文档',
   base: '/',
   ignoreDeadLinks: true,
@@ -17,9 +17,10 @@ export default defineConfig({
     nav: [
       { text: '首页', link: '/' },
       { text: '索引', link: '/README' },
-      { text: 'ASRAPP', link: '/asrapp/README' },
+      { text: 'Amadeus', link: '/asrapp/README' },
       { text: '桌面端', link: '/desktop/README' },
       { text: '开发环境', link: '/development/README' },
+      { text: '安装迁移', link: '/asrapp/installation/README' },
       { text: 'CHANGELOG', link: '/CHANGELOG' },
     ],
 
@@ -27,7 +28,7 @@ export default defineConfig({
     sidebar: {
       '/': [
         {
-          text: 'ASRAPP 文档',
+          text: 'Amadeus 文档',
           collapsed: false,
           items: [
             { text: '首页', link: '/' },
@@ -41,6 +42,8 @@ export default defineConfig({
           collapsed: false,
           items: [
             { text: '桌面端', link: '/desktop/README' },
+            { text: '语音识别', link: '/desktop/SPEECH_RECOGNITION' },
+            { text: '输入、浮窗与注入', link: '/desktop/INPUT_AND_OVERLAYS' },
             { text: 'TTS 音色与参数', link: '/desktop/TTS_VOICE' },
             { text: '开发环境', link: '/development/README' },
           ]
@@ -48,12 +51,24 @@ export default defineConfig({
       ],
       '/asrapp/': [
         {
-          text: '📱 ASRAPP',
+          text: '📱 Amadeus',
           collapsed: false,
           items: [
             { text: '项目总览', link: '/asrapp/README' },
             { text: '架构总览', link: '/asrapp/ARCHITECTURE' },
             { text: '快速开始', link: '/asrapp/QUICKSTART' },
+          ]
+        },
+        {
+          text: '🧰 安装与迁移',
+          collapsed: true,
+          items: [
+            { text: '安装总览', link: '/asrapp/installation/README' },
+            { text: '后端环境', link: '/asrapp/installation/BACKEND' },
+            { text: '桌面前端', link: '/asrapp/installation/DESKTOP' },
+            { text: 'Android', link: '/asrapp/installation/ANDROID' },
+            { text: '第三方库与模型', link: '/asrapp/installation/THIRD_PARTY_MODELS' },
+            { text: '迁移检查表', link: '/asrapp/installation/MIGRATION' },
           ]
         },
         {
@@ -95,7 +110,8 @@ export default defineConfig({
           items: [
             { text: 'ASR 总览', link: '/asrapp/asr/README' },
             { text: '引擎对比', link: '/asrapp/asr/ENGINES' },
-            { text: '伪流式设计', link: '/asrapp/asr/STREAMING' },
+            { text: '流式设计', link: '/asrapp/asr/STREAMING' },
+            { text: 'X-ASR 接入', link: '/asrapp/asr/X_ASR' },
           ]
         },
         {
@@ -134,7 +150,7 @@ export default defineConfig({
 
     // 页脚
     footer: {
-      message: 'ASRAPP Documentation',
+      message: 'Amadeus Documentation',
       copyright: 'Copyright © 2026',
     },
 

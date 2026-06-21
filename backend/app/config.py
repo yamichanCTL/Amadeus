@@ -50,8 +50,7 @@ class Settings(BaseSettings):
 
     # ── ASR engine defaults ───────────────────────────────────────────────────
     default_engine: str = "fireredasr2"
-    default_stream_engine: str = "sensevoice"
-    default_stream_final_engine: str = "fireredasr2"
+    default_stream_engine: str = "x-asr"
     preload_default_engine: bool = False
 
     # SenseVoice
@@ -71,7 +70,7 @@ class Settings(BaseSettings):
     fireredasr2_return_timestamp: bool = True
     fireredasr2_use_half: bool = False
 
-    # FireRedVAD for pseudo-streaming endpoint detection
+    # FireRedVAD for native streaming endpoint detection
     firered_vad_src_path: Path | None = None
     firered_vad_model_dir: Path = _BACKEND_ROOT / "models/fireredasr2/FireRedVAD/Stream-VAD"
     firered_vad_use_gpu: bool = False
@@ -79,8 +78,8 @@ class Settings(BaseSettings):
 
     # Whisper
     default_whisper_model: str = "base"
-    default_whisper_device: Literal["cpu", "cuda"] = "cpu"
-    default_whisper_compute_type: Literal["int8", "float16", "float32"] = "int8"
+    default_whisper_device: Literal["cpu", "cuda"] = "cuda"
+    default_whisper_compute_type: Literal["int8", "float16", "float32"] = "float16"
 
     # Qwen3-ASR
     default_qwen3asr_model: str = "Qwen/Qwen3-ASR-1.7B"
@@ -88,25 +87,34 @@ class Settings(BaseSettings):
     default_qwen3asr_device: str = "cuda:0"
     qwen3asr_torch_dtype: str = "bfloat16"
 
+    # X-ASR true streaming Zipformer
+    default_x_asr_model: str = "chunk-160ms-model"
+    x_asr_model_dir: Path = (
+        _PROJECT_ROOT
+        / "thirdparty/X-ASR/X-ASR-zh-en/deployment/models/chunk-160ms-model"
+    )
+    default_x_asr_provider: Literal["cpu", "cuda"] = "cuda"
+    x_asr_num_threads: int = 1
+    x_asr_text_format: Literal["none", "lower", "capitalize"] = "none"
+    x_asr_cuda_library_path: str = ""
+
     # ── Pipeline feature flags ─────────────────────────────────────────────
     enable_vad: bool = False
     enable_denoise: bool = False
     enable_punctuation: bool = False
-    enable_diarize: bool = False
+    punctuation_model: str = "ct-punc"
+    punctuation_device: str = "cpu"
 
     # ── Streaming ASR ─────────────────────────────────────────────────────
     stream_sample_rate: int = 16000
     stream_ring_keep_ms: int = 3000
-    stream_pre_roll_ms: int = 800
-    stream_partial_enabled: bool = True
-    stream_first_partial_after_ms: int = 400
-    stream_partial_interval_ms: int = 300
+    stream_pre_roll_ms: int = 700
     stream_end_silence_ms: int = 700
     stream_start_speech_ms: int = 80
     stream_min_segment_ms: int = 300
     stream_max_segment_ms: int = 10000
     stream_hard_max_segment_ms: int = 15000
-    stream_tail_keep_ms: int = 200
+    stream_tail_keep_ms: int = 1000
     stream_archive_category: str = "实时转录"
     upload_archive_category: str = "一段语音转写"
 
@@ -173,6 +181,7 @@ class Settings(BaseSettings):
             "fireredasr2_model_dir",
             "firered_vad_model_dir",
             "qwen3asr_model_dir",
+            "x_asr_model_dir",
         )
         for name in data_path_fields:
             value = getattr(self, name)

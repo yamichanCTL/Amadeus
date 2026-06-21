@@ -1,9 +1,10 @@
-# ASRAPP — Agentic Voice Assistant Platform
+# Amadeus — Agentic Voice Assistant Platform
 
 > **父文档**: [← 返回项目总览](../README.md)
 > **子文档**:
 > - [架构总览](ARCHITECTURE.md) — 系统鸟瞰图与双架构设计
 > - [快速开始](QUICKSTART.md) — 一键启动
+> - [环境安装与迁移](installation/README.md) — 后端、桌面、Android、第三方模型
 > - [Backend](backend/README.md) — FastAPI 后端服务
 > - [Runner](runner/README.md) — 轻量运行时管线
 > - [Frontend](frontend/README.md) — 桌面端 + 安卓端
@@ -14,7 +15,7 @@
 
 ## 项目定位
 
-ASRAPP 是一个 **AI 语音助手平台**，实现完整的闭环：
+Amadeus 是一个 **AI 语音助手平台**，实现完整的闭环：
 
 ```
 用户语音 → ASR 识别 → Agent 执行 → TTS 合成 → 语音回复
@@ -31,7 +32,7 @@ ASRAPP 是一个 **AI 语音助手平台**，实现完整的闭环：
 | 🤖 Agent | 真实编程 Agent 执行 | Claude Code、Codex、OpenCode CLI |
 | 🧠 记忆 | JSONL 临时/持久记忆 | `.runtime/memory/` |
 | 🔊 TTS | 自然语音合成 | GPT-SoVITS、VoxCPM2 |
-| 🌐 流式 | VAD 伪流式 | WebSocket + 分段识别 |
+| 🌐 流式 | X-ASR 原生流式 | WebSocket + VAD 话语边界 |
 
 ## 技术栈一览
 
@@ -47,6 +48,7 @@ ASRAPP 是一个 **AI 语音助手平台**，实现完整的闭环：
 ## 快速链接
 
 - 🚀 [5 分钟快速开始](QUICKSTART.md)
+- 🧰 [完整环境安装与迁移](installation/README.md)
 - 🏗️ [架构总览](ARCHITECTURE.md)
 - 📡 [API 端点详解](backend/API.md)
 - 🧩 [ASR 引擎对比](asr/ENGINES.md)

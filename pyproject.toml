@@ -71,6 +71,9 @@ vosk = [
 sherpa = [
     "sherpa-onnx>=1.10.0",
 ]
+x-asr = [
+    "sherpa-onnx>=1.10.0",
+]
 sensevoice = [
     "funasr>=1.1.3",
     "torch>=2.1.0",
@@ -88,7 +91,7 @@ vad = [
     "silero-vad>=5.1.0",           # reserved — not wired in yet
 ]
 punctuation = [
-    "deepmultilingualpunctuation>=1.0.1",  # reserved
+    "funasr>=1.1.3",
 ]
 voxcpm = [
     "voxcpm>=0.1.0",
@@ -102,7 +105,7 @@ dev = [
     "mypy>=1.10.0",
 ]
 all = [
-    "asr-backend[firered,whisper,vosk,sherpa,sensevoice,qwen3asr,vad,punctuation,dev]",
+    "asr-backend[firered,whisper,vosk,sherpa,x-asr,sensevoice,qwen3asr,vad,punctuation,dev]",
 ]
 
 [tool.setuptools.packages.find]

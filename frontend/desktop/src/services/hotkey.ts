@@ -9,6 +9,7 @@ const keyboardMap: Record<string, string> = {
 }
 
 export function keyboardEventToAccelerator(event: KeyboardEvent) {
+  if (event.code === 'AltRight') return 'AltRight'
   const parts: string[] = []
   if (event.ctrlKey) parts.push('Ctrl')
   if (event.altKey) parts.push('Alt')

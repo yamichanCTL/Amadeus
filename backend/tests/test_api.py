@@ -12,8 +12,11 @@ import json
 import httpx
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from tests.conftest import make_wav_bytes
+from backend.tests.conftest import make_wav_bytes
+from app.db.crud import create_task
+from app.db.models import ASRTask
 
 
 class _FakeLLMResponse:
@@ -121,7 +124,7 @@ async def test_transcribe_short_audio_sync(async_client: AsyncClient) -> None:
     resp = await async_client.post(
         "/v1/transcribe",
         files={"file": ("test.wav", wav, "audio/wav")},
-        data={"options": '{"engines": ["mock"]}'},
+        data={"options": '{"engine": "mock"}'},
     )
     assert resp.status_code == 200, resp.text
     data = resp.json()
@@ -129,6 +132,21 @@ async def test_transcribe_short_audio_sync(async_client: AsyncClient) -> None:
     assert data["full_text"] == "测试识别结果"
     assert data["engine_used"] == "mock"
     assert data["task_id"]
+
+
+@pytest.mark.asyncio
+async def test_create_task_keeps_legacy_diarize_column_false(db_session: AsyncSession) -> None:
+    """Existing SQLite DBs still require the removed diarize flag column."""
+    task = await create_task(
+        db_session,
+        engines=["mock"],
+        filename="recording.webm",
+        mime_type="audio/webm",
+    )
+    await db_session.commit()
+    saved = await db_session.get(ASRTask, task.id)
+    assert saved is not None
+    assert saved.diarize_enabled is False
 
 
 @pytest.mark.asyncio
@@ -143,7 +161,7 @@ async def test_transcribe_invalid_engine(async_client: AsyncClient) -> None:
     resp = await async_client.post(
         "/v1/transcribe",
         files={"file": ("test.wav", wav, "audio/wav")},
-        data={"options": '{"engines": ["nonexistent"]}'},
+        data={"options": '{"engine": "nonexistent"}'},
     )
     assert resp.status_code == 422  # Pydantic validation rejects unknown engine
 
@@ -168,7 +186,7 @@ async def test_transcribe_auto_llm_success(async_client: AsyncClient, fake_llm) 
         files={"file": ("test.wav", wav, "audio/wav")},
         data={
             "options": (
-                '{"engines":["mock"],"llm":{"enable_polish":true,'
+                '{"engine":"mock","llm":{"enable_polish":true,'
                 '"model":"demo-model","base_url":"https://llm.test/v1",'
                 f'"api_token":"{token}"'
                 '}}'
@@ -194,7 +212,7 @@ async def test_transcribe_auto_llm_failure_keeps_asr_success(
         files={"file": ("test.wav", wav, "audio/wav")},
         data={
             "options": (
-                '{"engines":["mock"],"llm":{"enable_translate":true,'
+                '{"engine":"mock","llm":{"enable_translate":true,'
                 '"model":"demo-model","base_url":"https://llm.test/v1",'
                 '"api_token":"secret-token","target_language":"English"}}'
             )
@@ -398,7 +416,7 @@ async def test_get_task_after_transcribe(async_client: AsyncClient) -> None:
     post_resp = await async_client.post(
         "/v1/transcribe",
         files={"file": ("t.wav", wav, "audio/wav")},
-        data={"options": '{"engines": ["mock"]}'},
+        data={"options": '{"engine": "mock"}'},
     )
     assert post_resp.status_code == 200
     task_id = post_resp.json()["task_id"]

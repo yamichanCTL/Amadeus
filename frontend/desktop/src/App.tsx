@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { ASRApi } from '@/services/api'
 import { registerTrigger } from '@/services/hotkey'
 import { useASRStore } from '@/store/useASRStore'
@@ -13,6 +13,10 @@ import { ModelsPage } from '@/pages/Models'
 import { SettingsPage } from '@/pages/Settings'
 import { PlaceholderPage } from '@/pages/Placeholder'
 import { VoiceChangerPage } from '@/pages/VoiceChanger'
+import { DebugConsolePage } from '@/pages/DebugConsole'
+import { audioRelayMixer, runAudioRelayDeviceE2E, speechRecorder } from '@/services/audio'
+
+const isE2EMode = new URLSearchParams(window.location.search).get('e2e') === '1'
 
 function localDateValue(date = new Date()) {
   const offsetMs = date.getTimezoneOffset() * 60_000
@@ -43,7 +47,7 @@ function AppTopBar() {
     <div className="app-topbar">
       <div className="mode-pill">
         <span aria-hidden="true">↻</span>
-        <strong>{settings.llmModel || 'GPT Voice'} / {settings.defaultEngine}</strong>
+        <strong>{settings.llmModel || 'GPT Voice'} / {settings.offlineEngine}</strong>
         <small>⌄</small>
       </div>
       <button type="button" className="icon-button" title="设置" onClick={() => setPage('settings')}>⚙</button>
@@ -58,7 +62,9 @@ export default function App() {
   const setServerStatus = useASRStore((state) => state.setServerStatus)
   const setPage = useASRStore((state) => state.setPage)
   const updateSettings = useASRStore((state) => state.updateSettings)
+  const setError = useASRStore((state) => state.setError)
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
+  const pendingHotkeyRef = useRef(false)
 
   useEffect(() => {
     let alive = true
@@ -86,6 +92,55 @@ export default function App() {
   }, [settings.theme])
 
   useEffect(() => {
+    if (!isE2EMode) return
+    window.__amadeusE2EAudio = runAudioRelayDeviceE2E
+    return () => { delete window.__amadeusE2EAudio }
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      const persistedUserId = await window.electronAPI?.getUserId().catch(() => '')
+      if (!alive) return
+      const storeUserId = useASRStore.getState().settings.userId
+      if (persistedUserId) updateSettings({ userId: persistedUserId, passiveSummaryUserId: persistedUserId })
+      else if (storeUserId) {
+        updateSettings({ passiveSummaryUserId: storeUserId })
+        await window.electronAPI?.saveUserId(storeUserId)
+      }
+    })()
+    return () => { alive = false }
+  }, [updateSettings])
+
+  useEffect(() => {
+    if (!settings.audioRelayEnabled) {
+      audioRelayMixer.stop()
+      return
+    }
+    void audioRelayMixer.start({
+      inputDeviceId: settings.audioInputDeviceId || undefined,
+      outputDeviceId: settings.audioOutputDeviceId || undefined,
+    }).catch((relayError: unknown) => {
+      setError(relayError instanceof Error ? `音频中转启动失败：${relayError.message}` : '音频中转启动失败')
+    })
+  }, [setError, settings.audioInputDeviceId, settings.audioOutputDeviceId, settings.audioRelayEnabled])
+
+  useEffect(() => {
+    if (isE2EMode) return
+    if (settings.audioRelayEnabled) {
+      speechRecorder.cancel()
+      return
+    }
+    void speechRecorder.prepare(settings.audioInputDeviceId || undefined).catch(() => undefined)
+  }, [settings.audioInputDeviceId, settings.audioRelayEnabled])
+
+  useEffect(() => () => {
+    audioRelayMixer.stop()
+    speechRecorder.cancel()
+  }, [])
+
+  useEffect(() => {
+    if (isE2EMode) return
     registerTrigger(settings.triggerType, settings.triggerKey).catch(() => undefined)
     return () => {
       window.electronAPI?.unregisterHotkey()
@@ -93,8 +148,23 @@ export default function App() {
     }
   }, [settings.triggerType, settings.triggerKey])
 
+  useEffect(() => window.electronAPI?.onHotkeyTriggered(() => {
+    if (useASRStore.getState().page !== 'transcribe') {
+      pendingHotkeyRef.current = true
+      setPage('transcribe')
+      return
+    }
+    window.dispatchEvent(new CustomEvent('amadeus:toggle-recording'))
+  }), [setPage])
+
   useEffect(() => {
-    const offClosed = window.electronAPI?.onCaptionOverlayClosed(() => updateSettings({ liveCaptionEnabled: false }))
+    if (page !== 'transcribe' || !pendingHotkeyRef.current) return
+    pendingHotkeyRef.current = false
+    window.queueMicrotask(() => window.dispatchEvent(new CustomEvent('amadeus:toggle-recording')))
+  }, [page])
+
+  useEffect(() => {
+    const offClosed = window.electronAPI?.onCaptionOverlayClosed(() => updateSettings({ showDesktopCaptions: false }))
     const offStyle = window.electronAPI?.onCaptionOverlayStyleChanged((bounds) =>
       updateSettings({
         captionBoxX: typeof bounds.x === 'number' ? bounds.x : settings.captionBoxX,
@@ -185,6 +255,7 @@ export default function App() {
           {page === 'models' && <ModelsPage />}
           {page === 'settings' && <SettingsPage />}
           {page === 'voice' && <VoiceChangerPage />}
+          {page === 'debug' && <DebugConsolePage />}
         </main>
       </div>
       <StatusBar />

@@ -2,17 +2,7 @@ export type Segment = {
   start: number
   end: number
   text: string
-  speaker?: string | null
   confidence?: number | null
-}
-
-export type EngineResult = {
-  engine: string
-  full_text: string
-  segments?: Segment[]
-  confidence?: number | null
-  elapsed_sec?: number | null
-  error?: string | null
 }
 
 export type LLMOperation = 'polish' | 'translate'
@@ -80,6 +70,9 @@ export type LLMSpeechRequest = {
 export type HiggsTTSRequest = {
   text: string
   higgs_base_url: string
+  provider?: 'local' | 'boson'
+  api_token?: string
+  model?: string
   voice?: string
   response_format?: 'wav' | 'mp3' | 'flac' | 'opus' | 'aac' | 'pcm'
   speed?: number
@@ -345,7 +338,6 @@ export type TranscribeResponse = {
   elapsed_sec: number | null
   timing?: Record<string, unknown> | null
   client_timing?: Record<string, unknown> | null
-  engine_results?: EngineResult[] | null
   llm_outputs?: LLMOutputs | null
   llm_error?: string | null
   audio_url?: string
@@ -374,16 +366,28 @@ export type ModelsListResponse = {
   default_engine?: string
 }
 
+export type HotwordConfig = {
+  enabled: boolean
+  rule_enabled: boolean
+  threshold: number
+  similar_threshold: number
+  hotwords: string
+  rules: string
+  hotword_count: number
+  rule_count: number
+  path?: string
+}
+
 export type TranscribeOptions = {
-  engines: string[]
+  engine: string
   language?: string
   whisper_model?: string
   whisper_task?: 'transcribe' | 'translate'
   enable_punctuation?: boolean
-  enable_diarize?: boolean
-  merge_strategy?: 'first' | 'vote' | 'concat'
+  enable_hotwords?: boolean
   allow_server_data_collection?: boolean
   archive_dir?: string
+  user_id?: string
   llm?: {
     enable_polish?: boolean
     enable_translate?: boolean
@@ -412,7 +416,10 @@ const DEFAULT_SERVER = 'http://localhost:8000'
 function normalizeServerUrl(url: string) {
   // empty / '' / '/' → same-origin (works with Vite proxy, or standalone backend on same port)
   const trimmed = (url || '').trim()
-  if (!trimmed || trimmed === '/') return ''
+  if (!trimmed || trimmed === '/') {
+    const protocol = typeof window !== 'undefined' ? window.location.protocol : ''
+    return protocol === 'file:' || protocol === 'app:' ? DEFAULT_SERVER : ''
+  }
   const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`
   return withScheme.replace(/\/+$/, '')
 }
@@ -427,10 +434,17 @@ async function parseResponse<T>(response: Response): Promise<T> {
   return data as T
 }
 
-function withTimeout(ms: number) {
-  const controller = new AbortController()
-  const timer = window.setTimeout(() => controller.abort(), ms)
-  return { controller, timer }
+export function isAbortError(error: unknown) {
+  return error instanceof DOMException
+    ? error.name === 'AbortError'
+    : error instanceof Error && error.name === 'AbortError'
+}
+
+export function describeRequestError(error: unknown, fallback: string) {
+  if (error instanceof DOMException && error.name === 'TimeoutError') return error.message || '请求超时'
+  if (error instanceof Error && error.name === 'TimeoutError') return error.message || '请求超时'
+  if (isAbortError(error)) return '请求已取消'
+  return error instanceof Error && error.message ? error.message : fallback
 }
 
 function headerNumber(headers: Headers, name: string) {
@@ -484,16 +498,39 @@ export class ASRApi {
     return `${normalizeServerUrl(this.serverUrl)}${path}`
   }
 
+  private describeBackendTarget(path: string) {
+    const baseUrl = normalizeServerUrl(this.serverUrl)
+    return baseUrl ? `${baseUrl}${path}` : `${window.location.origin || '当前页面' }${path}`
+  }
+
   health() {
     return fetch(this.url('/v1/health')).then((res) => parseResponse<{ status: string; uptime_sec: number }>(res))
   }
 
-  models() {
-    const { controller, timer } = withTimeout(8000)
-    return fetch(this.url('/v1/models'), { signal: controller.signal })
-      .then((res) => parseResponse<ModelInfo[] | ModelsListResponse>(res))
-      .then((data) => (Array.isArray(data) ? data : data.engines || []))
-      .finally(() => window.clearTimeout(timer))
+  async models(options: { signal?: AbortSignal; timeoutMs?: number } = {}) {
+    const controller = new AbortController()
+    const timeoutMs = options.timeoutMs ?? 20_000
+    const relayAbort = () => controller.abort(
+      options.signal?.reason || new DOMException('模型列表刷新已取消', 'AbortError')
+    )
+    if (options.signal?.aborted) relayAbort()
+    else options.signal?.addEventListener('abort', relayAbort, { once: true })
+    const timer = window.setTimeout(() => controller.abort(
+      new DOMException(`模型列表请求超过 ${Math.round(timeoutMs / 1000)} 秒，请检查后端状态`, 'TimeoutError')
+    ), timeoutMs)
+    try {
+      const response = await fetch(this.url('/v1/models'), { signal: controller.signal })
+      const data = await parseResponse<ModelInfo[] | ModelsListResponse>(response)
+      return Array.isArray(data) ? data : data.engines || []
+    } catch (error) {
+      if (controller.signal.aborted && controller.signal.reason instanceof Error) {
+        throw controller.signal.reason
+      }
+      throw error
+    } finally {
+      window.clearTimeout(timer)
+      options.signal?.removeEventListener('abort', relayAbort)
+    }
   }
 
   loadModel(engine: string, payload: Record<string, unknown>) {
@@ -510,17 +547,47 @@ export class ASRApi {
     )
   }
 
-  transcribe(file: Blob, filename: string, options: TranscribeOptions) {
+  hotwords() {
+    return fetch(this.url('/v1/hotwords')).then((res) => parseResponse<HotwordConfig>(res))
+  }
+
+  saveHotwords(payload: Omit<HotwordConfig, 'hotword_count' | 'rule_count' | 'path'>) {
+    return fetch(this.url('/v1/hotwords'), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then((res) => parseResponse<HotwordConfig>(res))
+  }
+
+  previewHotwords(text: string) {
+    return fetch(this.url('/v1/hotwords/preview'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    }).then((res) => parseResponse<{ text: string; replacements: unknown[]; suggestions: unknown[] }>(res))
+  }
+
+  async transcribe(file: Blob, filename: string, options: TranscribeOptions, request: { signal?: AbortSignal } = {}) {
     const form = new FormData()
     form.append('file', file, filename)
     form.append('options', JSON.stringify(options))
-    return fetch(this.url('/v1/transcribe'), { method: 'POST', body: form }).then((res) =>
-      parseResponse<TranscribeResponse | AsyncResponse>(res)
-    )
+    try {
+      const response = await fetch(this.url('/v1/transcribe'), { method: 'POST', body: form, signal: request.signal })
+      return await parseResponse<TranscribeResponse | AsyncResponse>(response)
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') throw error
+      if (error instanceof TypeError) {
+        throw new Error(
+          `无法连接 ASR 后端 (${this.describeBackendTarget('/v1/transcribe')})：${error.message}。`
+          + '请检查后端服务、后端地址、HTTPS/HTTP 混合内容和 CORS 配置。'
+        )
+      }
+      throw error
+    }
   }
 
-  task(taskId: string) {
-    return fetch(this.url(`/v1/tasks/${encodeURIComponent(taskId)}`))
+  task(taskId: string, signal?: AbortSignal) {
+    return fetch(this.url(`/v1/tasks/${encodeURIComponent(taskId)}`), { signal })
       .then((res) => parseResponse<TranscribeResponse & { id?: string }>(res))
       .then((data) => ({
         ...data,
@@ -742,6 +809,14 @@ export class ASRApi {
     return fetch(this.url(`/v1/tts/higgs/health?${query}`)).then((res) => parseResponse<HiggsHealthResult>(res))
   }
 
+  higgsConnection(payload: { provider: 'local' | 'boson'; base_url: string; api_token?: string }) {
+    return fetch(this.url('/v1/tts/higgs/connection'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).then((res) => parseResponse<HiggsHealthResult>(res))
+  }
+
   higgsVoices(higgsBaseUrl: string) {
     const query = new URLSearchParams({ higgs_base_url: higgsBaseUrl }).toString()
     return fetch(this.url(`/v1/tts/higgs/voices?${query}`)).then((res) => parseResponse<HiggsVoicesResult>(res))
@@ -764,10 +839,17 @@ export class ASRApi {
     form.append('audio', audioBlob, 'reference_audio.wav')
     form.append('engine', engine)
     form.append('language', language)
-    return fetch(this.url('/v1/tts/higgs/reference-asr'), {
+    const path = '/v1/tts/higgs/reference-asr'
+    const target = this.url(path)
+    return fetch(target, {
       method: 'POST',
       body: form,
-    }).then((res) => parseResponse<HiggsReferenceAsrResult>(res))
+    })
+      .catch((error) => {
+        const detail = error instanceof Error ? error.message : String(error)
+        throw new Error(`参考音频 ASR 请求失败：${detail}。请求地址：${this.describeBackendTarget(path)}。请确认后端已启动、后端地址配置正确，公网访问时后端 CORS 已允许当前前端来源。`)
+      })
+      .then((res) => parseResponse<HiggsReferenceAsrResult>(res))
   }
 
   async higgsSpeak(payload: HiggsTTSRequest): Promise<HiggsAudioResult> {
@@ -785,7 +867,10 @@ export class ASRApi {
     const form = new FormData()
     form.append('audio', audioBlob, 'voice_input.webm')
     form.append('higgs_base_url', payload.higgs_base_url)
-    form.append('voice', payload.voice || 'default')
+    form.append('provider', payload.provider || 'local')
+    form.append('api_token', payload.api_token || '')
+    form.append('model', payload.model || 'higgs-audio-v3-tts')
+    form.append('voice', payload.voice || 'Elysia')
     form.append('response_format', payload.response_format || 'wav')
     form.append('speed', String(payload.speed ?? 1))
     form.append('temperature', String(payload.temperature ?? 0.7))

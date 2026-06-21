@@ -130,11 +130,15 @@ async def load_model(
             kwargs["model_name"] = body.model_name
             if body.model_name == settings.default_qwen3asr_model:
                 kwargs["model_dir"] = str(settings.qwen3asr_model_dir)
+        elif name == "x-asr":
+            kwargs["model_name"] = body.model_name
+            if body.model_name == settings.default_x_asr_model:
+                kwargs["model_dir"] = str(settings.x_asr_model_dir)
         else:
             kwargs["model_name"] = body.model_name
     if body.device:
         kwargs["device"] = body.device
-    if body.compute_type:
+    if body.compute_type and name != "x-asr":
         if name == "qwen3asr":
             kwargs["torch_dtype"] = body.compute_type
         else:

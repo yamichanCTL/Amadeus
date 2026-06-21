@@ -4,7 +4,7 @@ import type { LLMOperation, TranscribeResponse } from '@/services/api'
 import { SegmentList } from './SegmentList'
 import { TabBar } from './TabBar'
 
-type ResultTab = 'text' | 'polish' | 'translate' | 'segments' | 'json' | 'engines'
+type ResultTab = 'text' | 'polish' | 'translate' | 'segments' | 'json'
 
 type ResultPanelProps = {
   result: TranscribeResponse | null
@@ -59,8 +59,7 @@ export function ResultPanel({ result, onProcess, processingOperation = 'idle' }:
           { value: 'polish', label: polishedText ? '润色' : '润色+' },
           { value: 'translate', label: translatedText ? '翻译' : '翻译+' },
           { value: 'segments', label: '分段' },
-          { value: 'json', label: 'JSON' },
-          { value: 'engines', label: '引擎' }
+          { value: 'json', label: 'JSON' }
         ]}
       />
       {tab === 'text' && <pre className="result-text">{text}</pre>}
@@ -73,16 +72,6 @@ export function ResultPanel({ result, onProcess, processingOperation = 'idle' }:
       {result.llm_error && <p className="error">{result.llm_error}</p>}
       {tab === 'segments' && <SegmentList segments={result.segments} />}
       {tab === 'json' && <pre className="result-text">{resultToJson(result)}</pre>}
-      {tab === 'engines' && (
-        <div className="engine-results">
-          {result.engine_results?.length ? result.engine_results.map((engine) => (
-            <article key={engine.engine}>
-              <h3>{engine.engine}</h3>
-              <pre>{engine.error || engine.full_text}</pre>
-            </article>
-          )) : <p className="empty">没有多引擎结果。</p>}
-        </div>
-      )}
     </section>
   )
 }

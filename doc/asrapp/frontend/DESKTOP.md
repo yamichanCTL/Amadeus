@@ -28,13 +28,15 @@ src/                       # 渲染进程 (React)
 ├── main.tsx               # 入口（按平台加载样式）
 ├── App.tsx                # 布局、页面切换、状态轮询
 ├── pages/
-│   ├── Transcribe.tsx     # 文件/录音转写 + 实时字幕
+│   ├── Transcribe.tsx     # 文件确认识别 + 录音 + 实时字幕
 │   ├── Models.tsx         # ASR 模型管理
+│   ├── DebugConsole.tsx   # 延时与错误调试台
 │   ├── Settings.tsx       # 后端地址、设备、快捷键、主题
 │   └── History.tsx        # 本地历史（最大 200 条）
 ├── services/
 │   ├── api.ts             # 后端 HTTP 客户端
 │   ├── audio.ts           # MediaRecorder 录音 + 扬声器捕获
+│   ├── telemetry.ts       # HTTP / ASR / TTS 内存遥测
 │   ├── hotkey.ts          # 快捷键/鼠标触发
 │   └── export.ts          # TXT/SRT/JSON 导出
 └── store/
@@ -53,17 +55,23 @@ src/                       # 渲染进程 (React)
 ### 窗口控制
 无边框窗口 + 自定义 TitleBar，支持最小化/最大化/关闭。
 
-### 文件转写
-拖拽或选择音频 → API 转写 → 展示结果 → 归档 → 复制/注入。
+### 语音识别
+拖拽或选择音频 → 待确认 → 用户确认后调用 API → 展示结果 → 归档 → 复制/注入。页面不再保留重复的“最近任务”卡片。
 
 ### 麦克风录音
 MediaRecorder → audio/webm (Opus) → API 转写 → 自动注入文本。
 
 ### 实时字幕
-捕获扬声器 loopback → 每 N 秒切片 → API 转写 → 桌面字幕浮窗。
+麦克风 16 kHz PCM → `/v1/stream` → X-ASR 原生 partial/final → 桌面字幕浮窗，不再把录音切片送入离线转写接口。
+
+### 开发调试台
+统一采集 HTTP 端到端/后端时间、WebSocket 建连和任务级 trace。文件 ASR 与实时 VAD→ASR→TTS 会展示阶段瀑布图，包括 ASR 首 token/final、TTS 首个可播放 token/chunk、完成与播放提交；支持筛选和 JSON 导出且不记录请求 body 或 Token。
 
 ### 全局触发键
-支持键盘快捷键和鼠标按键（左/右/中/X1/X2），全局触发录音。
+新安装默认由键盘右 Alt 触发录音；旧版仍为默认鼠标中键且未自定义的设置会自动迁移。也可改用组合快捷键或鼠标按键（左/右/中/X1/X2）。Windows 通过右侧 Alt 专用 hook 保持全局触发；Linux/macOS 的单独右修饰键只在应用收到键盘事件时生效。
+
+### 历史记录
+历史页支持标题/内容、语言和“某日到某日”的组合筛选，起止日均包含在范围内。列表与详情时间统一显示本地 `YYYY-MM-DD HH:mm:ss`。清空筛选只复位条件，“清空全部记录”才删除历史。
 
 ### 文本注入
 Windows: 剪贴板 + Ctrl+V 自动注入到当前输入框。

@@ -17,7 +17,7 @@
 | Agent | 封装 CLI，不重新实现 | 避免造轮子，复用成熟工具 |
 | 路由 | 优先级链 + MockAgent 兜底 | 系统永远可运行 |
 | 注册 | Plugin Registry | 引擎/技能热注册热切换 |
-| ASR 流式 | VAD 伪流式 | 离线模型也能近似实时 |
+| ASR 流式 | VAD + X-ASR online stream | partial/final 共用同一 decoder state |
 | 记忆 | JSONL 文件 | 无数据库依赖，轻量可审计 |
 | 安全 | 路径隔离 + 命令白名单 | 子进程安全边界 |
 

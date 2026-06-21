@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AssistantFigure } from '@/components/AssistantFigure'
 import { ASRApi, isAsyncResponse, type LLMChatContent, type LLMChatRole, type SkillDefinition, type TranscribeOptions } from '@/services/api'
-import { AudioRecorder, AudioSegmentStreamer } from '@/services/audio'
+import { StreamingASRClient, audioRelayMixer, speechRecorder } from '@/services/audio'
 import { useASRStore, type AgentTask, type AgentVoiceMode, type AppPage } from '@/store/useASRStore'
 
 type AgentStatus = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'responding' | 'speaking' | 'error'
@@ -191,16 +191,15 @@ export function RealtimeAgentPage() {
   const setPage = useASRStore((state) => state.setPage)
   const updateSettings = useASRStore((state) => state.updateSettings)
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
-  const recorderRef = useRef(new AudioRecorder())
-  const handsFreeStreamerRef = useRef<AudioSegmentStreamer | null>(null)
-  const handsFreeQueueRef = useRef<Blob[]>([])
-  const handsFreeProcessingRef = useRef(false)
+  const recorderRef = useRef(speechRecorder)
+  const handsFreeStreamerRef = useRef<StreamingASRClient | null>(null)
   const speechQueueRef = useRef<string[]>([])
   const speechBufferRef = useRef('')
   const speakingRef = useRef(false)
   const responseActiveRef = useRef(false)
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
   const currentAudioUrlRef = useRef('')
+  const relaySpeechTimerRef = useRef<number | null>(null)
   const streamAbortRef = useRef<AbortController | null>(null)
   const turnIdRef = useRef(0)
   const statusRef = useRef<AgentStatus>('idle')
@@ -217,7 +216,7 @@ export function RealtimeAgentPage() {
   const [error, setError] = useState('')
   const [lastTranscript, setLastTranscript] = useState('')
   const [memoryStatus, setMemoryStatus] = useState<'idle' | 'extracting' | 'done'>('idle')
-  const [handsFreeStatus, setHandsFreeStatus] = useState<'idle' | 'listening' | 'transcribing' | 'error'>('idle')
+  const [handsFreeStatus, setHandsFreeStatus] = useState<'idle' | 'connecting' | 'loading' | 'listening' | 'transcribing' | 'error'>('idle')
   const [proactiveStatus, setProactiveStatus] = useState<'idle' | 'waiting' | 'triggered'>('idle')
   const [agentEmotion, setAgentEmotion] = useState<AgentEmotion>('neutral')
   const [agentDirectedAction, setAgentDirectedAction] = useState<AgentAction>('idle')
@@ -249,7 +248,8 @@ export function RealtimeAgentPage() {
       `本地时间：${now.toLocaleString()}`,
       `桌面前端：${window.electronAPI ? 'Electron' : '浏览器预览'}`,
       `后端状态：${serverStatus}`,
-      `ASR 默认引擎：${settings.defaultEngine}`,
+      `离线 ASR：${settings.offlineEngine}`,
+      `实时 ASR：${settings.streamingEngine}`,
       `已加载 ASR 引擎：${loadedModels.length ? loadedModels.join(', ') : '未知或未刷新'}`,
       `LLM：${settings.llmProvider}/${settings.llmModel || '未选择模型'}`,
       `语言：${settings.defaultLanguage}`,
@@ -272,7 +272,8 @@ export function RealtimeAgentPage() {
     liveCaptionStatus,
     loadedModels,
     serverStatus,
-    settings.defaultEngine,
+    settings.offlineEngine,
+    settings.streamingEngine,
     settings.defaultLanguage,
     settings.llmModel,
     settings.llmProvider,
@@ -324,21 +325,21 @@ export function RealtimeAgentPage() {
       handsFreeStreamerRef.current?.stop()
       window.speechSynthesis?.cancel()
       recorderRef.current.cancel()
+      const latest = useASRStore.getState().settings
+      if (!latest.audioRelayEnabled) void recorderRef.current.prepare(latest.audioInputDeviceId || undefined).catch(() => undefined)
     }
   }, [])
 
   const buildOptions = (): TranscribeOptions => {
-    const selected = settings.multiEngine ? settings.selectedEngines : [settings.defaultEngine]
-    const engines = loadedModels.length ? selected.filter((engine) => loadedModels.includes(engine)) : selected
     return {
-      engines: engines.length ? engines : [settings.defaultEngine],
+      engine: settings.offlineEngine,
       language: settings.defaultLanguage === 'auto' ? undefined : settings.defaultLanguage,
       whisper_model: settings.whisperModel,
       enable_punctuation: true,
-      enable_diarize: false,
-      merge_strategy: settings.mergeStrategy,
+      enable_hotwords: true,
       allow_server_data_collection: settings.allowServerDataCollection,
-      archive_dir: settings.archiveDir || undefined
+      archive_dir: settings.archiveDir || undefined,
+      user_id: settings.userId || undefined
     }
   }
 
@@ -362,6 +363,9 @@ export function RealtimeAgentPage() {
     currentAudioRef.current = null
     if (currentAudioUrlRef.current) URL.revokeObjectURL(currentAudioUrlRef.current)
     currentAudioUrlRef.current = ''
+    if (relaySpeechTimerRef.current !== null) window.clearTimeout(relaySpeechTimerRef.current)
+    relaySpeechTimerRef.current = null
+    if (audioRelayMixer.isActive()) audioRelayMixer.stopInjectedAudio()
     window.speechSynthesis?.cancel()
   }
 
@@ -394,6 +398,30 @@ export function RealtimeAgentPage() {
     window.speechSynthesis.speak(utterance)
   }
 
+  const playGeneratedSpeech = async (blob: Blob) => {
+    if (audioRelayMixer.isActive()) {
+      const result = await audioRelayMixer.playBlob(blob)
+      relaySpeechTimerRef.current = window.setTimeout(() => {
+        relaySpeechTimerRef.current = null
+        if (speakingRef.current) finishSpeechItem()
+      }, Math.max(20, Math.ceil(result.duration * 1000)))
+      return
+    }
+    const url = URL.createObjectURL(blob)
+    currentAudioUrlRef.current = url
+    const audio = new Audio(url)
+    currentAudioRef.current = audio
+    const finish = () => {
+      URL.revokeObjectURL(url)
+      if (currentAudioUrlRef.current === url) currentAudioUrlRef.current = ''
+      currentAudioRef.current = null
+      finishSpeechItem()
+    }
+    audio.onended = finish
+    audio.onerror = finish
+    await audio.play()
+  }
+
   const playServerSpeech = async (text: string) => {
     const model = settings.agentTtsModel.trim() || settings.llmModel.trim()
     if (!model || !settings.llmBaseUrl.trim() || !settings.llmApiToken.trim()) {
@@ -413,23 +441,7 @@ export function RealtimeAgentPage() {
         speed: settings.agentTtsSpeed
       })
       if (!speakingRef.current) return
-      const url = URL.createObjectURL(blob)
-      currentAudioUrlRef.current = url
-      const audio = new Audio(url)
-      currentAudioRef.current = audio
-      audio.onended = () => {
-        URL.revokeObjectURL(url)
-        if (currentAudioUrlRef.current === url) currentAudioUrlRef.current = ''
-        currentAudioRef.current = null
-        finishSpeechItem()
-      }
-      audio.onerror = () => {
-        URL.revokeObjectURL(url)
-        if (currentAudioUrlRef.current === url) currentAudioUrlRef.current = ''
-        currentAudioRef.current = null
-        finishSpeechItem()
-      }
-      await audio.play()
+      await playGeneratedSpeech(blob)
     } catch (speechError) {
       console.warn('Server TTS failed, falling back to browser speech', speechError)
       playBrowserSpeech(text)
@@ -441,23 +453,7 @@ export function RealtimeAgentPage() {
       setStatus('speaking')
       const blob = await api.ttsSpeak(text, 'zh', settings.agentTtsSpeed, 'voxcpm2')
       if (!speakingRef.current) return
-      const url = URL.createObjectURL(blob)
-      currentAudioUrlRef.current = url
-      const audio = new Audio(url)
-      currentAudioRef.current = audio
-      audio.onended = () => {
-        URL.revokeObjectURL(url)
-        if (currentAudioUrlRef.current === url) currentAudioUrlRef.current = ''
-        currentAudioRef.current = null
-        finishSpeechItem()
-      }
-      audio.onerror = () => {
-        URL.revokeObjectURL(url)
-        if (currentAudioUrlRef.current === url) currentAudioUrlRef.current = ''
-        currentAudioRef.current = null
-        finishSpeechItem()
-      }
-      await audio.play()
+      await playGeneratedSpeech(blob)
     } catch (e) {
       console.warn('VoxCPM2 TTS failed, falling back', e)
       playBrowserSpeech(text)
@@ -473,23 +469,7 @@ export function RealtimeAgentPage() {
         settings.agentTtsSpeed
       )
       if (!speakingRef.current) return
-      const url = URL.createObjectURL(blob)
-      currentAudioUrlRef.current = url
-      const audio = new Audio(url)
-      currentAudioRef.current = audio
-      audio.onended = () => {
-        URL.revokeObjectURL(url)
-        if (currentAudioUrlRef.current === url) currentAudioUrlRef.current = ''
-        currentAudioRef.current = null
-        finishSpeechItem()
-      }
-      audio.onerror = () => {
-        URL.revokeObjectURL(url)
-        if (currentAudioUrlRef.current === url) currentAudioUrlRef.current = ''
-        currentAudioRef.current = null
-        finishSpeechItem()
-      }
-      await audio.play()
+      await playGeneratedSpeech(blob)
     } catch (e) {
       console.warn('GPT-SoVITS TTS failed, falling back to browser', e)
       playBrowserSpeech(text)
@@ -819,7 +799,7 @@ export function RealtimeAgentPage() {
         use_context: settings.agentUseRuntimeContext,
         context: {
           time: new Date().toLocaleString(),
-          engine: settings.defaultEngine,
+          engine: settings.offlineEngine,
           language: settings.defaultLanguage,
           handsfree: handsFreeStatus,
           proactive: proactiveStatus,
@@ -909,9 +889,7 @@ export function RealtimeAgentPage() {
       if (
         statusRef.current !== 'idle' ||
         speakingRef.current ||
-        responseActiveRef.current ||
-        handsFreeProcessingRef.current ||
-        handsFreeQueueRef.current.length
+        responseActiveRef.current
       ) {
         return
       }
@@ -1083,35 +1061,8 @@ export function RealtimeAgentPage() {
     } catch (voiceError) {
       setError(voiceError instanceof Error ? voiceError.message : '语音识别失败')
       setStatus('error')
-    }
-  }
-
-  const processHandsFreeQueue = async () => {
-    if (handsFreeProcessingRef.current || !handsFreeQueueRef.current.length) return
-    if (statusRef.current === 'listening' || statusRef.current === 'transcribing' || statusRef.current === 'thinking' || statusRef.current === 'responding' || statusRef.current === 'speaking') {
-      handsFreeQueueRef.current = []
-      return
-    }
-    handsFreeProcessingRef.current = true
-    setHandsFreeStatus('transcribing')
-    const blob = handsFreeQueueRef.current.shift()!
-    try {
-      const response = await api.transcribe(blob, `agent_handsfree_${Date.now()}.webm`, buildOptions())
-      const result = isAsyncResponse(response) ? await pollTask(response.task_id) : response
-      const text = result.full_text.trim()
-      const normalized = text.replace(/\s+/g, '')
-      const previous = lastTranscript.replace(/\s+/g, '')
-      if (normalized.length >= 2 && normalized !== previous) {
-        setLastTranscript(text)
-        await sendToAgent(text)
-      }
-      setHandsFreeStatus(handsFreeStreamerRef.current ? 'listening' : 'idle')
-    } catch (handsFreeError) {
-      setError(handsFreeError instanceof Error ? handsFreeError.message : '免按键监听失败')
-      setHandsFreeStatus('error')
     } finally {
-      handsFreeProcessingRef.current = false
-      if (handsFreeQueueRef.current.length) void processHandsFreeQueue()
+      if (!audioRelayMixer.isActive()) void recorderRef.current.prepare(settings.audioInputDeviceId || undefined).catch(() => undefined)
     }
   }
 
@@ -1119,23 +1070,53 @@ export function RealtimeAgentPage() {
     if (handsFreeStreamerRef.current) {
       handsFreeStreamerRef.current.stop()
       handsFreeStreamerRef.current = null
-      handsFreeQueueRef.current = []
       updateSettings({ agentHandsFree: false })
       setHandsFreeStatus('idle')
+      if (!audioRelayMixer.isActive()) void recorderRef.current.prepare(settings.audioInputDeviceId || undefined).catch(() => undefined)
       return
     }
     if (status !== 'idle') return
     setError('')
+    setHandsFreeStatus('connecting')
     try {
-      const streamer = new AudioSegmentStreamer((blob) => {
-        if (statusRef.current !== 'idle' || speakingRef.current || responseActiveRef.current) return
-        handsFreeQueueRef.current = [...handsFreeQueueRef.current, blob].slice(-1)
-        void processHandsFreeQueue()
+      const streamer = new StreamingASRClient(settings.serverUrl, (event) => {
+        if (event.type === 'accepted') setHandsFreeStatus('loading')
+        if (event.type === 'loading') setHandsFreeStatus('loading')
+        if (event.type === 'ready') setHandsFreeStatus('loading')
+        if (event.type === 'configured') setHandsFreeStatus('listening')
+        if (event.type === 'speech_start') setHandsFreeStatus('transcribing')
+        if (event.type === 'final') {
+          const text = event.text.trim()
+          if (statusRef.current !== 'idle' || speakingRef.current || responseActiveRef.current || text.length < 2) {
+            setHandsFreeStatus('listening')
+            return
+          }
+          setLastTranscript(text)
+          setHandsFreeStatus('listening')
+          void sendToAgentRef.current(text)
+        }
+        if (event.type === 'error') {
+          setError(event.message)
+          setHandsFreeStatus('error')
+        }
+        if (event.type === 'closed' && handsFreeStreamerRef.current) {
+          handsFreeStreamerRef.current = null
+          updateSettings({ agentHandsFree: false })
+          setHandsFreeStatus('idle')
+          if (!audioRelayMixer.isActive()) void recorderRef.current.prepare(settings.audioInputDeviceId || undefined).catch(() => undefined)
+        }
       })
       handsFreeStreamerRef.current = streamer
-      await streamer.start('microphone', settings.liveCaptionChunkSec, settings.audioInputDeviceId || undefined)
+      await streamer.start({
+        engine: settings.streamingEngine,
+        language: settings.defaultLanguage === 'auto' ? undefined : settings.defaultLanguage,
+        deviceId: settings.audioInputDeviceId || undefined,
+        inputStream: audioRelayMixer.isActive()
+          ? audioRelayMixer.createInputStream()
+          : recorderRef.current.takePreparedStream(settings.audioInputDeviceId || undefined),
+        userId: settings.userId || undefined
+      })
       updateSettings({ agentHandsFree: true })
-      setHandsFreeStatus('listening')
     } catch (handsFreeError) {
       handsFreeStreamerRef.current = null
       updateSettings({ agentHandsFree: false })
@@ -1154,12 +1135,14 @@ export function RealtimeAgentPage() {
     if (handsFreeStreamerRef.current) {
       handsFreeStreamerRef.current.stop()
       handsFreeStreamerRef.current = null
-      handsFreeQueueRef.current = []
       updateSettings({ agentHandsFree: false })
       setHandsFreeStatus('idle')
     }
     interruptActiveTurn()
-    await recorderRef.current.start(settings.audioInputDeviceId || undefined)
+    await recorderRef.current.start(
+      settings.audioInputDeviceId || undefined,
+      audioRelayMixer.isActive() ? audioRelayMixer.createInputStream() : undefined,
+    )
     setStatus('listening')
     setError('')
   }
@@ -1202,7 +1185,7 @@ export function RealtimeAgentPage() {
           <div className="section-head compact">
             <div>
               <h1>实时对话</h1>
-              <p>{settings.llmModel || '未选择 LLM 模型'} / {settings.defaultEngine}</p>
+              <p>{settings.llmModel || '未选择 LLM 模型'} / {settings.offlineEngine}</p>
             </div>
             <div className="agent-actions">
               <button type="button" onClick={() => void inspectScreen()} disabled={busy || !canChat}>
@@ -1282,7 +1265,7 @@ export function RealtimeAgentPage() {
             本地工具指令
           </label>
           <label className="check">
-            <input type="checkbox" checked={handsFreeStatus === 'listening' || handsFreeStatus === 'transcribing'} onChange={() => void toggleHandsFree()} />
+            <input type="checkbox" checked={handsFreeStatus !== 'idle' && handsFreeStatus !== 'error'} onChange={() => void toggleHandsFree()} />
             免按键监听
           </label>
           <label className="check">

@@ -15,6 +15,7 @@ ENGINE_REGISTRY = {
     "sensevoice":  SenseVoiceConfig,
     "qwen3asr":    Qwen3ASRConfig,
     "whisper":     WhisperConfig,
+    "x-asr":       XASREngine,
 }
 ```
 
@@ -55,7 +56,7 @@ curl http://localhost:8000/v1/models
 # Whisper
 curl -X POST "http://localhost:8000/v1/models/whisper/load" \
   -H "Content-Type: application/json" \
-  -d '{"model_name":"base","device":"cpu","compute_type":"int8"}'
+  -d '{"model_name":"base","device":"cuda","compute_type":"float16"}'
 
 # FireRedASR2
 curl -X POST "http://localhost:8000/v1/models/fireredasr2/load" \
@@ -69,17 +70,12 @@ curl -X POST "http://localhost:8000/v1/models/fireredasr2/load" \
 curl -X POST "http://localhost:8000/v1/models/fireredasr2/unload"
 ```
 
-## 路由与合并策略
+## 离线与实时通路
 
-`core/asr/router.py` 支持单引擎和多引擎联合推理。
-
-| 策略 | 说明 |
-|------|------|
-| `first` | 取第一个引擎的结果 |
-| `vote` | 多引擎投票，选出现最多的文本 |
-| `concat` | 拼接所有引擎结果 |
-
-配置方式：`options.merge_strategy` 或 `settings.mergeStrategy`。
+- `POST /v1/transcribe` 每次只选择一个离线引擎，字段为 `options.engine`。
+- `WS /v1/stream` 只接受支持原生流式会话的 X-ASR。
+- 两个模型在桌面模型管理中同时配置，不需要切换工作模式。
+- 离线结果可在返回前应用 `hot.txt` 热词和 `hot-rule.txt` 正则规则。
 
 ## 引擎配置环境变量
 
@@ -92,6 +88,7 @@ curl -X POST "http://localhost:8000/v1/models/fireredasr2/unload"
 | `DEFAULT_WHISPER_DEVICE` | Whisper 设备 | `cuda` |
 | `DEFAULT_SENSEVOICE_DEVICE` | SenseVoice 设备 | `cuda:0` |
 | `DEFAULT_QWEN3ASR_DEVICE` | Qwen3-ASR 设备 | `cuda:0` |
+| `DEFAULT_X_ASR_PROVIDER` | X-ASR ONNX provider | `cuda` |
 | `SYNC_MAX_DURATION_SEC` | 同步转写最大时长 | `60` |
 
 ---

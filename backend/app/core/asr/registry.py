@@ -6,7 +6,7 @@ Central registry mapping engine name strings to their classes.
 To add a new engine:
   1. Create `app/core/asr/engines/my_engine.py` implementing BaseASREngine.
   2. Import and register it here.
-  3. The ModelManager and ModelRouter pick it up automatically.
+  3. The ModelManager picks it up automatically.
 """
 
 from __future__ import annotations
@@ -22,14 +22,16 @@ _REGISTRY: dict[str, type] = {}
 
 def _register_defaults() -> None:
     from app.core.asr.engines.fireredasr2 import FireRedASR2Engine
-    from app.core.asr.engines.sensevoice import SenseVoiceEngine
     from app.core.asr.engines.qwen3asr import Qwen3ASREngine
+    from app.core.asr.engines.sensevoice import SenseVoiceEngine
     from app.core.asr.engines.whisper import WhisperEngine
+    from app.core.asr.engines.x_asr import XASREngine
 
     _REGISTRY["fireredasr2"] = FireRedASR2Engine
     _REGISTRY["sensevoice"] = SenseVoiceEngine
     _REGISTRY["qwen3asr"] = Qwen3ASREngine
     _REGISTRY["whisper"] = WhisperEngine
+    _REGISTRY["x-asr"] = XASREngine
 
 
 # Populate on first import

@@ -1,4 +1,8 @@
-'''
+# Amadeus
+
+Amadeus 是本地优先的语音识别、实时字幕、语音 Agent 与 TTS/变声桌面应用。
+
+```
 asr-app/
 ├── README.md
 ├── docker-compose.yml
@@ -25,7 +29,6 @@ asr-app/
 │   │   ├── core/
 │   │   │   ├── asr/
 │   │   │   │   ├── base.py         # ASREngine 抽象基类
-│   │   │   │   ├── router.py       # ModelRouter: 单选/多模型并行
 │   │   │   │   ├── engines/
 │   │   │   │   │   ├── whisper.py  # faster-whisper / openai-whisper
 │   │   │   │   │   ├── vosk.py     # Vosk 离线引擎
@@ -39,7 +42,6 @@ asr-app/
 │   │   │   │   │   └── denoise.py      # 降噪预留
 │   │   │   │   └── post/
 │   │   │   │       ├── punctuation.py  # 标点恢复 (ct-transformer预留)
-│   │   │   │       └── diarize.py      # 说话人分离预留
 │   │   │   │
 │   │   │   └── model_manager.py    # 模型加载/卸载/热切换
 │   │   │
@@ -65,18 +67,20 @@ asr-app/
 │       ├── test_engines.py
 │       ├── test_pipeline.py
 │       └── test_api.py
-'''
+```
 ## 使用
 
-'''
+```bash
 # 1. 安装依赖（whisper 引擎）
 uv sync --all-extras
 
 # 2. 启动服务（开发模式，无 Redis）
 cd /home/yami/AI/asrapp/backend
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+uv run --no-sync uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-
+## 前端启动
+cd /home/yami/AI/asrapp/frontend/desktop
+npx vite --host 0.0.0.0
 ## 1. tts启动 sglang-omni API 服务 (port 8002)
 cd /home/yami/AI/audio/TTS/higgs-audio/thirdparty/sglang-omni
 
@@ -87,7 +91,7 @@ SGLANG_OMNI_STARTUP_TIMEOUT=1800 \
   --model-path /home/yami/AI/audio/TTS/higgs-audio/higgs-audio-v3-tts-4b \
   --port 8002 \
   --stages.2.factory_args.server_args_overrides.mem_fraction_static 0.6 \
-  --stages.2.factory_args.server_args_overrides.max_running_requests 1
+  --stages.2.factory_args.server_args_overrides.max_running_requests 4
 
 
 ## 2. tts启动 Gradio WebUI (port 8003)
@@ -110,5 +114,7 @@ pytest tests/ -v
 # 4. Docker 一键启动（含 Redis + Celery worker）
 cd ..
 docker-compose up --build
-'''
+```
 API 文档访问：http://localhost:8000/docs
+# 打包
+cd frontend/desktop && npm run build:win

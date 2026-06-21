@@ -3,13 +3,15 @@
 > **父文档**: [← 返回 asrapp 总览](../README.md)
 > **子文档**:
 > - [引擎对比](ENGINES.md) — 当前启用引擎横向评测
-> - [伪流式识别](STREAMING.md) — VAD 驱动的离线模型伪流式方案
+> - [流式识别](STREAMING.md) — X-ASR 原生流式会话
+> - [X-ASR 接入](X_ASR.md) — 模型文件、配置、运行与验证
+> - [离线识别热词](HOTWORDS.md) — CapsWriter 风格热词与规则
 
 ---
 
 ## 定位
 
-ASR（Automatic Speech Recognition）是语音助手的**输入层**。当前启用 FireRedASR2、SenseVoice、Qwen3-ASR 和 Whisper，运行时热切换，单引擎或多引擎联合推理。
+ASR（Automatic Speech Recognition）是语音助手的**输入层**。当前启用 X-ASR、FireRedASR2、SenseVoice、Qwen3-ASR 和 Whisper。离线和实时通路同时配置：完整音频由一个离线模型处理，实时音频只由 X-ASR 原生流式模型处理。
 
 ## 双 ASR 体系
 
@@ -23,13 +25,14 @@ ASR（Automatic Speech Recognition）是语音助手的**输入层**。当前启
 ## 核心抽象
 
 ```python
-class ASREngine(ABC):
+class BaseASREngine(ABC):
     name: str
     languages: list[str]
 
     def load(self) -> None: ...
     def unload(self) -> None: ...
     def transcribe(self, audio: bytes, **opts) -> ASRResult: ...
+    def create_streaming_session(self, sample_rate, opts) -> BaseStreamingASRSession: ...
 
 class ASRResult:
     text: str
@@ -40,23 +43,19 @@ class ASRResult:
     duration_sec: float
 ```
 
-## 路由策略
+## 模型选择
 
-| 策略 | 说明 |
-|------|------|
-| Single | 单引擎直接推理 |
-| Multi-First | 多引擎并行，取第一个完成的结果 |
-| Multi-Vote | 多引擎投票，选出现最多的文本 |
-| Multi-Concat | 多引擎结果拼接 |
+模型管理中的 `离线识别模型` 与 `实时流式模型` 相互独立，不存在工作模式切换或多模型合并策略。离线请求始终单引擎直接推理。
 
-## VAD 伪流式
+## 真流式
 
-离线 ASR 引擎不支持真流式。通过 VAD 检测 + 分段 ASR 模拟实时体验：
+X-ASR 保留 Zipformer online decoder 状态，PCM 块到达后立即增量解码。VAD 只负责确定话语边界；partial 和 final 始终来自同一个 X-ASR stream：
 
 ```
-麦克风 → VAD 检测语音 → 500ms 间隔 partial ASR → 静音触发 final ASR
+麦克风 → VAD speech_start → X-ASR PCM 增量 partial
+       → VAD speech_end → 补尾静音 → X-ASR final
 ```
 
 ---
 
-> 📖 [引擎对比 →](ENGINES.md) | [伪流式设计 →](STREAMING.md)
+> 📖 [引擎对比 →](ENGINES.md) | [流式设计 →](STREAMING.md) | [X-ASR 接入 →](X_ASR.md) | [热词 →](HOTWORDS.md)

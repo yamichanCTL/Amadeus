@@ -3,11 +3,12 @@ import { AppPage, useASRStore } from '@/store/useASRStore'
 const items: Array<{ page?: AppPage; label: string; icon: string }> = [
   { page: 'home', label: '首页', icon: '⌂' },
   { page: 'realtime', label: '实时对话', icon: '☏' },
-  { page: 'transcribe', label: '文件转写', icon: '▤' },
+  { page: 'transcribe', label: '语音识别', icon: '▤' },
   { page: 'history', label: '历史记录', icon: '◷' },
   { page: 'summary', label: '当日总结', icon: '☷' },
   { page: 'voice', label: '变声器/TTS', icon: '🎤' },
   { page: 'models', label: '模型管理', icon: '▣' },
+  { page: 'debug', label: '开发调试台', icon: '⌁' },
   { page: 'settings', label: '设置', icon: '⚙' }
 ]
 
@@ -26,8 +27,8 @@ export function Sidebar() {
           <span />
         </div>
         <div>
-          <strong>ASRAPP</strong>
-          <small>智能语音识别助手</small>
+          <strong>Amadeus</strong>
+          <small>智能语音助手</small>
         </div>
       </div>
       <nav>

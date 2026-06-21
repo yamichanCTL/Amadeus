@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { HotkeyCapture, TriggerCapture } from '@/components/TriggerCapture'
-import { listAudioInputDevices } from '@/services/audio'
+import { listAudioInputDevices, testAudioInputDevice } from '@/services/audio'
 import { useASRStore } from '@/store/useASRStore'
 
 export function SettingsPage() {
   const settings = useASRStore((state) => state.settings)
   const updateSettings = useASRStore((state) => state.updateSettings)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
+  const [microphoneTest, setMicrophoneTest] = useState('')
+  const [testingMicrophone, setTestingMicrophone] = useState(false)
 
   useEffect(() => {
     listAudioInputDevices().then(setDevices).catch(() => setDevices([]))
@@ -17,13 +19,39 @@ export function SettingsPage() {
     if (dir) updateSettings({ archiveDir: dir })
   }
 
+  const testMicrophone = async () => {
+    setTestingMicrophone(true)
+    setMicrophoneTest('检测中，请对着麦克风说话…')
+    try {
+      const result = await testAudioInputDevice(settings.audioInputDeviceId || undefined)
+      const level = Math.round(result.peak * 100)
+      const aec = result.echoCancellation === null ? 'AEC 状态未知' : result.echoCancellation ? 'AEC 已启用' : 'AEC 不可用'
+      setMicrophoneTest(
+        level >= 1
+          ? `输入通路正常 · 峰值 ${level}% · ${result.sampleRate}Hz · ${aec}`
+          : `已打开 ${result.label}，但未检测到明显声音 · ${aec}`
+      )
+      setDevices(await listAudioInputDevices().catch(() => devices))
+    } catch (error) {
+      setMicrophoneTest(error instanceof Error ? `输入测试失败：${error.message}` : '输入测试失败')
+    } finally {
+      setTestingMicrophone(false)
+    }
+  }
+
   return (
     <div className="page settings-page">
       <section className="panel settings-grid">
         <h1>设置</h1>
         <label>
           后端地址
-          <input value={settings.serverUrl} onChange={(event) => updateSettings({ serverUrl: event.target.value })} />
+          <input value={settings.serverUrl} onChange={(event) => updateSettings({ serverUrl: event.target.value })} placeholder="http://112.124.13.120:18000" />
+          <small>浏览器直连的公网后端。实时 ASR+TTS 的 WebSocket 也连向此地址的 /v1/tts/higgs/stream 路由，由后端内部转发给 TTS。</small>
+        </label>
+        <label>
+          Higgs TTS 地址
+          <input value={settings.higgsTtsBaseUrl} onChange={(event) => updateSettings({ higgsTtsBaseUrl: event.target.value })} placeholder="http://127.0.0.1:8002" />
+          <small>浏览器不直连 TTS。此地址随 WebSocket config 发送给后端，后端在服务器内部调用 127.0.0.1:TTS端口 完成语音合成。</small>
         </label>
         <label>
           主题
@@ -36,12 +64,18 @@ export function SettingsPage() {
         </label>
         <label>
           麦克风
-          <select value={settings.audioInputDeviceId} onChange={(event) => updateSettings({ audioInputDeviceId: event.target.value })}>
-            <option value="">默认设备</option>
-            {devices.map((device) => (
-              <option key={device.deviceId} value={device.deviceId}>{device.label || device.deviceId}</option>
-            ))}
-          </select>
+          <div className="inline-control">
+            <select value={settings.audioInputDeviceId} onChange={(event) => updateSettings({ audioInputDeviceId: event.target.value })}>
+              <option value="">跟随系统</option>
+              {devices.map((device) => (
+                <option key={device.deviceId} value={device.deviceId}>{device.label || device.deviceId}</option>
+              ))}
+            </select>
+            <button type="button" disabled={testingMicrophone} onClick={() => void testMicrophone()}>
+              {testingMicrophone ? '测试中' : '测试输入'}
+            </button>
+          </div>
+          {microphoneTest && <small>{microphoneTest}</small>}
         </label>
         <label>
           结果输出
@@ -65,6 +99,7 @@ export function SettingsPage() {
           ) : (
             <HotkeyCapture value={settings.triggerKey} onChange={(value) => updateSettings({ triggerKey: value })} />
           )}
+          {settings.triggerType === 'keyboard' && settings.triggerKey === 'AltRight' && <small>默认：右 Alt；Windows 支持全局触发，其他平台需保持应用获得键盘事件。</small>}
         </label>
         <label>
           实时字幕来源

@@ -29,6 +29,11 @@ export function HotkeyCapture({ value, onChange }: { value: string; onChange: (v
       onKeyDown={(event) => {
         if (!capturing) return
         event.preventDefault()
+        if (event.code === 'AltRight') {
+          onChange('AltRight')
+          setCapturing(false)
+          return
+        }
         const parts: string[] = []
         if (event.ctrlKey) parts.push('Ctrl')
         if (event.altKey) parts.push('Alt')
@@ -39,7 +44,7 @@ export function HotkeyCapture({ value, onChange }: { value: string; onChange: (v
         setCapturing(false)
       }}
     >
-      {capturing ? '按下快捷键' : value}
+      {capturing ? '按下快捷键' : value === 'AltRight' ? '右 Alt' : value}
     </button>
   )
 }

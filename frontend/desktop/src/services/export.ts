@@ -16,7 +16,7 @@ export function formatTimestamp(seconds: number, separator = ',') {
 export function segmentsToSrt(segments: Segment[]) {
   return segments
     .map((segment, index) => {
-      const text = segment.speaker ? `[${segment.speaker}] ${segment.text}` : segment.text
+      const text = segment.text
       return `${index + 1}\n${formatTimestamp(segment.start)} --> ${formatTimestamp(segment.end)}\n${text.trim()}`
     })
     .join('\n\n')

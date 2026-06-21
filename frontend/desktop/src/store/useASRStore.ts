@@ -2,14 +2,13 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { ModelInfo, TranscribeResponse } from '@/services/api'
 
-export type AppPage = 'home' | 'realtime' | 'transcribe' | 'history' | 'summary' | 'models' | 'settings' | 'voice'
+export type AppPage = 'home' | 'realtime' | 'transcribe' | 'history' | 'summary' | 'models' | 'settings' | 'voice' | 'debug'
 export type TranscribeStatus = 'idle' | 'uploading' | 'processing' | 'polling' | 'done' | 'error' | 'cancelled'
 export type ServerStatus = 'connected' | 'disconnected' | 'checking'
 export type RecordStatus = 'idle' | 'recording' | 'processing'
 export type TriggerType = 'keyboard' | 'mouse'
 export type InputSource = 'file' | 'speaker'
-export type LiveCaptionStatus = 'idle' | 'listening' | 'transcribing' | 'error'
-export type MergeStrategy = 'first' | 'vote' | 'concat'
+export type LiveCaptionStatus = 'idle' | 'connecting' | 'listening' | 'transcribing' | 'stopping' | 'error'
 export type InjectMode = 'copy' | 'inject' | 'none'
 export type ThemeMode = 'windows' | 'light' | 'dark' | 'system'
 export type AgentVoiceMode = 'browser' | 'server' | 'gpt_sovits' | 'voxcpm2'
@@ -30,15 +29,12 @@ export type AsrModelConfig = {
 
 export type Settings = {
   serverUrl: string
-  defaultEngine: string
-  selectedEngines: string[]
+  offlineEngine: string
+  streamingEngine: string
   asrModelConfigs: Record<string, AsrModelConfig>
   defaultLanguage: string
   whisperModel: string
   enablePunctuation: boolean
-  enableDiarize: boolean
-  multiEngine: boolean
-  mergeStrategy: MergeStrategy
   theme: ThemeMode
   inputSource: InputSource
   liveCaptionEnabled: boolean
@@ -60,6 +56,10 @@ export type Settings = {
   audioInputDeviceId: string
   audioOutputDeviceId: string
   higgsTtsBaseUrl: string
+  higgsTtsProvider: 'local' | 'boson'
+  higgsTtsApiToken: string
+  higgsTtsRemoteBaseUrl: string
+  higgsTtsRemoteModel: string
   higgsTtsVoice: string
   higgsTtsVoices: string[]
   higgsTtsFormat: 'wav' | 'mp3' | 'flac' | 'opus' | 'aac' | 'pcm'
@@ -115,6 +115,8 @@ export type Settings = {
   agentProactive: boolean
   agentProactiveIntervalMin: number
   agentTasks: AgentTask[]
+  userId: string
+  audioRelayEnabled: boolean
 }
 
 export type HistoryItem = TranscribeResponse & {
@@ -128,20 +130,18 @@ export type HistoryItem = TranscribeResponse & {
 
 export const DEFAULT_SETTINGS: Settings = {
   serverUrl: '',   // same-origin in dev (through Vite proxy); set to http://localhost:8000 for prod
-  defaultEngine: 'sensevoice',
-  selectedEngines: ['sensevoice'],
+  offlineEngine: 'sensevoice',
+  streamingEngine: 'x-asr',
   asrModelConfigs: {
     fireredasr2: { modelName: 'FireRedASR2-AED', device: 'cuda', computeType: '', extraJson: '{"beam_size":3,"batch_size":1}' },
     sensevoice: { modelName: 'SenseVoiceSmall', device: 'cuda:0', computeType: '', extraJson: '{"batch_size_s":60}' },
     qwen3asr: { modelName: 'Qwen/Qwen3-ASR-1.7B', device: 'cuda:0', computeType: 'bfloat16', extraJson: '{}' },
-    whisper: { modelName: 'base', device: 'cpu', computeType: 'int8', extraJson: '{}' }
+    whisper: { modelName: 'base', device: 'cuda', computeType: 'float16', extraJson: '{}' },
+    'x-asr': { modelName: 'chunk-160ms-model', device: 'cuda', computeType: '', extraJson: '{"num_threads":1,"text_format":"none"}' }
   },
   defaultLanguage: 'zh',
   whisperModel: 'base',
   enablePunctuation: false,
-  enableDiarize: false,
-  multiEngine: false,
-  mergeStrategy: 'first',
   theme: 'windows',
   inputSource: 'file',
   liveCaptionEnabled: false,
@@ -154,8 +154,8 @@ export const DEFAULT_SETTINGS: Settings = {
   captionBoxHeight: 150,
   captionBoxX: null,
   captionBoxY: null,
-  triggerType: 'mouse',
-  triggerKey: 'mouse_middle',
+  triggerType: 'keyboard',
+  triggerKey: 'AltRight',
   injectMode: 'inject',
   timeoutSec: 60,
   allowServerDataCollection: false,
@@ -163,8 +163,12 @@ export const DEFAULT_SETTINGS: Settings = {
   audioInputDeviceId: '',
   audioOutputDeviceId: '',
   higgsTtsBaseUrl: 'http://localhost:8002',
-  higgsTtsVoice: 'default',
-  higgsTtsVoices: ['default'],
+  higgsTtsProvider: 'local',
+  higgsTtsApiToken: '',
+  higgsTtsRemoteBaseUrl: 'https://api.boson.ai/v1',
+  higgsTtsRemoteModel: 'higgs-audio-v3-tts',
+  higgsTtsVoice: 'Elysia',
+  higgsTtsVoices: ['default', 'Elysia'],
   higgsTtsFormat: 'wav',
   higgsTtsSpeed: 1,
   higgsTtsTemperature: 0.7,
@@ -252,7 +256,9 @@ export const DEFAULT_SETTINGS: Settings = {
   agentHandsFree: false,
   agentProactive: false,
   agentProactiveIntervalMin: 5,
-  agentTasks: []
+  agentTasks: [],
+  userId: '',
+  audioRelayEnabled: false
 }
 
 type ASRState = {
@@ -284,7 +290,10 @@ type ASRState = {
 }
 
 function normalizeSettings(value: Partial<Settings> | undefined): Settings {
-  const merged = { ...DEFAULT_SETTINGS, ...(value || {}) }
+  const legacy = (value || {}) as Partial<Settings> & { defaultEngine?: string }
+  const merged = { ...DEFAULT_SETTINGS, ...legacy }
+  delete (merged as unknown as Record<string, unknown>).enableDiarize
+  merged.offlineEngine = legacy.offlineEngine || legacy.defaultEngine || DEFAULT_SETTINGS.offlineEngine
   // Migrate direct-backend URL → same-origin (Vite proxy avoids WSL2 WebSocket issues)
   if (merged.serverUrl === 'http://localhost:8000') {
     merged.serverUrl = ''
@@ -298,11 +307,11 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
     merged.serverUrl = `http://${merged.serverUrl}`
   }
   merged.serverUrl = merged.serverUrl.replace(/\/+$/, '') // strip trailing slashes
-  const allowedEngines = ['fireredasr2', 'sensevoice', 'qwen3asr', 'whisper']
-  if (!allowedEngines.includes(merged.defaultEngine)) merged.defaultEngine = 'sensevoice'
-  merged.selectedEngines = (Array.isArray(merged.selectedEngines) ? merged.selectedEngines : [])
-    .filter((engine) => allowedEngines.includes(engine))
-  merged.selectedEngines = merged.selectedEngines.length ? merged.selectedEngines : [merged.defaultEngine]
+  const allowedEngines = ['fireredasr2', 'sensevoice', 'qwen3asr', 'whisper', 'x-asr']
+  const offlineEngines = allowedEngines.filter((engine) => engine !== 'x-asr')
+  const streamingEngines = ['x-asr']
+  if (!offlineEngines.includes(merged.offlineEngine)) merged.offlineEngine = 'sensevoice'
+  if (!streamingEngines.includes(merged.streamingEngine)) merged.streamingEngine = 'x-asr'
   const rawConfigs = merged.asrModelConfigs && typeof merged.asrModelConfigs === 'object' ? merged.asrModelConfigs : {}
   merged.asrModelConfigs = Object.fromEntries(allowedEngines.map((engine) => {
     const fallback = DEFAULT_SETTINGS.asrModelConfigs[engine]
@@ -321,9 +330,13 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
   merged.captionBoxHeight = Math.min(500, Math.max(96, Number(merged.captionBoxHeight) || 150))
   merged.audioOutputDeviceId = merged.audioOutputDeviceId || ''
   merged.higgsTtsBaseUrl = merged.higgsTtsBaseUrl || 'http://localhost:8002'
+  merged.higgsTtsProvider = merged.higgsTtsProvider === 'boson' ? 'boson' : 'local'
+  merged.higgsTtsApiToken = typeof merged.higgsTtsApiToken === 'string' ? merged.higgsTtsApiToken : ''
+  merged.higgsTtsRemoteBaseUrl = merged.higgsTtsRemoteBaseUrl || 'https://api.boson.ai/v1'
+  merged.higgsTtsRemoteModel = merged.higgsTtsRemoteModel || 'higgs-audio-v3-tts'
   merged.higgsTtsVoice = typeof merged.higgsTtsVoice === 'string' && merged.higgsTtsVoice.trim()
     ? merged.higgsTtsVoice.trim()
-    : 'default'
+    : 'Elysia'
   const savedTtsVoices = Array.isArray(merged.higgsTtsVoices)
     ? merged.higgsTtsVoices.filter((voice): voice is string => typeof voice === 'string' && Boolean(voice.trim())).map((voice) => voice.trim())
     : []
@@ -386,6 +399,13 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
       })
       .slice(-40)
     : []
+  const obsolete = merged as Settings & Record<string, unknown>
+  delete obsolete.defaultEngine
+  delete obsolete.asrMode
+  delete obsolete.streamingFinalEngine
+  delete obsolete.selectedEngines
+  delete obsolete.multiEngine
+  delete obsolete.mergeStrategy
   return merged
 }
 
@@ -425,13 +445,28 @@ export const useASRStore = create<ASRState>()(
     }),
     {
       name: 'asr-desktop-store',
-      version: 29,
+      version: 32,
       partialize: (state) => ({ settings: state.settings, history: state.history }),
-      migrate: (persisted) => {
+      migrate: (persisted, version) => {
         const state = persisted as Partial<ASRState>
+        const settings = normalizeSettings(state.settings)
+        if (version < 30) {
+          settings.asrModelConfigs = Object.fromEntries(Object.entries(settings.asrModelConfigs).map(([engine, config]) => [
+            engine,
+            {
+              ...config,
+              device: engine === 'sensevoice' || engine === 'qwen3asr' ? 'cuda:0' : 'cuda',
+              computeType: engine === 'whisper' ? 'float16' : config.computeType
+            }
+          ]))
+        }
+        if (version < 32 && settings.triggerType === 'mouse' && settings.triggerKey === 'mouse_middle') {
+          settings.triggerType = 'keyboard'
+          settings.triggerKey = 'AltRight'
+        }
         return {
           ...state,
-          settings: normalizeSettings(state.settings),
+          settings,
           history: Array.isArray(state.history) ? state.history.slice(0, 200) : []
         } as ASRState
       }

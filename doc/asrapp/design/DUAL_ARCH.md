@@ -13,7 +13,7 @@ ASRAPP 有两个独立运行层，解决不同场景的需求。
 | 维度 | 说明 |
 |------|------|
 | 定位 | 生产级 HTTP/WebSocket 服务 |
-| 职责 | 用户管理、多引擎 ASR、LLM Agent 对话、流式识别、任务队列 |
+| 职责 | 用户管理、离线 ASR、X-ASR 原生流式识别、LLM Agent 对话、任务队列 |
 | 依赖 | FastAPI、SQLAlchemy、Celery、Redis |
 | 场景 | Docker 部署、多用户服务、Web/App 客户端接入 |
 

@@ -2,7 +2,7 @@
 layout: home
 
 hero:
-  name: "ASRAPP"
+  name: "Amadeus"
   text: "Agentic Voice Assistant 文档"
   tagline: 语音输入 · ASR 识别 · Agent 执行 · TTS 合成 · 桌面与移动客户端
   actions:

@@ -348,7 +348,6 @@ dependencies = [
 all = [
     { name = "accelerate" },
     { name = "cn2an" },
-    { name = "deepmultilingualpunctuation" },
     { name = "faster-whisper" },
     { name = "funasr" },
     { name = "httpx" },
@@ -392,7 +391,7 @@ firered = [
     { name = "transformers" },
 ]
 punctuation = [
-    { name = "deepmultilingualpunctuation" },
+    { name = "funasr" },
 ]
 qwen3asr = [
     { name = "accelerate" },
@@ -421,19 +420,22 @@ voxcpm = [
 whisper = [
     { name = "faster-whisper" },
 ]
+x-asr = [
+    { name = "sherpa-onnx" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "accelerate", marker = "extra == 'qwen3asr'", specifier = ">=0.30.0" },
     { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "alembic", specifier = ">=1.13.1" },
-    { name = "asr-backend", extras = ["firered", "whisper", "vosk", "sherpa", "sensevoice", "qwen3asr", "vad", "punctuation", "dev"], marker = "extra == 'all'" },
+    { name = "asr-backend", extras = ["firered", "whisper", "vosk", "sherpa", "x-asr", "sensevoice", "qwen3asr", "vad", "punctuation", "dev"], marker = "extra == 'all'" },
     { name = "bcrypt", specifier = "<5" },
     { name = "celery", extras = ["redis"], specifier = ">=5.4.0" },
     { name = "cn2an", marker = "extra == 'firered'", specifier = ">=0.5.23" },
-    { name = "deepmultilingualpunctuation", marker = "extra == 'punctuation'", specifier = ">=1.0.1" },
     { name = "fastapi", specifier = ">=0.111.0" },
     { name = "faster-whisper", marker = "extra == 'whisper'", specifier = ">=1.0.3" },
+    { name = "funasr", marker = "extra == 'punctuation'", specifier = ">=1.1.3" },
     { name = "funasr", marker = "extra == 'sensevoice'", specifier = ">=1.1.3" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
@@ -459,6 +461,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4.0" },
     { name = "sentencepiece", marker = "extra == 'firered'", specifier = ">=0.1.99" },
     { name = "sherpa-onnx", marker = "extra == 'sherpa'", specifier = ">=1.10.0" },
+    { name = "sherpa-onnx", marker = "extra == 'x-asr'", specifier = ">=1.10.0" },
     { name = "silero-vad", marker = "extra == 'vad'", specifier = ">=5.1.0" },
     { name = "soundfile", specifier = ">=0.12.1" },
     { name = "sqlalchemy", specifier = ">=2.0.30" },
@@ -477,7 +480,7 @@ requires-dist = [
     { name = "voxcpm", marker = "extra == 'voxcpm'", specifier = ">=0.1.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]
-provides-extras = ["firered", "whisper", "vosk", "sherpa", "sensevoice", "qwen3asr", "vad", "punctuation", "voxcpm", "dev", "all"]
+provides-extras = ["firered", "whisper", "vosk", "sherpa", "x-asr", "sensevoice", "qwen3asr", "vad", "punctuation", "voxcpm", "dev", "all"]
 
 [[package]]
 name = "async-timeout"
@@ -1583,19 +1586,6 @@ source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
 sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/43/fa/6d96a0978d19e17b68d634497769987b16c8f4cd0a7a05048bec693caa6b/decorator-5.2.1.tar.gz", hash = "sha256:65f266143752f734b0a7cc83c46f4618af75b8c5911b00ccb61d0ac9b6da0360", size = 56711, upload-time = "2025-02-24T04:41:34.073Z" }
 wheels = [
     { url = "https://pypi.tuna.tsinghua.edu.cn/packages/4e/8c/f3147f5c4b73e7550fe5f9352eaa956ae838d5c51eb58e7a25b9f3e2643b/decorator-5.2.1-py3-none-any.whl", hash = "sha256:d316bb415a2d9e2d2b3abcc4084c6502fc09240e292cd76a76afc106a1c8e04a", size = 9190, upload-time = "2025-02-24T04:41:32.565Z" },
-]
-
-[[package]]
-name = "deepmultilingualpunctuation"
-version = "1.0.1"
-source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }
-dependencies = [
-    { name = "torch" },
-    { name = "transformers" },
-]
-sdist = { url = "https://pypi.tuna.tsinghua.edu.cn/packages/63/d6/96fb37bc6bb3e647d68a2003e63b99458f9ac3535eab1e4fc95dbe95455b/deepmultilingualpunctuation-1.0.1.tar.gz", hash = "sha256:aaf3c0ca56dfef7d6f27d9e675850595c586d62f1fda46a687e0c1b004a76c11", size = 4223, upload-time = "2022-02-11T13:15:10.14Z" }
-wheels = [
-    { url = "https://pypi.tuna.tsinghua.edu.cn/packages/dc/a7/505f531c23aa2c381b597c9e59a62c20d9e6294f32ad7d06e4eaa2f3d438/deepmultilingualpunctuation-1.0.1-py3-none-any.whl", hash = "sha256:f346378adbecdcef84c63a61467f755d75385559d0260f60bef4315b5fb3a54f", size = 5366, upload-time = "2022-02-11T13:15:06.836Z" },
 ]
 
 [[package]]

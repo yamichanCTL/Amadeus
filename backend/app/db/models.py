@@ -104,7 +104,7 @@ class ASRTask(Base):
     file_size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     mime_type: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
-    # Engine selection (comma-separated for multi-engine runs)
+    # Selected offline engine (legacy column name retained for DB compatibility)
     engines: Mapped[str] = mapped_column(String(128), default="whisper")
     # JSON-serialised engine-specific kwargs, e.g. {"model": "medium", "language": "zh"}
     engine_options: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -112,6 +112,9 @@ class ASRTask(Base):
     # Pipeline flags snapshot (taken from config at submission time)
     vad_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     punctuation_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Legacy DB compatibility only. Existing SQLite databases still contain
+    # this NOT NULL column even though speaker diarization was removed from the
+    # product/API. Keep writing False until a real schema migration drops it.
     diarize_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Job lifecycle
@@ -153,9 +156,9 @@ class Transcript(Base):
 
     `full_text`   – plain concatenated text (no timestamps)
     `segments`    – JSON array of segment objects, e.g.:
-                    [{"start": 0.0, "end": 2.4, "text": "你好", "speaker": "SPEAKER_00"}]
+                    [{"start": 0.0, "end": 2.4, "text": "你好"}]
     `language`    – detected or requested language code
-    `engine_used` – which engine produced this result (or "merged" for multi-engine)
+    `engine_used` – which offline engine produced this result
     `confidence`  – average confidence score 0–1 where available
     """
 
@@ -173,7 +176,7 @@ class Transcript(Base):
     engine_used: Mapped[str] = mapped_column(String(64), default="whisper")
     confidence: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
-    # For multi-engine: store each engine's raw output here as JSON
+    # Engine-specific raw output and post-processing metadata
     raw_results: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(

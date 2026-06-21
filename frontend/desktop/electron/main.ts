@@ -48,6 +48,7 @@ let captionOverlay: BrowserWindow | null = null
 let tray: Tray | null = null
 let forceQuit = false
 let mouseHook: ChildProcessWithoutNullStreams | null = null
+let keyboardHook: ChildProcessWithoutNullStreams | null = null
 let registeredHotkey = ''
 
 if (isDev) {
@@ -90,6 +91,11 @@ function createWindow() {
   })
 
   mainWindow.once('ready-to-show', () => mainWindow?.show())
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    if (registeredHotkey === 'AltRight' && input.type === 'keyDown' && input.code === 'AltRight' && !input.isAutoRepeat) {
+      mainWindow?.webContents.send('hotkey:triggered')
+    }
+  })
 
   if (isDev) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL!)
@@ -97,6 +103,10 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
   }
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
 
   mainWindow.on('close', async (event) => {
     if (!isWindows || forceQuit) return
@@ -167,7 +177,7 @@ function createTray() {
 }
 
 function showMainWindow() {
-  if (!mainWindow) return
+  if (!mainWindow || mainWindow.isDestroyed()) return
   mainWindow.show()
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.focus()
@@ -289,6 +299,43 @@ function stopMouseHook() {
   mouseHook = null
 }
 
+function stopKeyboardHook() {
+  if (!keyboardHook) return
+  keyboardHook.kill()
+  keyboardHook = null
+}
+
+function startRightAltHook() {
+  stopKeyboardHook()
+  // Electron accelerators cannot represent a standalone right-side modifier.
+  // On Windows, poll VK_RMENU so the trigger remains global and preserves left/right identity.
+  if (!isWindows) return true
+  const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class KeyboardState {
+  [DllImport("user32.dll")]
+  public static extern short GetAsyncKeyState(int vKey);
+}
+"@
+$last = $false
+while ($true) {
+  $down = ([KeyboardState]::GetAsyncKeyState(0xA5) -band 0x8000) -ne 0
+  if ($down -and -not $last) { Write-Output "AltRight" }
+  $last = $down
+  Start-Sleep -Milliseconds 35
+}`
+  keyboardHook = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script])
+  keyboardHook.stdout.on('data', (chunk) => {
+    if (chunk.toString().split(/\r?\n/).some((item: string) => item.trim() === 'AltRight')) {
+      mainWindow?.webContents.send('hotkey:triggered')
+    }
+  })
+  keyboardHook.on('exit', () => { keyboardHook = null })
+  return true
+}
+
 function startMouseHook(button: string) {
   stopMouseHook()
   if (!isWindows) return false
@@ -392,12 +439,15 @@ function registerIpc() {
     return true
   })
   ipcMain.handle('hotkey:register', (_event, accelerator: string) => {
-    if (registeredHotkey) globalShortcut.unregister(registeredHotkey)
+    if (registeredHotkey && registeredHotkey !== 'AltRight') globalShortcut.unregister(registeredHotkey)
+    stopKeyboardHook()
     registeredHotkey = accelerator
+    if (accelerator === 'AltRight') return startRightAltHook()
     return globalShortcut.register(accelerator, () => mainWindow?.webContents.send('hotkey:triggered'))
   })
   ipcMain.handle('hotkey:unregister', () => {
-    if (registeredHotkey) globalShortcut.unregister(registeredHotkey)
+    if (registeredHotkey && registeredHotkey !== 'AltRight') globalShortcut.unregister(registeredHotkey)
+    stopKeyboardHook()
     registeredHotkey = ''
     return true
   })
@@ -451,5 +501,6 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   stopMouseHook()
+  stopKeyboardHook()
   tray?.destroy()
 })

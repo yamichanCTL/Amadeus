@@ -1,7 +1,7 @@
 """
 tests/test_engines.py
 ──────────────────────
-Unit tests for ASR engines and ModelRouter.
+Unit tests for ASR engines and model management.
 All tests use the MockASREngine — no real model files required.
 """
 
@@ -10,7 +10,6 @@ from __future__ import annotations
 import pytest
 
 from app.core.asr.base import ASRResult, EngineOptions
-from app.core.asr.router import ModelRouter
 from app.core.model_manager import ModelManager
 from app.core.asr.registry import available_engines, get_engine_class
 from backend.tests.conftest import MockASREngine, make_wav_bytes
@@ -24,6 +23,7 @@ def test_registry_contains_default_engines() -> None:
     assert "sensevoice" in engines
     assert "qwen3asr" in engines
     assert "whisper" in engines
+    assert "x-asr" in engines
     assert "vosk" not in engines
     assert "sherpa" not in engines
     assert "stream" not in engines
@@ -115,66 +115,3 @@ async def test_model_manager_unload() -> None:
 
     await manager.unload_engine("mock")
     assert not manager.is_loaded("mock")
-
-
-# ── ModelRouter ───────────────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_router_single_engine() -> None:
-    from app.core.asr.registry import register_engine
-    register_engine("mock", MockASREngine)
-
-    manager = ModelManager()
-    router = ModelRouter(manager, engines=["mock"])
-    audio = make_wav_bytes(1.0)
-    result = await router.run(audio)
-
-    assert result.full_text == "测试识别结果"
-    assert result.engine_name == "mock"
-
-
-@pytest.mark.asyncio
-async def test_router_multi_engine_first_strategy() -> None:
-    from app.core.asr.registry import register_engine
-    register_engine("mock", MockASREngine)
-    register_engine("mock2", MockASREngine)
-
-    manager = ModelManager()
-    router = ModelRouter(manager, engines=["mock", "mock2"], merge_strategy="first")
-    audio = make_wav_bytes(1.0)
-    result = await router.run(audio)
-
-    assert result.full_text == "测试识别结果"
-    assert "all_engines" in result.raw
-
-
-@pytest.mark.asyncio
-async def test_router_multi_engine_concat_strategy() -> None:
-    from app.core.asr.registry import register_engine
-    register_engine("mock", MockASREngine)
-    register_engine("mock2", MockASREngine)
-
-    manager = ModelManager()
-    router = ModelRouter(manager, engines=["mock", "mock2"], merge_strategy="concat")
-    audio = make_wav_bytes(1.0)
-    result = await router.run(audio)
-
-    assert "[mock]" in result.full_text
-
-
-@pytest.mark.asyncio
-async def test_router_invalid_engine_raises() -> None:
-    manager = ModelManager()
-    router = ModelRouter(manager, engines=["does_not_exist"])
-    audio = make_wav_bytes(0.5)
-    # Single-engine path: KeyError from registry bubbles up directly
-    # Multi-engine path: wrapped in RuntimeError after all engines fail
-    # Either is acceptable — just assert it raises
-    with pytest.raises((RuntimeError, KeyError)):
-        await router.run(audio)
-
-
-def test_router_empty_engines_raises() -> None:
-    manager = ModelManager()
-    with pytest.raises(ValueError, match="At least one engine"):
-        ModelRouter(manager, engines=[])

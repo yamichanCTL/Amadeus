@@ -11,8 +11,8 @@ Flow
    a. Updates status → processing.
    b. Reads the audio file.
    c. Runs the optional pre-pipeline (VAD, denoise).
-   d. Dispatches to ModelRouter (one or more engines).
-   e. Runs the optional post-pipeline (punctuation, diarize).
+   d. Dispatches to the selected offline engine.
+   e. Runs the optional punctuation post-pipeline.
    f. Saves Transcript row, updates status → success.
 3. On any exception: updates status → failed with error_message.
 4. API client polls GET /v1/tasks/{id} until status ∈ {success, failed}.
@@ -79,13 +79,13 @@ def run_asr_task(self: ASRBaseTask, task_id: str, llm_options: dict | None = Non
 # ── Async implementation ──────────────────────────────────────────────────────
 
 async def _run(task_id: str, llm_options: dict | None = None) -> dict:
+    import time
     from app.config import get_settings
     from app.core.archive import archive_file_error_record, archive_file_record
     from app.core.asr.base import EngineOptions
-    from app.core.asr.router import ModelRouter
+    from app.core.asr.hotwords import get_hotword_manager
     from app.core.llm import run_auto_processing
     from app.core.model_manager import get_model_manager
-    from app.core.pipeline.post.diarize import assign_speakers
     from app.core.pipeline.post.punctuation import restore_punctuation
     from app.core.pipeline.pre.vad import detect_speech
     from app.db.crud import (
@@ -98,6 +98,8 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
     from app.schemas.llm import LLMAutoOptions, LLMOutputs
 
     settings = get_settings()
+    task_started = time.perf_counter()
+    timing: dict[str, float] = {}
 
     async with AsyncSessionLocal() as db:
         # ── 1. Load task ──────────────────────────────────────────────────
@@ -117,14 +119,16 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
             if not task.audio_path or not Path(task.audio_path).exists():
                 raise FileNotFoundError(f"Audio file missing: {task.audio_path}")
 
+            read_started = time.perf_counter()
             audio_bytes = Path(task.audio_path).read_bytes()
+            timing["audio_read_sec"] = round(time.perf_counter() - read_started, 6)
 
             # ── 4. Parse engine options ───────────────────────────────────
             engine_opts_raw: dict = (
                 json.loads(task.engine_options) if task.engine_options else {}
             )
             keep_audio = bool(engine_opts_raw.get("allow_server_data_collection"))
-            engines = [e.strip() for e in task.engines.split(",") if e.strip()]
+            engine_name = next((e.strip() for e in task.engines.split(",") if e.strip()), settings.default_engine)
 
             options = EngineOptions(
                 language=engine_opts_raw.get("language"),
@@ -149,12 +153,12 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
 
             # ── 6. ASR inference ──────────────────────────────────────────
             manager = get_model_manager()
-            router = ModelRouter(
-                manager=manager,
-                engines=engines,
-                merge_strategy=engine_opts_raw.get("merge_strategy", "first"),
-            )
-            result = await router.run(audio_bytes, options)
+            model_started = time.perf_counter()
+            engine = await manager.get_engine(engine_name)
+            timing["model_ready_sec"] = round(time.perf_counter() - model_started, 6)
+            asr_started = time.perf_counter()
+            result = await engine.transcribe(audio_bytes, options)
+            timing["asr_sec"] = round(time.perf_counter() - asr_started, 6)
             logger.info(
                 "Task %s: ASR complete — %d chars, engine=%s",
                 task_id, len(result.full_text), result.engine_name,
@@ -164,19 +168,31 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
             final_text = result.full_text
 
             if task.punctuation_enabled:
+                punctuation_started = time.perf_counter()
                 final_text = await restore_punctuation(final_text, result.language)
                 result.full_text = final_text
+                timing["punctuation_sec"] = round(time.perf_counter() - punctuation_started, 6)
+                if len(result.segments) == 1:
+                    result.segments[0].text = final_text
 
-            if task.diarize_enabled and result.segments:
-                import io
-                import soundfile as sf
-                buf = io.BytesIO(audio_bytes)
-                audio_array, sr = sf.read(buf, dtype="float32", always_2d=False)
-                result.segments = await assign_speakers(result.segments, audio_array, sr)
+            hotword_started = time.perf_counter()
+            hotword_result = get_hotword_manager().apply(
+                result.full_text,
+                enabled=bool(engine_opts_raw.get("enable_hotwords", True)),
+            )
+            timing["hotword_sec"] = round(time.perf_counter() - hotword_started, 6)
+            result.full_text = hotword_result.text
+            if hotword_result.replacements or hotword_result.suggestions:
+                result.raw = dict(result.raw or {})
+                result.raw["hotwords"] = {
+                    "replacements": hotword_result.replacements,
+                    "suggestions": hotword_result.suggestions,
+                }
 
             llm_outputs = None
             llm_error = None
             if llm_options:
+                llm_started = time.perf_counter()
                 llm_opts = LLMAutoOptions.model_validate(llm_options)
                 outputs, llm_error = await run_auto_processing(
                     text=result.full_text,
@@ -194,6 +210,7 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
                 )
                 if not llm_outputs.polish and not llm_outputs.translate:
                     llm_outputs = None
+                timing["llm_sec"] = round(time.perf_counter() - llm_started, 6)
 
             # ── 8. Persist result ─────────────────────────────────────────
             segments_data = [
@@ -201,12 +218,13 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
                     "start": s.start,
                     "end": s.end,
                     "text": s.text,
-                    "speaker": s.speaker,
                     "confidence": s.confidence,
                 }
                 for s in result.segments
             ]
             raw_results = dict(result.raw or {})
+            timing["total_sec"] = round(time.perf_counter() - task_started, 6)
+            raw_results["timing"] = timing
             if llm_outputs:
                 raw_results["llm_outputs"] = llm_outputs.model_dump(mode="json", exclude_none=True)
             if llm_error:
@@ -225,7 +243,7 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
             archive_file_record(
                 audio_bytes=audio_bytes,
                 suffix=Path(task.filename or "audio.wav").suffix or ".wav",
-                user_id=task.user_id,
+                user_id=task.user_id or engine_opts_raw.get("archive_user_id"),
                 category=(
                     engine_opts_raw.get("archive_category")
                     or settings.upload_archive_category
@@ -261,7 +279,7 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
                 archive_file_error_record(
                     audio_bytes=audio_bytes,
                     suffix=Path(task.filename or "audio.wav").suffix or ".wav",
-                    user_id=task.user_id,
+                    user_id=task.user_id or engine_opts_raw.get("archive_user_id"),
                     category=(
                         engine_opts_raw.get("archive_category")
                         or settings.upload_archive_category

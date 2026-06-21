@@ -1,4 +1,4 @@
-"""WebSocket endpoint for VAD-driven pseudo-streaming ASR."""
+"""WebSocket endpoint for native streaming ASR."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from app.core.model_errors import ModelRuntimeError, classify_model_error
 from app.core.streaming.session import StreamingASRSession, parse_stream_config
 
 logger = logging.getLogger(__name__)
@@ -22,7 +23,7 @@ async def stream_asr(websocket: WebSocket) -> None:
     Stream 16 kHz mono PCM over WebSocket.
 
     Client text frames:
-    - ``{"type":"config","engine":"sensevoice","language":"zh","user_id":"u1"}``
+    - ``{"type":"config","engine":"x-asr","language":"zh","user_id":"u1"}``
     - ``{"type":"audio","data":"<base64 pcm_s16le>"}``
     - ``{"type":"end"}``
 
@@ -30,11 +31,70 @@ async def stream_asr(websocket: WebSocket) -> None:
     """
 
     await websocket.accept()
-    session = StreamingASRSession()
+    # Send an immediate "accepted" frame so the client knows the WebSocket
+    # handshake succeeded, even when downstream initialisation (VAD model
+    # load, X-ASR engine warm-up) takes several seconds on first connect.
+    await websocket.send_text(json.dumps({"type": "accepted"}, ensure_ascii=False))
+
+    # FireRed VAD construction loads model state and can take longer than the
+    # browser's connection timeout on the first stream. Keep that synchronous
+    # work off the event loop so the accepted WebSocket handshake is flushed.
+    await asyncio.sleep(0)
+
+    # If init takes > 3 s, send periodic "loading" heartbeats so the client
+    # doesn't think the connection has stalled.
+    init_started = asyncio.get_event_loop().time()
+    session_future = asyncio.ensure_future(asyncio.to_thread(StreamingASRSession))
+
+    async def _loading_heartbeat() -> None:
+        while not session_future.done():
+            elapsed = asyncio.get_event_loop().time() - init_started
+            if elapsed >= 3.0:
+                await websocket.send_text(
+                    json.dumps(
+                        {"type": "loading", "message": "正在加载语音识别模型…", "elapsed_s": round(elapsed, 1)},
+                        ensure_ascii=False,
+                    )
+                )
+            await asyncio.sleep(2.0)
+
+    heartbeat_task = asyncio.create_task(_loading_heartbeat())
+    try:
+        session = await session_future
+    except ModelRuntimeError as exc:
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
+        failure = classify_model_error(exc, "x-asr")
+        logger.exception("Could not initialise streaming ASR model: %s", failure.detail)
+        await websocket.send_text(json.dumps(failure.as_event(), ensure_ascii=False))
+        await websocket.close(code=1011)
+        return
+    except Exception as exc:
+        heartbeat_task.cancel()
+        try:
+            await heartbeat_task
+        except asyncio.CancelledError:
+            pass
+        logger.exception("Could not initialise streaming ASR session: %s", exc)
+        await websocket.send_text(json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False))
+        await websocket.close(code=1011)
+        return
+    finally:
+        if not heartbeat_task.done():
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+
     await session.send_ready()
     sender = asyncio.create_task(_send_loop(websocket, session))
     logger.info("WebSocket stream connected from %s", websocket.client)
 
+    failed = False
     try:
         while True:
             message = await websocket.receive()
@@ -49,11 +109,27 @@ async def stream_asr(websocket: WebSocket) -> None:
                 break
     except WebSocketDisconnect:
         pass
+    except ModelRuntimeError as exc:
+        failed = True
+        logger.exception("Streaming ASR model failed: %s", exc.detail)
+        await session.record_model_failure(exc)
     except Exception as exc:
+        failed = True
         logger.exception("Streaming session failed: %s", exc)
-        await session.queue.put({"type": "error", "session_id": session.session_id, "message": str(exc)})
+        await session.queue.put(
+            {
+                "type": "error",
+                "code": "stream_failed",
+                "session_id": session.session_id,
+                "message": str(exc),
+                "fatal": True,
+            }
+        )
     finally:
-        await session.finish()
+        if failed or session.fatal_error is not None:
+            await session.abort()
+        else:
+            await session.finish()
         await sender
         try:
             await websocket.close()
@@ -69,10 +145,18 @@ async def _handle_text_frame(session: StreamingASRSession, text: str) -> bool:
         session.update_config(data)
         await session.queue.put(
             {
+                "type": "loading",
+                "session_id": session.session_id,
+                "message": "正在预热流式 VAD 与 ASR 模型",
+                "state": session.state,
+            }
+        )
+        await session.prepare()
+        await session.queue.put(
+            {
                 "type": "configured",
                 "session_id": session.session_id,
                 "engine": session.config.engine,
-                "final_engine": session.config.final_engine,
                 "language": session.config.language,
                 "user_id": session.config.user_id,
                 "category": session.config.category,
@@ -97,6 +181,15 @@ async def _handle_text_frame(session: StreamingASRSession, text: str) -> bool:
 async def _send_loop(websocket: WebSocket, session: StreamingASRSession) -> None:
     while True:
         event: dict[str, Any] = await session.queue.get()
-        await websocket.send_text(json.dumps(event, ensure_ascii=False))
+        try:
+            await websocket.send_text(json.dumps(event, ensure_ascii=False))
+        except (WebSocketDisconnect, RuntimeError):
+            return
+        if event.get("type") == "error" and event.get("fatal"):
+            try:
+                await websocket.close(code=1011)
+            except (WebSocketDisconnect, RuntimeError):
+                pass
+            return
         if event.get("type") == "done":
             return

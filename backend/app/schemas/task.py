@@ -36,6 +36,7 @@ class TaskStatusResponse(BaseModel):
     confidence: float | None = None
     llm_outputs: LLMOutputs | None = None
     llm_error: str | None = None
+    timing: dict[str, float] | None = None
 
     model_config = {"from_attributes": True}
 

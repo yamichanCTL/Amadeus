@@ -1,9 +1,7 @@
 """
 tests/test_pipeline.py
 ───────────────────────
-Tests for pre/post pipeline stubs.
-These are lightweight smoke tests — the stubs are identity functions, so we
-verify they pass through data unchanged and don't raise.
+Tests for the lightweight pre/post pipeline boundaries.
 """
 
 from __future__ import annotations
@@ -11,10 +9,13 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from app.core.asr.base import Segment
-from app.core.pipeline.post.diarize import assign_speakers
+from app.core.pipeline.post import punctuation
 from app.core.pipeline.post.punctuation import restore_punctuation
 from app.core.pipeline.pre.vad import SpeechSegment, detect_speech, splice_segments
+
+
+async def _run_inline(function, *args):
+    return function(*args)
 
 
 # ── VAD ───────────────────────────────────────────────────────────────────────
@@ -56,44 +57,33 @@ def test_splice_segments_padding_clamped() -> None:
 # ── Punctuation ───────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_punctuation_stub_passthrough() -> None:
+async def test_punctuation_restores_model_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakePunctuationModel:
+        def generate(self, *, input: str):
+            assert input == "hello world this is a test"
+            return [{"text": "Hello world, this is a test."}]
+
+    monkeypatch.setattr(punctuation, "_load_model", lambda: FakePunctuationModel())
+    monkeypatch.setattr(punctuation.asyncio, "to_thread", _run_inline)
     text = "hello world this is a test"
     result = await restore_punctuation(text)
-    assert result == text
+    assert result == "Hello world, this is a test."
 
 
 @pytest.mark.asyncio
-async def test_punctuation_stub_empty_string() -> None:
+async def test_punctuation_empty_string_does_not_load_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(punctuation, "_load_model", lambda: pytest.fail("empty input loaded model"))
     result = await restore_punctuation("")
     assert result == ""
 
 
 @pytest.mark.asyncio
-async def test_punctuation_stub_with_language() -> None:
-    text = "你好世界"
-    result = await restore_punctuation(text, language="zh")
-    assert result == text
+async def test_punctuation_rejects_empty_model_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    class EmptyModel:
+        def generate(self, *, input: str):
+            return []
 
-
-# ── Diarization ───────────────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_diarize_stub_returns_unchanged() -> None:
-    segs = [
-        Segment(start=0.0, end=1.0, text="Hello", confidence=0.9),
-        Segment(start=1.0, end=2.0, text="World", confidence=0.8),
-    ]
-    audio = np.zeros(32_000, dtype=np.float32)
-    result = await assign_speakers(segs, audio)
-
-    assert len(result) == len(segs)
-    for original, returned in zip(segs, result):
-        assert original.text == returned.text
-        assert returned.speaker is None  # stub doesn't assign speakers
-
-
-@pytest.mark.asyncio
-async def test_diarize_stub_empty_segments() -> None:
-    audio = np.zeros(16_000, dtype=np.float32)
-    result = await assign_speakers([], audio)
-    assert result == []
+    monkeypatch.setattr(punctuation, "_load_model", lambda: EmptyModel())
+    monkeypatch.setattr(punctuation.asyncio, "to_thread", _run_inline)
+    with pytest.raises(RuntimeError, match="未返回有效文本"):
+        await restore_punctuation("你好世界", language="zh")

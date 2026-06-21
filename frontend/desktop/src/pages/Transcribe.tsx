@@ -4,31 +4,54 @@ import { AudioPlayer } from '@/components/AudioPlayer'
 import { DropZone, type LocalAudioFile } from '@/components/DropZone'
 import { RecordButton } from '@/components/RecordButton'
 import { ASRApi, isAsyncResponse, type LLMOperation, type TranscribeOptions, type TranscribeResponse } from '@/services/api'
-import { AudioRecorder, AudioSegmentStreamer, blobToBase64 } from '@/services/audio'
+import { AudioRecorder, StreamingASRClient, blobToBase64 } from '@/services/audio'
+import { finishTelemetryTrace, recordTelemetryStage, startTelemetryTrace } from '@/services/telemetry'
 import { useASRStore } from '@/store/useASRStore'
 
 const terminalStatuses = new Set(['success', 'failed', 'cancelled'])
 
 function formatClock(date = new Date()) {
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-function formatDuration(seconds?: number | null) {
-  if (!seconds) return '00:00'
-  const mins = Math.floor(seconds / 60)
-  const secs = Math.floor(seconds % 60)
-  return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`
+function formatDateTime(date: Date): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  const h = String(date.getHours()).padStart(2, '0')
+  const min = String(date.getMinutes()).padStart(2, '0')
+  const s = String(date.getSeconds()).padStart(2, '0')
+  return `${y}-${m}-${d} ${h}:${min}:${s}`
+}
+
+function formatTime(date: Date): string {
+  const h = String(date.getHours()).padStart(2, '0')
+  const min = String(date.getMinutes()).padStart(2, '0')
+  const s = String(date.getSeconds()).padStart(2, '0')
+  return `${h}:${min}:${s}`
+}
+
+function todayDate(): string {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+interface UtteranceEntry {
+  text: string
+  startedAt: Date
+  endedAt: Date | null
 }
 
 export function TranscribePage() {
   const settings = useASRStore((state) => state.settings)
-  const models = useASRStore((state) => state.models)
   const transcribeStatus = useASRStore((state) => state.transcribeStatus)
   const recordStatus = useASRStore((state) => state.recordStatus)
   const liveCaptionStatus = useASRStore((state) => state.liveCaptionStatus)
   const currentResult = useASRStore((state) => state.currentResult)
   const activeTaskId = useASRStore((state) => state.activeTaskId)
-  const history = useASRStore((state) => state.history)
   const error = useASRStore((state) => state.error)
   const setTranscribeStatus = useASRStore((state) => state.setTranscribeStatus)
   const setRecordStatus = useASRStore((state) => state.setRecordStatus)
@@ -41,11 +64,15 @@ export function TranscribePage() {
   const updateSettings = useASRStore((state) => state.updateSettings)
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
   const recorderRef = useRef(new AudioRecorder())
-  const streamerRef = useRef<AudioSegmentStreamer | null>(null)
-  const liveQueueRef = useRef<Blob[]>([])
-  const liveProcessingRef = useRef(false)
-  const [liveText, setLiveText] = useState('')
+  const streamerRef = useRef<StreamingASRClient | null>(null)
+  const utterancesRef = useRef<UtteranceEntry[]>([])
+  const liveFinalizedRef = useRef(true)
+  const [utterances, setUtterances] = useState<UtteranceEntry[]>([])
+  const [liveStatusText, setLiveStatusText] = useState('准备连接')
+  const [taskStartedAt, setTaskStartedAt] = useState<Date | null>(null)
+  const [taskEndedAt, setTaskEndedAt] = useState<Date | null>(null)
   const [llmStatus, setLlmStatus] = useState<LLMOperation | 'idle'>('idle')
+  const [pendingFiles, setPendingFiles] = useState<LocalAudioFile[]>([])
 
   const translationConfig = () => ({
     provider: settings.translationProvider || settings.llmProvider,
@@ -61,16 +88,12 @@ export function TranscribePage() {
   }, [liveCaptionStatus, recordStatus])
 
   const buildOptions = (): TranscribeOptions => {
-    const loaded = models.filter((model) => model.is_loaded).map((model) => model.engine)
-    const selected = settings.multiEngine ? settings.selectedEngines : [settings.defaultEngine]
-    const engines = loaded.length ? selected.filter((engine) => loaded.includes(engine)) : selected
     const options: TranscribeOptions = {
-      engines: engines.length ? engines : [settings.defaultEngine],
+      engine: settings.offlineEngine,
       language: settings.defaultLanguage === 'auto' ? undefined : settings.defaultLanguage,
       whisper_model: settings.whisperModel,
       enable_punctuation: settings.enablePunctuation,
-      enable_diarize: settings.enableDiarize,
-      merge_strategy: settings.mergeStrategy,
+      enable_hotwords: true,
       allow_server_data_collection: settings.allowServerDataCollection,
       archive_dir: settings.archiveDir || undefined
     }
@@ -113,6 +136,7 @@ export function TranscribePage() {
     setCurrentResult(resultWithAudio)
     setTranscribeStatus('done')
     setError('')
+    setTaskEndedAt(new Date())
 
     let archived_audio = ''
     let archived_json = ''
@@ -135,8 +159,7 @@ export function TranscribePage() {
           duration_sec: result.duration_sec,
           elapsed_sec: result.elapsed_sec,
           timing: result.timing,
-          client_timing: result.client_timing,
-          engine_results: result.engine_results
+          client_timing: result.client_timing
         }
       })
       archived_audio = archived?.audio || ''
@@ -159,24 +182,67 @@ export function TranscribePage() {
   }
 
   const runTranscription = async (blob: Blob, filename: string, autoInject: boolean) => {
+    const trace = startTelemetryTrace('asr', `文件 ASR · ${filename}`, settings.offlineEngine)
+    recordTelemetryStage(trace, '用户确认开始')
     setTranscribeStatus('uploading')
     setError('')
     setActiveTaskId(null)
+    const startedAt = new Date()
+    setTaskStartedAt(startedAt)
+    setTaskEndedAt(null)
     try {
+      recordTelemetryStage(trace, '上传请求发送', { detail: `${blob.size} bytes` })
       const response = await api.transcribe(blob, filename, buildOptions())
+      recordTelemetryStage(trace, isAsyncResponse(response) ? '服务端已入队' : '识别响应接收')
       const result = isAsyncResponse(response) ? await pollTask(response.task_id) : response
+      if (result.timing) {
+        const timingLabels: Record<string, string> = {
+          upload_read_sec: '后端读取上传',
+          audio_probe_sec: '音频探测',
+          task_create_sec: '任务创建',
+          model_ready_sec: '模型就绪',
+          asr_sec: 'ASR 推理',
+          punctuation_sec: '标点恢复',
+          hotword_sec: '热词处理',
+          llm_sec: 'LLM 后处理',
+          persist_sec: '结果持久化',
+        }
+        const backendStages = Object.entries(timingLabels).map(([key, label]) => ({
+          label,
+          durationMs: Number(result.timing?.[key]) * 1000,
+        })).filter((stage) => Number.isFinite(stage.durationMs) && stage.durationMs >= 0)
+        let backendCursorMs = Math.max(
+          0,
+          performance.now() - trace.startedAt - backendStages.reduce((sum, stage) => sum + stage.durationMs, 0),
+        )
+        for (const { label, durationMs } of backendStages) {
+            backendCursorMs += durationMs
+            recordTelemetryStage(trace, label, { durationMs, backendMs: durationMs, offsetMs: backendCursorMs })
+        }
+      }
       setActiveTaskId(null)
       await persistResult(result, filename, blob, autoInject)
+      recordTelemetryStage(trace, '前端归档与展示')
+      finishTelemetryTrace(trace, `${result.full_text.length} 字`)
     } catch (transcribeError) {
       setTranscribeStatus('error')
       setError(transcribeError instanceof Error ? transcribeError.message : '转写失败')
+      finishTelemetryTrace(trace, transcribeError instanceof Error ? transcribeError.message : '识别失败', 'error')
     } finally {
       setActiveTaskId(null)
       await window.electronAPI?.hideStatusOverlay()
     }
   }
 
-  const handleFiles = async (files: LocalAudioFile[]) => {
+  const handleFiles = (files: LocalAudioFile[]) => {
+    setPendingFiles(files)
+    setError('')
+  }
+
+  const confirmFiles = async () => {
+    const files = pendingFiles
+    if (!files.length) return
+    setPendingFiles([])
     for (const file of files) {
       await runTranscription(file.blob, file.name, false)
     }
@@ -196,76 +262,141 @@ export function TranscribePage() {
     }
 
     if (transcribeStatus === 'uploading' || transcribeStatus === 'processing' || transcribeStatus === 'polling' || liveCaptionStatus !== 'idle') return
-    await recorderRef.current.start(settings.audioInputDeviceId || undefined)
-    setRecordStatus('recording')
-    await window.electronAPI?.showStatusOverlay('recording')
+    setError('')
+    try {
+      await recorderRef.current.start(settings.audioInputDeviceId || undefined)
+      setRecordStatus('recording')
+      await window.electronAPI?.showStatusOverlay('recording')
+    } catch (recordError) {
+      recorderRef.current.cancel()
+      setRecordStatus('idle')
+      setError(recordError instanceof Error ? recordError.message : '无法启动麦克风录音')
+      await window.electronAPI?.hideStatusOverlay()
+    }
   }
 
-  const processLiveQueue = async () => {
-    if (liveProcessingRef.current || !liveQueueRef.current.length) return
-    liveProcessingRef.current = true
-    setLiveCaptionStatus('transcribing')
-    const blob = liveQueueRef.current.shift()!
-    try {
-      const response = await api.transcribe(blob, `live_caption_${Date.now()}.webm`, buildOptions())
-      const result = isAsyncResponse(response) ? await pollTask(response.task_id) : response
-      const merged = `${liveText}\n${result.full_text}`.trim()
-      setLiveText(merged)
-      if (settings.showDesktopCaptions) {
-        await window.electronAPI?.showCaptionOverlay(merged.split('\n').slice(-4).join('\n'), {
-          fontSize: settings.captionFontSize,
-          color: settings.captionFontColor,
-          backgroundOpacity: settings.captionBackgroundOpacity,
-          width: settings.captionBoxWidth,
-          height: settings.captionBoxHeight,
-          x: settings.captionBoxX,
-          y: settings.captionBoxY
-        })
-      }
-    } catch (liveError) {
-      setError(liveError instanceof Error ? liveError.message : '实时字幕转写失败')
-      setLiveCaptionStatus('error')
-    } finally {
-      liveProcessingRef.current = false
-      if (liveCaptionStatus !== 'idle') setLiveCaptionStatus('listening')
-      void processLiveQueue()
+  const showLiveCaption = async (partial = '') => {
+    // Update the last utterance's text with the latest partial — avoids a
+    // separate "识别中" article and the "（空）" placeholder.
+    if (partial) {
+      setUtterances((prev) => {
+        const next = [...prev]
+        const last = next.length - 1
+        if (last >= 0 && next[last].endedAt === null) {
+          next[last] = { ...next[last], text: partial }
+        }
+        utterancesRef.current = next
+        return next
+      })
     }
+    // Desktop caption overlay: show last 4 lines (finalized + current)
+    if (settings.showDesktopCaptions) {
+      const lines = utterancesRef.current.map((u) => u.text).filter(Boolean)
+      const display = lines.slice(-4).join('\n')
+      await window.electronAPI?.showCaptionOverlay(display, {
+        fontSize: settings.captionFontSize,
+        color: settings.captionFontColor,
+        backgroundOpacity: settings.captionBackgroundOpacity,
+        width: settings.captionBoxWidth,
+        height: settings.captionBoxHeight,
+        x: settings.captionBoxX,
+        y: settings.captionBoxY
+      })
+    }
+  }
+
+  const finalizeLiveCaption = () => {
+    if (liveFinalizedRef.current) return
+    liveFinalizedRef.current = true
+    setLiveCaptionStatus('idle')
+    setLiveStatusText('已停止')
+    updateSettings({ liveCaptionEnabled: false })
+    setTaskEndedAt(new Date())
+    const text = utterancesRef.current.map((u) => u.text).filter(Boolean).join('\n').trim()
+    if (!text) return
+    const result: TranscribeResponse = {
+      task_id: `live_${Date.now()}`,
+      status: 'success',
+      full_text: text,
+      segments: [],
+      language: settings.defaultLanguage,
+      engine_used: settings.streamingEngine,
+      confidence: null,
+      duration_sec: null,
+      elapsed_sec: null
+    }
+    setCurrentResult(result)
+    addHistory({ ...result, id: result.task_id, created_at: new Date().toISOString(), filename: 'live_caption.pcm' })
   }
 
   const toggleLiveCaption = async () => {
     if (liveCaptionStatus !== 'idle') {
-      streamerRef.current?.stop()
+      setLiveCaptionStatus('stopping')
+      setLiveStatusText('正在停止…')
+      const streamer = streamerRef.current
       streamerRef.current = null
-      setLiveCaptionStatus('idle')
-      updateSettings({ liveCaptionEnabled: false })
+      streamer?.stop()
       await window.electronAPI?.hideCaptionOverlay()
-      if (liveText.trim()) {
-        const result: TranscribeResponse = {
-          task_id: `live_${Date.now()}`,
-          status: 'success',
-          full_text: liveText.trim(),
-          segments: [],
-          language: settings.defaultLanguage,
-          engine_used: 'live',
-          confidence: null,
-          duration_sec: null,
-          elapsed_sec: null
-        }
-        setCurrentResult(result)
-        addHistory({ ...result, id: result.task_id, created_at: new Date().toISOString(), filename: 'live_caption.webm' })
-      }
+      finalizeLiveCaption()
       return
     }
 
     if (recordStatus !== 'idle' || transcribeStatus === 'uploading' || transcribeStatus === 'polling') return
-    setLiveText('')
-    liveQueueRef.current = []
-    streamerRef.current = new AudioSegmentStreamer((blob) => {
-      liveQueueRef.current = [...liveQueueRef.current, blob].slice(-3)
-      void processLiveQueue()
+    utterancesRef.current = []
+    setUtterances([])
+    liveFinalizedRef.current = false
+    setLiveCaptionStatus('connecting')
+    setLiveStatusText('正在连接后端…')
+    const sessionStartedAt = new Date()
+    setTaskStartedAt(sessionStartedAt)
+    setTaskEndedAt(null)
+    streamerRef.current = new StreamingASRClient(settings.serverUrl, (event) => {
+      if (event.type === 'accepted') setLiveStatusText('连接成功，等待模型加载…')
+      if (event.type === 'loading') setLiveStatusText(event.message)
+      if (event.type === 'ready') setLiveStatusText('模型已加载，正在预热…')
+      if (event.type === 'configured') {
+        setLiveCaptionStatus('listening')
+        setLiveStatusText('连接成功，正在监听')
+      }
+      if (event.type === 'speech_start') {
+        const entry: UtteranceEntry = { text: '', startedAt: new Date(), endedAt: null }
+        setUtterances((prev) => {
+          const next = [...prev, entry]
+          utterancesRef.current = next
+          return next
+        })
+        setLiveCaptionStatus('transcribing')
+      }
+      if (event.type === 'partial') void showLiveCaption(event.text)
+      if (event.type === 'final') {
+        setUtterances((prev) => {
+          const next = [...prev]
+          const last = next.length - 1
+          if (last >= 0) {
+            // text is already filled by successive partials; just stamp endedAt
+            next[last] = { ...next[last], text: event.text || next[last].text, endedAt: new Date() }
+          }
+          utterancesRef.current = next
+          return next
+        })
+        void showLiveCaption()
+        setLiveCaptionStatus('listening')
+      }
+      if (event.type === 'error') {
+        setError(event.message)
+        setLiveStatusText(event.message)
+        setLiveCaptionStatus('error')
+      }
+      if (event.type === 'closed') {
+        streamerRef.current = null
+        finalizeLiveCaption()
+      }
     })
-    await streamerRef.current.start(settings.inputSource === 'speaker' ? 'speaker' : 'microphone', settings.liveCaptionChunkSec, settings.audioInputDeviceId || undefined)
-    setLiveCaptionStatus('listening')
+    await streamerRef.current.start({
+      engine: settings.streamingEngine,
+      language: settings.defaultLanguage === 'auto' ? undefined : settings.defaultLanguage,
+      deviceId: settings.audioInputDeviceId || undefined
+    })
     updateSettings({ liveCaptionEnabled: true })
   }
 
@@ -324,105 +455,92 @@ export function TranscribePage() {
           <section className="panel upload-panel">
             <div className="section-head">
               <div>
-                <h1>文件转写</h1>
-                <p>支持音频 / 视频文件的批量转写，准确高效，轻松获取文字记录。</p>
+                <h1>语音识别</h1>
+                <p>选择音频 / 视频文件后先确认，再开始识别，不会因拖放立即上传。</p>
               </div>
-              <span className="soft-badge">{transcribeStatus === 'idle' ? '待转写' : transcribeStatus}</span>
+              <span className="soft-badge">{transcribeStatus === 'idle' ? '待识别' : transcribeStatus}</span>
             </div>
             <DropZone onFiles={handleFiles} />
+            {pendingFiles.length > 0 && (
+              <div className="pending-files" role="status">
+                <div>
+                  <strong>已选择 {pendingFiles.length} 个文件，等待确认</strong>
+                  <span>{pendingFiles.map((file) => file.name).join('、')}</span>
+                </div>
+                <button type="button" onClick={() => setPendingFiles([])}>取消</button>
+                <button type="button" className="primary" onClick={() => void confirmFiles()}>确认并开始识别</button>
+              </div>
+            )}
           </section>
 
-          <section className="panel recent-tasks-panel">
-            <div className="section-head">
-              <div>
-                <h2>最近任务（5）</h2>
-                <p>批量任务、队列状态和导出入口集中管理。</p>
-              </div>
-              <button type="button" onClick={() => window.electronAPI?.textToClipboard(currentResult?.full_text || '')} disabled={!currentResult}>
-                复制最新
-              </button>
-            </div>
-            <div className="task-table">
-              <div className="task-row task-head">
-                <span />
-                <strong>文件名称</strong>
-                <span>时长</span>
-                <span>语言</span>
-                <span>引擎</span>
-                <span>状态</span>
-              </div>
-              {history.slice(0, 5).map((item, index) => (
-                <article key={item.id} className="task-row">
-                  <button type="button" className="play-dot" onClick={() => setCurrentResult(item)} title="播放录音">▶</button>
-                  <strong>{item.filename}</strong>
-                  <span>{formatDuration(item.duration_sec)}</span>
-                  <span>{item.language || '自动'}</span>
-                  <span>{item.engine_used}</span>
-                  <span className="status-ok">{index === 0 ? '最新' : '已完成'}</span>
-                </article>
-              ))}
-              {!history.length && (
-                <p className="empty">拖入文件或开始录音后，任务会显示在这里。</p>
-              )}
-            </div>
-          </section>
-        </div>
-
-        <aside className="transcribe-side">
           <section className="panel preview-panel">
             <div className="section-head compact">
-              <h2>转写预览</h2>
+              <h2>识别预览</h2>
+              <span className="soft-badge">{todayDate()}</span>
               <span className="soft-badge">自动识别：{settings.defaultLanguage === 'auto' ? '自动' : settings.defaultLanguage}</span>
             </div>
-            {currentResult ? (
+            {liveCaptionStatus !== 'idle' ? (
+              <div className="preview-transcript">
+                {utterances.length === 0 ? (
+                  <article>
+                    <time>{taskStartedAt ? formatDateTime(taskStartedAt) : '--:--:--'}</time>
+                    <strong>实时识别</strong>
+                    <p>{liveStatusText}</p>
+                  </article>
+                ) : (
+                  utterances.map((u, i) => {
+                    const isLast = i === utterances.length - 1
+                    const inProgress = isLast && u.endedAt === null
+                    return (
+                      <article key={i}>
+                        <time>{formatDateTime(u.startedAt)} → {u.endedAt ? formatDateTime(u.endedAt) : '...'}</time>
+                        <strong>{inProgress ? '识别中' : '实时识别'}</strong>
+                        <p>{u.text || (inProgress ? '…' : '')}</p>
+                      </article>
+                    )
+                  })
+                )}
+              </div>
+            ) : currentResult ? (
               <div className="preview-transcript">
                 <article>
-                  <time>00:00:00</time>
-                  <span className="speaker-dot blue" />
-                  <strong>发言人 1</strong>
+                  <time>{taskStartedAt ? formatDateTime(taskStartedAt) : '--:--:--'}
+                    {taskEndedAt ? ` → ${formatDateTime(taskEndedAt)}` : ''}
+                  </time>
+                  <strong>识别结果</strong>
                   <p>{currentResult.full_text || '暂无文本'}</p>
                 </article>
                 {currentResult.llm_outputs?.polish?.text && (
                   <article>
                     <time>AI</time>
-                    <span className="speaker-dot purple" />
                     <strong>智能润色</strong>
                     <p>{currentResult.llm_outputs.polish.text}</p>
                   </article>
                 )}
               </div>
             ) : (
-              <div className="preview-transcript sample">
-                <article>
-                  <time>00:00:00</time>
-                  <span className="speaker-dot blue" />
-                  <strong>发言人 1</strong>
-                  <p>好的，大家早上好，今天我们主要讨论的是新产品的需求评审。</p>
-                </article>
-                <article>
-                  <time>00:00:18</time>
-                  <span className="speaker-dot purple" />
-                  <strong>发言人 2</strong>
-                  <p>这次新产品的定位是面向中小企业的协同办公工具。</p>
-                </article>
-              </div>
+              <div className="preview-transcript" />
             )}
-            <div className="preview-actions">
-              <button type="button" disabled={!currentResult} onClick={() => window.electronAPI?.textToClipboard(currentResult?.full_text || '')}>复制结果</button>
-              <button type="button" disabled={!currentResult || llmStatus !== 'idle'} onClick={() => void processCurrentText('polish')}>
-                {llmStatus === 'polish' ? '润色中' : '润色'}
-              </button>
-              <button type="button" disabled={!currentResult || llmStatus !== 'idle'} onClick={() => void processCurrentText('translate')}>
-                {llmStatus === 'translate' ? '翻译中' : '翻译'}
-              </button>
+            <div className="preview-footer">
+              <div className="preview-actions">
+                <button type="button" disabled={!currentResult} onClick={() => window.electronAPI?.textToClipboard(currentResult?.full_text || '')}>复制结果</button>
+                <button type="button" disabled={!currentResult || llmStatus !== 'idle'} onClick={() => void processCurrentText('polish')}>
+                  {llmStatus === 'polish' ? '润色中' : '润色'}
+                </button>
+                <button type="button" disabled={!currentResult || llmStatus !== 'idle'} onClick={() => void processCurrentText('translate')}>
+                  {llmStatus === 'translate' ? '翻译中' : '翻译'}
+                </button>
+              </div>
+              {currentResult && <AudioPlayer item={currentResult} />}
             </div>
-            {currentResult && <AudioPlayer item={currentResult} />}
           </section>
+        </div>
 
+        <aside className="transcribe-side">
           <section className="panel quick-settings">
             <div className="section-head compact">
-              <h2>转写设置</h2>
-              <button type="button" onClick={() => updateSettings({ enablePunctuation: true, enableDiarize: false })}>恢复默认</button>
+              <h2>识别设置</h2>
+              <button type="button" onClick={() => updateSettings({ enablePunctuation: true })}>恢复默认</button>
             </div>
             <div className="quick-grid">
               <button type="button" className="quick-tile">
@@ -434,11 +552,6 @@ export function TranscribePage() {
                 <span>☉</span>
                 <strong>标点恢复</strong>
                 <small>{settings.enablePunctuation ? '已开启' : '未开启'}</small>
-              </button>
-              <button type="button" className={settings.enableDiarize ? 'quick-tile active' : 'quick-tile'} onClick={() => updateSettings({ enableDiarize: !settings.enableDiarize })}>
-                <span>♟</span>
-                <strong>说话人分离</strong>
-                <small>{settings.enableDiarize ? '已开启' : '自动识别'}</small>
               </button>
               <button type="button" className={settings.llmAutoTranslate ? 'quick-tile active' : 'quick-tile'} onClick={() => updateSettings({ llmAutoTranslate: !settings.llmAutoTranslate })}>
                 <span>文</span>
@@ -462,8 +575,8 @@ export function TranscribePage() {
         <div className="player-info">
           <span className="mini-wave large" aria-hidden="true" />
           <div>
-            <strong>{recordStatus === 'recording' ? '正在聆听...' : '准备识别'}</strong>
-            <small>{recordStatus === 'recording' ? '轻触结束识别' : '拖入文件或按下麦克风开始'}</small>
+            <strong>{liveCaptionStatus !== 'idle' ? liveStatusText : recordStatus === 'recording' ? '正在聆听...' : '准备识别'}</strong>
+            <small>{liveCaptionStatus !== 'idle' ? `实时识别：${liveCaptionStatus}` : recordStatus === 'recording' ? '轻触结束识别' : '拖入文件或按下麦克风开始'}</small>
           </div>
         </div>
         <RecordButton onToggle={() => void toggleRecording(false)} />
@@ -478,7 +591,6 @@ export function TranscribePage() {
       </section>
 
       {error && <p className="error floating-error">{error}</p>}
-      {liveText && <pre className="live-text">{liveText}</pre>}
     </div>
   )
 }

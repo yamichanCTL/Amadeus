@@ -5,7 +5,7 @@
 > - [API 端点详解](API.md) — 15 个端点的请求/响应格式
 > - [部署说明](DEPLOY.md) — Docker + 手动部署
 > - [ASR 引擎管理](ENGINES.md) — 引擎注册、加载、热切换
-> - [流式识别](STREAMING.md) — WebSocket VAD 伪流式
+> - [流式识别](STREAMING.md) — WebSocket X-ASR 原生流式
 > - [异步任务](TASKS.md) — Celery + Redis 长音频处理
 
 ---

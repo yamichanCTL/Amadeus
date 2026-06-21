@@ -10,9 +10,9 @@ system engine-agnostic.
 from __future__ import annotations
 
 import abc
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
-
 
 # ── Result dataclass ──────────────────────────────────────────────────────────
 
@@ -22,7 +22,6 @@ class Segment:
     start: float
     end: float
     text: str
-    speaker: str | None = None
     confidence: float | None = None
 
 
@@ -61,6 +60,20 @@ class EngineOptions:
     language: str | None = None          # None = auto-detect
     task: str = "transcribe"             # "transcribe" | "translate"  (whisper)
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+class BaseStreamingASRSession(abc.ABC):
+    """Per-utterance state owned by a true streaming ASR engine."""
+
+    @abc.abstractmethod
+    async def accept_pcm(self, pcm_bytes: bytes) -> ASRResult | None:
+        """Consume signed 16-bit mono PCM and return a changed partial result."""
+        ...
+
+    @abc.abstractmethod
+    async def finish(self) -> ASRResult:
+        """Mark input complete, flush the decoder, and return the final result."""
+        ...
 
 
 # ── Abstract engine ───────────────────────────────────────────────────────────
@@ -135,13 +148,31 @@ class BaseASREngine(abc.ABC):
 
     async def transcribe_stream(
         self,
-        audio_chunk_iter: Any,
+        audio_chunk_iter: AsyncIterator[bytes],
         options: EngineOptions | None = None,
-    ) -> Any:
+        sample_rate: int = 16_000,
+    ) -> AsyncIterator[ASRResult]:
         """
         Reserved for streaming engines.  Default raises NotImplementedError.
         Concrete streaming engines override this to yield partial ASRResult.
         """
+        session = await self.create_streaming_session(sample_rate, options)
+        async for chunk in audio_chunk_iter:
+            result = await session.accept_pcm(chunk)
+            if result is not None:
+                yield result
+        yield await session.finish()
+
+    @property
+    def supports_streaming(self) -> bool:
+        """Whether this engine preserves decoder state across incoming chunks."""
+        return False
+
+    async def create_streaming_session(
+        self,
+        sample_rate: int = 16_000,
+        options: EngineOptions | None = None,
+    ) -> BaseStreamingASRSession:
         raise NotImplementedError(
             f"Engine '{self.name}' does not support streaming transcription."
         )
@@ -156,6 +187,8 @@ class BaseASREngine(abc.ABC):
         return {
             "engine": self.name,
             "is_loaded": self.is_loaded,
+            "supports_streaming": self.supports_streaming,
+            "model_modes": ["streaming"] if self.supports_streaming else ["offline"],
         }
 
     # ── Helpers ───────────────────────────────────────────────────────────────

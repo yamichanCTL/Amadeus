@@ -4,12 +4,12 @@ const pageCopy: Record<'home' | 'realtime', { title: string; body: string; actio
   home: {
     title: '首页',
     body: '集中查看转写、实时识别、历史记录和模型状态。',
-    action: '开始文件转写',
+    action: '开始语音识别',
     target: 'transcribe'
   },
   realtime: {
     title: '实时对话',
-    body: '实时识别入口已接入文件转写工作台，可直接启动实时识别。',
+    body: '实时识别入口已接入语音识别工作台，可直接启动实时识别。',
     action: '进入实时识别',
     target: 'transcribe'
   }

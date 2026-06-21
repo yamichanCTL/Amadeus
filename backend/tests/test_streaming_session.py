@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
-from app.core.asr.base import ASRResult, BaseASREngine, EngineOptions, Segment
+from app.core.asr.base import ASRResult, BaseASREngine, BaseStreamingASRSession, EngineOptions
+from app.core.model_errors import ModelRuntimeError
 
 
 @dataclass
@@ -24,127 +26,171 @@ class SequenceVad:
 
     def accept_pcm(self, pcm_bytes: bytes) -> Decision:
         self.calls += 1
-        return Decision(
-            is_speech=self.calls < 3,
-            speech_start=self.calls == 1,
-            speech_end=self.calls == 3,
-        )
+        return Decision(self.calls < 3, self.calls == 1, self.calls == 3)
 
 
-class NamedEngine(BaseASREngine):
-    def __init__(self, name: str, text: str) -> None:
-        self._name = name
-        self._text = text
-        self._loaded = True
+class FakeTrueStream(BaseStreamingASRSession):
+    def __init__(self, final_text: str = "stream final") -> None:
+        self.chunks: list[bytes] = []
+        self.final_text = final_text
+
+    async def accept_pcm(self, pcm_bytes: bytes) -> ASRResult:
+        self.chunks.append(pcm_bytes)
+        return ASRResult(full_text=f"stream partial {len(self.chunks)}", language="zh", engine_name="x-asr")
+
+    async def finish(self) -> ASRResult:
+        return ASRResult(full_text=self.final_text, language="zh", engine_name="x-asr")
+
+
+class TrueStreamingEngine(BaseASREngine):
+    def __init__(self, final_text: str = "stream final") -> None:
+        self.stream = FakeTrueStream(final_text)
+        self.transcribe_calls = 0
 
     @property
     def name(self) -> str:
-        return self._name
+        return "x-asr"
 
-    async def load(self) -> None:
-        self._loaded = True
-
-    async def unload(self) -> None:
-        self._loaded = False
-
+    async def load(self) -> None: pass
+    async def unload(self) -> None: pass
     @property
-    def is_loaded(self) -> bool:
-        return self._loaded
+    def is_loaded(self) -> bool: return True
+    @property
+    def supports_streaming(self) -> bool: return True
 
-    async def transcribe(
-        self,
-        audio_bytes: bytes,
-        options: EngineOptions | None = None,
-    ) -> ASRResult:
-        return ASRResult(
-            full_text=self._text,
-            segments=[Segment(start=0.0, end=1.0, text=self._text)],
-            language=options.language if options else "zh",
-            engine_name=self._name,
-        )
+    async def create_streaming_session(self, sample_rate=16_000, options=None):
+        assert sample_rate == 16_000
+        return self.stream
+
+    async def transcribe(self, audio_bytes: bytes, options: EngineOptions | None = None) -> ASRResult:
+        self.transcribe_calls += 1
+        raise AssertionError("native streaming must never call offline transcribe")
 
 
-class FakeManager:
-    def __init__(self) -> None:
-        self.engines = {
-            "sensevoice": NamedEngine("sensevoice", "partial text"),
-            "fireredasr2": NamedEngine("fireredasr2", "final text"),
-        }
+class TrueStreamingManager:
+    def __init__(self, final_text: str = "stream final") -> None:
+        self.engine = TrueStreamingEngine(final_text)
 
     async def get_engine(self, name: str) -> BaseASREngine:
-        return self.engines[name]
-
-
-class EmptyFinalManager:
-    def __init__(self) -> None:
-        self.engines = {
-            "sensevoice": NamedEngine("sensevoice", ""),
-            "fireredasr2": NamedEngine("fireredasr2", "   "),
-        }
-
-    async def get_engine(self, name: str) -> BaseASREngine:
-        return self.engines[name]
+        assert name == "x-asr"
+        return self.engine
 
 
 @pytest.mark.asyncio
-async def test_streaming_session_uses_final_engine_for_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_streaming_session_reuses_online_decoder_and_adds_tail(monkeypatch: pytest.MonkeyPatch) -> None:
     import app.core.streaming.session as session_module
     from app.core.streaming.session import StreamConfig, StreamingASRSession
 
-    monkeypatch.setattr(session_module, "get_model_manager", lambda: FakeManager())
-    session = StreamingASRSession(
-        config=StreamConfig(
-            engine="sensevoice",
-            final_engine="fireredasr2",
-            archive=False,
-        ),
-        vad=SequenceVad(),
-    )
-
+    manager = TrueStreamingManager()
+    monkeypatch.setattr(session_module, "get_model_manager", lambda: manager)
+    session = StreamingASRSession(StreamConfig(engine="x-asr", archive=False), SequenceVad())
     pcm_400ms = b"\x01\x00" * 6400
-    await session.accept_audio(pcm_400ms)
-    await session.accept_audio(pcm_400ms)
-    await session.accept_audio(pcm_400ms)
+    for _ in range(3):
+        await session.accept_audio(pcm_400ms)
     await session.finish()
 
     events: list[dict[str, Any]] = []
     while not session.queue.empty():
         events.append(await session.queue.get())
-
+    partials = [event for event in events if event["type"] == "partial"]
     final = next(event for event in events if event["type"] == "final")
-    assert final["text"] == "final text"
-    assert final["engine"] == "fireredasr2"
-    assert final["partial_engine"] == "sensevoice"
-    assert final["final_engine"] == "fireredasr2"
-    assert final["replace_previous"] is True
+    assert partials and all(event["true_streaming"] for event in partials)
+    assert all(event["job_id"] == final["job_id"] for event in partials)
+    assert final["asr_elapsed_sec"] > 0
+    assert final["text"] == "stream final"
+    assert manager.engine.transcribe_calls == 0
+    assert len(manager.engine.stream.chunks[-1]) == 16_000 * 2  # 1 s tail silence
+    assert set(manager.engine.stream.chunks[-1]) == {0}
 
 
 @pytest.mark.asyncio
-async def test_streaming_session_suppresses_empty_final_text(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_streaming_session_suppresses_empty_final(monkeypatch: pytest.MonkeyPatch) -> None:
     import app.core.streaming.session as session_module
     from app.core.streaming.session import StreamConfig, StreamingASRSession
 
-    monkeypatch.setattr(session_module, "get_model_manager", lambda: EmptyFinalManager())
-    session = StreamingASRSession(
-        config=StreamConfig(
-            engine="sensevoice",
-            final_engine="fireredasr2",
-            archive=False,
-        ),
-        vad=SequenceVad(),
-    )
-
+    monkeypatch.setattr(session_module, "get_model_manager", lambda: TrueStreamingManager(""))
+    session = StreamingASRSession(StreamConfig(engine="x-asr", archive=False), SequenceVad())
     pcm_400ms = b"\x01\x00" * 6400
-    await session.accept_audio(pcm_400ms)
-    await session.accept_audio(pcm_400ms)
-    await session.accept_audio(pcm_400ms)
+    for _ in range(3):
+        await session.accept_audio(pcm_400ms)
     await session.finish()
+    events = []
+    while not session.queue.empty():
+        events.append(await session.queue.get())
+    assert not any(event["type"] == "final" for event in events)
+    assert any(event["type"] == "no_speech" for event in events)
+
+
+@pytest.mark.asyncio
+async def test_failed_session_aborts_without_finishing_poisoned_decoder(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.streaming.session as session_module
+    from app.core.streaming.session import StreamConfig, StreamingASRSession
+
+    class FailingStream(FakeTrueStream):
+        def __init__(self) -> None:
+            super().__init__()
+            self.finish_calls = 0
+
+        async def accept_pcm(self, pcm_bytes: bytes) -> ASRResult:
+            raise ModelRuntimeError(
+                code="gpu_out_of_memory",
+                user_message="显存不足：无法运行 x-asr 模型。",
+                model="x-asr",
+                detail="CUDA out of memory",
+            )
+
+        async def finish(self) -> ASRResult:
+            self.finish_calls += 1
+            raise AssertionError("abort must not finish a failed decoder")
+
+    manager = TrueStreamingManager()
+    failing_stream = FailingStream()
+    manager.engine.stream = failing_stream
+    monkeypatch.setattr(session_module, "get_model_manager", lambda: manager)
+    session = StreamingASRSession(StreamConfig(engine="x-asr", archive=False), SequenceVad())
+
+    with pytest.raises(ModelRuntimeError) as error:
+        await session.accept_audio(b"\x01\x00" * 6400)
+    await session.record_model_failure(error.value)
+    await session.abort()
 
     events: list[dict[str, Any]] = []
     while not session.queue.empty():
         events.append(await session.queue.get())
+    assert failing_stream.finish_calls == 0
+    assert any(event.get("code") == "gpu_out_of_memory" and event.get("fatal") for event in events)
+    assert events[-1]["type"] == "done"
+    assert events[-1]["status"] == "error"
 
-    assert not any(event["type"] == "partial" for event in events)
-    assert not any(event["type"] == "final" for event in events)
-    no_speech = next(event for event in events if event["type"] == "no_speech")
-    assert no_speech["engine"] == "fireredasr2"
+
+@pytest.mark.asyncio
+async def test_websocket_sender_closes_immediately_after_fatal_model_error() -> None:
+    from app.api.v1.stream import _send_loop
+    from app.core.streaming.session import StreamConfig, StreamingASRSession
+
+    class FakeWebSocket:
+        def __init__(self) -> None:
+            self.sent: list[dict[str, Any]] = []
+            self.close_codes: list[int] = []
+
+        async def send_text(self, message: str) -> None:
+            self.sent.append(json.loads(message))
+
+        async def close(self, code: int = 1000) -> None:
+            self.close_codes.append(code)
+
+    session = StreamingASRSession(StreamConfig(engine="x-asr", archive=False), SequenceVad())
+    websocket = FakeWebSocket()
+    await session.queue.put(
+        {
+            "type": "error",
+            "code": "model_not_loaded",
+            "message": "模型没有加载",
+            "fatal": True,
+        }
+    )
+
+    await _send_loop(websocket, session)  # type: ignore[arg-type]
+
+    assert websocket.sent[0]["code"] == "model_not_loaded"
+    assert websocket.close_codes == [1011]

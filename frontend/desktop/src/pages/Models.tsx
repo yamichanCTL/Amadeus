@@ -1,23 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { ASRApi, type HiggsHealthResult, type HiggsVoicePreset, type HiggsVoicesResult, type LLMModelsResult, type ModelInfo } from '@/services/api'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ASRApi, describeRequestError, isAbortError, isAsyncResponse, type HiggsHealthResult, type HiggsVoicePreset, type HiggsVoicesResult, type HotwordConfig, type LLMModelsResult, type ModelInfo, type TranscribeOptions } from '@/services/api'
+import { AudioRecorder } from '@/services/audio'
 import { getProviderPreset, LLM_PROVIDER_PRESETS, type LLMProvider } from '@/services/llmProviders'
 import { useASRStore, type AsrModelConfig } from '@/store/useASRStore'
 
-const builtInEngines = ['fireredasr2', 'sensevoice', 'qwen3asr', 'whisper']
+const builtInEngines = ['fireredasr2', 'sensevoice', 'qwen3asr', 'whisper', 'x-asr']
+const streamingEngines = ['x-asr']
+const offlineEngines = builtInEngines.filter((engine) => !streamingEngines.includes(engine))
+const xAsrVariants = [160, 480, 960, 1920] as const
 type ModelTab = 'asr' | 'llm' | 'translate' | 'tts'
 
 const defaultAsrConfigs: Record<string, AsrModelConfig> = {
   fireredasr2: { modelName: 'FireRedASR2-AED', device: 'cuda', computeType: '', extraJson: '{"beam_size":3,"batch_size":1}' },
   sensevoice: { modelName: 'SenseVoiceSmall', device: 'cuda:0', computeType: '', extraJson: '{"batch_size_s":60}' },
   qwen3asr: { modelName: 'Qwen/Qwen3-ASR-1.7B', device: 'cuda:0', computeType: 'bfloat16', extraJson: '{}' },
-  whisper: { modelName: 'base', device: 'cpu', computeType: 'int8', extraJson: '{}' }
+  whisper: { modelName: 'base', device: 'cuda', computeType: 'float16', extraJson: '{}' },
+  'x-asr': { modelName: 'chunk-160ms-model', device: 'cuda', computeType: '', extraJson: '{"num_threads":1,"text_format":"none"}' }
 }
 
 const engineLabels: Record<string, string> = {
   fireredasr2: 'FireRedASR2',
   sensevoice: 'SenseVoice',
   qwen3asr: 'Qwen3-ASR',
-  whisper: 'Whisper'
+  whisper: 'Whisper',
+  'x-asr': 'X-ASR'
 }
 
 const higgsEmotionOptions = [
@@ -72,18 +78,33 @@ const higgsExpressivenessOptions = [
   ['expressive_low', '低表现力 / 平直']
 ] as const
 
-function fileToDataUrl(file: File) {
+function blobToDataUrl(blob: Blob) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = () => resolve(String(reader.result || ''))
     reader.onerror = () => reject(reader.error || new Error('参考音频读取失败'))
-    reader.readAsDataURL(file)
+    reader.readAsDataURL(blob)
   })
 }
 
-async function dataUrlToBlob(dataUrl: string) {
-  const response = await fetch(dataUrl)
-  return response.blob()
+function dataUrlToBlob(dataUrl: string) {
+  const [header, payload = ''] = dataUrl.split(',', 2)
+  if (!header.startsWith('data:')) throw new Error('参考音频格式不是 Data URL')
+  const mediaType = header.slice(5).split(';', 1)[0] || 'application/octet-stream'
+  if (header.toLowerCase().includes(';base64')) {
+    const binary = atob(payload)
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+    return new Blob([bytes], { type: mediaType })
+  }
+  return new Blob([decodeURIComponent(payload)], { type: mediaType })
+}
+
+function extensionFromMimeType(mimeType: string) {
+  if (mimeType.includes('ogg')) return 'ogg'
+  if (mimeType.includes('wav')) return 'wav'
+  if (mimeType.includes('mpeg') || mimeType.includes('mp3')) return 'mp3'
+  return 'webm'
 }
 
 export function ModelsPage() {
@@ -102,9 +123,16 @@ export function ModelsPage() {
   const [voicePresets, setVoicePresets] = useState<HiggsVoicePreset[]>([])
   const [voicePresetBusy, setVoicePresetBusy] = useState(false)
   const [referenceTextBusy, setReferenceTextBusy] = useState(false)
-  const [expandedAsrEngine, setExpandedAsrEngine] = useState<string>('sensevoice')
+  const [referenceRecording, setReferenceRecording] = useState(false)
+  const [expandedAsrEngine, setExpandedAsrEngine] = useState<string>('')
+  const [hotwordConfig, setHotwordConfig] = useState<HotwordConfig | null>(null)
+  const [hotwordPreview, setHotwordPreview] = useState('')
+  const [hotwordPreviewResult, setHotwordPreviewResult] = useState('')
+  const [hotwordBusy, setHotwordBusy] = useState(false)
   const [modelProbe, setModelProbe] = useState<'llm' | 'translate' | ''>('')
   const referenceAudioRef = useRef<HTMLAudioElement | null>(null)
+  const referenceRecorderRef = useRef<AudioRecorder | null>(null)
+  const refreshControllerRef = useRef<AbortController | null>(null)
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
   const llmPreset = getProviderPreset(settings.llmProvider)
   const translationPreset = getProviderPreset(settings.translationProvider)
@@ -120,18 +148,35 @@ export function ModelsPage() {
           ? '已保存音色'
           : '未设置'
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
+    refreshControllerRef.current?.abort(new DOMException('模型列表刷新已被新请求替代', 'AbortError'))
+    const controller = new AbortController()
+    refreshControllerRef.current = controller
     try {
       setError('')
-      setModels(await api.models())
+      const nextModels = await api.models({ signal: controller.signal, timeoutMs: 20_000 })
+      if (refreshControllerRef.current === controller) setModels(nextModels)
     } catch (modelError) {
-      setError(modelError instanceof Error ? modelError.message : '模型列表获取失败')
+      if (!isAbortError(modelError)) setError(describeRequestError(modelError, '模型列表获取失败'))
+    } finally {
+      if (refreshControllerRef.current === controller) refreshControllerRef.current = null
     }
-  }
+  }, [api, setModels])
 
   useEffect(() => {
     void refresh()
-  }, [api])
+    return () => {
+      refreshControllerRef.current?.abort(new DOMException('模型管理页面已卸载', 'AbortError'))
+      refreshControllerRef.current = null
+    }
+  }, [refresh])
+
+  useEffect(() => {
+    if (activeTab !== 'asr') return
+    void api.hotwords().then(setHotwordConfig).catch((loadError) => {
+      setError(loadError instanceof Error ? loadError.message : '热词配置读取失败')
+    })
+  }, [activeTab, api])
 
   useEffect(() => {
     if (activeTab !== 'llm') return
@@ -171,7 +216,11 @@ export function ModelsPage() {
       void refreshTtsRuntime()
     }, 500)
     return () => window.clearTimeout(timer)
-  }, [activeTab, settings.higgsTtsBaseUrl, api])
+  }, [activeTab, settings.higgsTtsApiToken, settings.higgsTtsBaseUrl, settings.higgsTtsProvider, settings.higgsTtsRemoteBaseUrl, api])
+
+  useEffect(() => () => {
+    referenceRecorderRef.current?.cancel()
+  }, [])
 
   const modelList = Array.isArray(models) ? models : []
   const rows: ModelInfo[] = builtInEngines.map((engine) => modelList.find((model) => model.engine === engine) || {
@@ -211,6 +260,7 @@ export function ModelsPage() {
   }
 
   const load = async (engine: string) => {
+    if (busy) return
     setBusy(engine)
     try {
       await api.loadModel(engine, asrLoadPayload(engine))
@@ -223,6 +273,7 @@ export function ModelsPage() {
   }
 
   const unload = async (engine: string) => {
+    if (busy) return
     setBusy(engine)
     try {
       await api.unloadModel(engine)
@@ -231,6 +282,39 @@ export function ModelsPage() {
       setError(unloadError instanceof Error ? unloadError.message : '模型卸载失败')
     } finally {
       setBusy('')
+    }
+  }
+
+  const saveHotwords = async () => {
+    if (!hotwordConfig) return
+    setHotwordBusy(true)
+    setError('')
+    try {
+      setHotwordConfig(await api.saveHotwords({
+        enabled: hotwordConfig.enabled,
+        rule_enabled: hotwordConfig.rule_enabled,
+        threshold: hotwordConfig.threshold,
+        similar_threshold: hotwordConfig.similar_threshold,
+        hotwords: hotwordConfig.hotwords,
+        rules: hotwordConfig.rules
+      }))
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : '热词保存失败')
+    } finally {
+      setHotwordBusy(false)
+    }
+  }
+
+  const previewHotwords = async () => {
+    if (!hotwordPreview.trim()) return
+    setHotwordBusy(true)
+    try {
+      const result = await api.previewHotwords(hotwordPreview)
+      setHotwordPreviewResult(result.text)
+    } catch (previewError) {
+      setError(previewError instanceof Error ? previewError.message : '热词预览失败')
+    } finally {
+      setHotwordBusy(false)
     }
   }
 
@@ -309,13 +393,21 @@ export function ModelsPage() {
   }
 
   const refreshTtsRuntime = async () => {
-    const baseUrl = settings.higgsTtsBaseUrl.trim() || 'http://localhost:8002'
+    const baseUrl = settings.higgsTtsProvider === 'boson'
+      ? settings.higgsTtsRemoteBaseUrl.trim() || 'https://api.boson.ai/v1'
+      : settings.higgsTtsBaseUrl.trim() || 'http://localhost:8002'
     setTtsProbe(true)
     setError('')
     try {
-      const health = await api.higgsHealth(baseUrl)
+      const health = await api.higgsConnection({
+        provider: settings.higgsTtsProvider,
+        base_url: baseUrl,
+        api_token: settings.higgsTtsProvider === 'boson' ? settings.higgsTtsApiToken : ''
+      })
       setTtsHealth(health)
-      const voiceResult: HiggsVoicesResult = await api.higgsVoices(baseUrl).catch(() => ({ voices: [] }))
+      const voiceResult: HiggsVoicesResult = settings.higgsTtsProvider === 'local'
+        ? await api.higgsVoices(baseUrl).catch(() => ({ voices: [] }))
+        : { voices: [] }
       const localPresets = voiceResult.presets || await refreshVoicePresets().catch(() => [])
       if (voiceResult.presets) setVoicePresets(voiceResult.presets)
       const localVoices = localPresets.map((preset) => preset.name)
@@ -323,9 +415,9 @@ export function ModelsPage() {
         .filter((voice): voice is string => typeof voice === 'string' && Boolean(voice.trim()))
         .map((voice) => voice.trim())))
       updateSettings({
-        higgsTtsBaseUrl: baseUrl,
+        ...(settings.higgsTtsProvider === 'boson' ? { higgsTtsRemoteBaseUrl: baseUrl } : { higgsTtsBaseUrl: baseUrl }),
         higgsTtsVoices: voices,
-        higgsTtsVoice: voices.includes(settings.higgsTtsVoice) ? settings.higgsTtsVoice : 'default'
+        higgsTtsVoice: voices.includes(settings.higgsTtsVoice) ? settings.higgsTtsVoice : 'Elysia'
       })
     } catch (ttsError) {
       setTtsHealth({
@@ -392,12 +484,78 @@ export function ModelsPage() {
     try {
       setError('')
       updateSettings({
-        higgsTtsReferenceAudioDataUrl: await fileToDataUrl(file),
+        higgsTtsReferenceAudioDataUrl: await blobToDataUrl(file),
         higgsTtsReferenceAudioName: file.name
       })
     } catch (audioError) {
       setError(audioError instanceof Error ? audioError.message : '参考音频读取失败')
     }
+  }
+
+  const toggleReferenceRecording = async () => {
+    if (referenceRecording) {
+      const recorder = referenceRecorderRef.current
+      referenceRecorderRef.current = null
+      setReferenceRecording(false)
+      if (!recorder) {
+        setError('参考音频录音状态异常，请重新录音')
+        return
+      }
+      try {
+        setError('')
+        const { blob, durationSec, mimeType } = await recorder.stop()
+        if (!blob.size || durationSec < 0.2) throw new Error('录音太短，请重新录制参考音频')
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+        updateSettings({
+          higgsTtsReferenceAudioDataUrl: await blobToDataUrl(blob),
+          higgsTtsReferenceAudioName: `reference-${timestamp}.${extensionFromMimeType(mimeType)}`
+        })
+      } catch (recordError) {
+        setError(recordError instanceof Error ? recordError.message : '参考音频录音失败')
+      }
+      return
+    }
+
+    const recorder = new AudioRecorder()
+    try {
+      setError('')
+      await recorder.start(settings.audioInputDeviceId || undefined)
+      referenceRecorderRef.current = recorder
+      setReferenceRecording(true)
+    } catch (recordError) {
+      recorder.cancel()
+      referenceRecorderRef.current = null
+      setReferenceRecording(false)
+      setError(recordError instanceof Error ? recordError.message : '无法启动参考音频录音')
+    }
+  }
+
+  const closeTtsDialog = () => {
+    referenceRecorderRef.current?.cancel()
+    referenceRecorderRef.current = null
+    setReferenceRecording(false)
+    setTtsDialogOpen(false)
+  }
+
+  const referenceTranscribeOptions = (): TranscribeOptions => ({
+    engine: settings.offlineEngine,
+    language: settings.defaultLanguage === 'auto' ? undefined : settings.defaultLanguage,
+    whisper_model: settings.whisperModel,
+    enable_punctuation: settings.enablePunctuation,
+    enable_hotwords: true,
+    allow_server_data_collection: settings.allowServerDataCollection,
+    archive_dir: settings.archiveDir || undefined
+  })
+
+  const waitReferenceTranscribeTask = async (taskId: string) => {
+    const startedAt = Date.now()
+    const timeoutMs = settings.timeoutSec === 0 ? 30 * 60 * 1000 : settings.timeoutSec * 1000
+    while (Date.now() - startedAt < timeoutMs) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000))
+      const result = await api.task(taskId)
+      if (['success', 'failed', 'cancelled'].includes(result.status)) return result
+    }
+    throw new Error('参考音频 ASR 任务超时')
   }
 
   const generateReferenceText = async () => {
@@ -409,12 +567,17 @@ export function ModelsPage() {
     setError('')
     try {
       const audio = await dataUrlToBlob(settings.higgsTtsReferenceAudioDataUrl)
-      const result = await api.referenceAudioAsr(audio, settings.defaultEngine, settings.defaultLanguage)
-      if (!result.text.trim()) {
+      const filename = settings.higgsTtsReferenceAudioName || `tts_reference_${Date.now()}.webm`
+      const response = await api.transcribe(audio, filename, referenceTranscribeOptions())
+      const result = isAsyncResponse(response) ? await waitReferenceTranscribeTask(response.task_id) : response
+      if (result.status !== 'success') {
+        throw new Error(`参考音频 ASR 任务${result.status === 'cancelled' ? '已取消' : '失败'}`)
+      }
+      if (!result.full_text.trim()) {
         setError('ASR 未识别到参考音频文本')
         return
       }
-      updateSettings({ higgsTtsReferenceText: result.text.trim() })
+      updateSettings({ higgsTtsReferenceText: result.full_text.trim() })
     } catch (asrError) {
       setError(asrError instanceof Error ? asrError.message : '参考音频转文本失败')
     } finally {
@@ -466,7 +629,7 @@ export function ModelsPage() {
             <h1>模型管理</h1>
             <p>集中管理 ASR、本地模型和 OpenAI 兼容模型配置。</p>
           </div>
-          <button type="button" onClick={refresh}>刷新</button>
+          <button type="button" disabled={Boolean(busy)} onClick={() => void refresh()}>刷新</button>
         </div>
         <div className="model-tabs">
           <button type="button" className={activeTab === 'asr' ? 'active' : ''} onClick={() => setActiveTab('asr')}>ASR 模型设置</button>
@@ -479,10 +642,18 @@ export function ModelsPage() {
           <div className="model-section">
             <div className="model-settings-grid">
               <label>
-                默认 ASR 引擎
-                <select value={settings.defaultEngine} onChange={(event) => updateSettings({ defaultEngine: event.target.value, selectedEngines: [event.target.value] })}>
-                  {builtInEngines.map((engine) => <option key={engine} value={engine}>{engine}</option>)}
+                离线识别模型
+                <select value={settings.offlineEngine} onChange={(event) => updateSettings({ offlineEngine: event.target.value })}>
+                  {offlineEngines.map((engine) => <option key={engine} value={engine}>{engineLabels[engine] || engine}</option>)}
                 </select>
+                <small>文件、录音和参考音频使用完整音频离线识别</small>
+              </label>
+              <label>
+                实时流式模型
+                <select value={settings.streamingEngine} onChange={(event) => updateSettings({ streamingEngine: event.target.value })}>
+                  {streamingEngines.map((engine) => <option key={engine} value={engine}>{engineLabels[engine] || engine}</option>)}
+                </select>
+                <small>实时字幕和实时对话只使用原生流式解码</small>
               </label>
               <label>
                 默认语言
@@ -492,25 +663,9 @@ export function ModelsPage() {
                   <option value="auto">自动</option>
                 </select>
               </label>
-              <label>
-                合并策略
-                <select value={settings.mergeStrategy} onChange={(event) => updateSettings({ mergeStrategy: event.target.value as typeof settings.mergeStrategy })}>
-                  <option value="first">优先首个引擎</option>
-                  <option value="vote">投票合并</option>
-                  <option value="concat">拼接结果</option>
-                </select>
-              </label>
-              <label className="check">
-                <input type="checkbox" checked={settings.multiEngine} onChange={(event) => updateSettings({ multiEngine: event.target.checked })} />
-                启用多 ASR 引擎
-              </label>
               <label className="check">
                 <input type="checkbox" checked={settings.enablePunctuation} onChange={(event) => updateSettings({ enablePunctuation: event.target.checked })} />
                 标点恢复
-              </label>
-              <label className="check">
-                <input type="checkbox" checked={settings.enableDiarize} onChange={(event) => updateSettings({ enableDiarize: event.target.checked })} />
-                说话人分离
               </label>
             </div>
             <div className="model-table">
@@ -523,27 +678,56 @@ export function ModelsPage() {
                       <div>
                         <strong>{engineLabels[model.engine] || model.engine}</strong>
                         <span>{model.model_name}</span>
+                        <small>{Boolean(model.extra?.supports_streaming) || model.engine === 'x-asr' ? '真流式模型' : '离线模型'}</small>
                       </div>
                       <span className={model.is_loaded ? 'loaded' : 'unloaded'}>{model.is_loaded ? '已加载' : '未加载'}</span>
                       <span>{model.device || config.device || '-'}</span>
                       <span>{model.compute_type || config.computeType || '-'}</span>
                     </button>
                     <div className="row-actions">
-                      <button type="button" onClick={() => updateSettings({ defaultEngine: model.engine, selectedEngines: [model.engine] })}>
-                        {settings.defaultEngine === model.engine ? '默认' : '设默认'}
+                      <button type="button" onClick={() => model.engine === 'x-asr'
+                        ? updateSettings({ streamingEngine: model.engine })
+                        : updateSettings({ offlineEngine: model.engine })}>
+                        {(model.engine === 'x-asr' && settings.streamingEngine === model.engine)
+                          || (model.engine !== 'x-asr' && settings.offlineEngine === model.engine) ? '使用中' : model.engine === 'x-asr' ? '设为实时' : '设为离线'}
                       </button>
                       {model.is_loaded ? (
-                        <button type="button" disabled={busy === model.engine} onClick={() => unload(model.engine)}>卸载</button>
+                        <button type="button" disabled={Boolean(busy)} onClick={() => unload(model.engine)}>卸载</button>
                       ) : (
-                        <button type="button" disabled={busy === model.engine} onClick={() => load(model.engine)}>加载</button>
+                        <button type="button" disabled={Boolean(busy)} onClick={() => load(model.engine)}>加载</button>
                       )}
                     </div>
                     {isExpanded && (
                       <div className="model-detail-grid">
-                        <label>
-                          模型 / 路径
-                          <input value={config.modelName} onChange={(event) => updateAsrConfig(model.engine, { modelName: event.target.value })} />
-                        </label>
+                        {model.engine === 'x-asr' ? (
+                          <fieldset className="xasr-variant-picker wide">
+                            <legend>流式窗口模型（选择后点击加载完成切换）</legend>
+                            {xAsrVariants.map((chunkMs) => {
+                              const modelName = `chunk-${chunkMs}ms-model`
+                              const available = Array.isArray(model.extra?.available_variants)
+                                ? model.extra.available_variants.includes(modelName)
+                                : false
+                              return (
+                                <label key={chunkMs}>
+                                  <input
+                                    type="radio"
+                                    name="xasr-model-variant"
+                                    checked={config.modelName === modelName}
+                                    onChange={() => updateAsrConfig(model.engine, { modelName })}
+                                  />
+                                  <span>{chunkMs} ms</span>
+                                  <small>{available ? '已下载' : '未下载'}</small>
+                                </label>
+                              )
+                            })}
+                            <small>来源：Hugging Face · GilgameshWind/X-ASR-zh-en</small>
+                          </fieldset>
+                        ) : (
+                          <label>
+                            模型 / 路径
+                            <input value={config.modelName} onChange={(event) => updateAsrConfig(model.engine, { modelName: event.target.value })} />
+                          </label>
+                        )}
                         <label>
                           启动方式
                           <select value={config.device} onChange={(event) => updateAsrConfig(model.engine, { device: event.target.value })}>
@@ -566,6 +750,55 @@ export function ModelsPage() {
                 )
               })}
             </div>
+            {hotwordConfig && (
+              <section className="hotword-editor">
+                <div className="section-head compact">
+                  <div>
+                    <h2>离线识别热词</h2>
+                    <p>兼容 CapsWriter 写法，保存后下一次离线识别立即生效。</p>
+                  </div>
+                  <button type="button" disabled={hotwordBusy} onClick={() => void saveHotwords()}>
+                    {hotwordBusy ? '处理中' : '保存热词'}
+                  </button>
+                </div>
+                <div className="model-settings-grid">
+                  <label className="check">
+                    <input type="checkbox" checked={hotwordConfig.enabled} onChange={(event) => setHotwordConfig({ ...hotwordConfig, enabled: event.target.checked })} />
+                    启用拼音热词纠错
+                  </label>
+                  <label className="check">
+                    <input type="checkbox" checked={hotwordConfig.rule_enabled} onChange={(event) => setHotwordConfig({ ...hotwordConfig, rule_enabled: event.target.checked })} />
+                    启用正则替换
+                  </label>
+                  <label>
+                    自动替换阈值
+                    <input type="number" min="0" max="1" step="0.01" value={hotwordConfig.threshold} onChange={(event) => setHotwordConfig({ ...hotwordConfig, threshold: Number(event.target.value) })} />
+                  </label>
+                  <label>
+                    相似词提示阈值
+                    <input type="number" min="0" max="1" step="0.01" value={hotwordConfig.similar_threshold} onChange={(event) => setHotwordConfig({ ...hotwordConfig, similar_threshold: Number(event.target.value) })} />
+                  </label>
+                  <label className="wide">
+                    hot.txt（标准词|别名~~~黑名单）
+                    <textarea rows={8} value={hotwordConfig.hotwords} onChange={(event) => setHotwordConfig({ ...hotwordConfig, hotwords: event.target.value })} />
+                    <small>示例：撒贝宁|撒贝你|撒贝林~~~撒贝宁工作室</small>
+                  </label>
+                  <label className="wide">
+                    hot-rule.txt（正则 = 替换文本）
+                    <textarea rows={6} value={hotwordConfig.rules} onChange={(event) => setHotwordConfig({ ...hotwordConfig, rules: event.target.value })} />
+                    <small>示例：50赫兹 = 50Hz</small>
+                  </label>
+                  <label className="wide">
+                    即时预览
+                    <div className="inline-field">
+                      <input value={hotwordPreview} placeholder="输入一段识别文本" onChange={(event) => setHotwordPreview(event.target.value)} />
+                      <button type="button" disabled={hotwordBusy || !hotwordPreview.trim()} onClick={() => void previewHotwords()}>应用</button>
+                    </div>
+                    {hotwordPreviewResult && <small>结果：{hotwordPreviewResult}</small>}
+                  </label>
+                </div>
+              </section>
+            )}
           </div>
         )}
         {activeTab === 'llm' && (
@@ -652,12 +885,12 @@ export function ModelsPage() {
               </div>
               <div className="tts-summary-grid">
                 <article>
-                  <span>API 地址</span>
-                  <strong>{settings.higgsTtsBaseUrl || 'http://localhost:8002'}</strong>
+                  <span>运行方式</span>
+                  <strong>{settings.higgsTtsProvider === 'boson' ? 'Boson 远程 API' : '本地部署'}</strong>
                 </article>
                 <article>
                   <span>当前音色</span>
-                  <strong>{settings.higgsTtsVoice || 'default'}</strong>
+                  <strong>{settings.higgsTtsVoice || 'Elysia'}</strong>
                 </article>
                 <article>
                   <span>参考来源</span>
@@ -669,13 +902,38 @@ export function ModelsPage() {
                 </article>
               </div>
               <div className="model-settings-grid tts-inline-settings">
+                <label>
+                  TTS 来源
+                  <select value={settings.higgsTtsProvider} onChange={(event) => updateSettings({ higgsTtsProvider: event.target.value as 'local' | 'boson' })}>
+                    <option value="local">本地部署</option>
+                    <option value="boson">Boson 远程 API</option>
+                  </select>
+                </label>
+                {settings.higgsTtsProvider === 'boson' && (
+                  <label>
+                    远程模型
+                    <input value={settings.higgsTtsRemoteModel} onChange={(event) => updateSettings({ higgsTtsRemoteModel: event.target.value })} />
+                  </label>
+                )}
                 <label className="wide">
-                  Higgs API 地址
+                  {settings.higgsTtsProvider === 'boson' ? 'Boson API 地址' : '本地 Higgs API 地址'}
                   <div className="inline-control">
-                    <input value={settings.higgsTtsBaseUrl} placeholder="localhost:8002 或 112.124.13.120:8002" onChange={(event) => updateSettings({ higgsTtsBaseUrl: event.target.value })} />
+                    <input
+                      value={settings.higgsTtsProvider === 'boson' ? settings.higgsTtsRemoteBaseUrl : settings.higgsTtsBaseUrl}
+                      placeholder={settings.higgsTtsProvider === 'boson' ? 'https://api.boson.ai/v1' : 'http://127.0.0.1:8002'}
+                      onChange={(event) => updateSettings(settings.higgsTtsProvider === 'boson'
+                        ? { higgsTtsRemoteBaseUrl: event.target.value }
+                        : { higgsTtsBaseUrl: event.target.value })}
+                    />
                     <button type="button" disabled={ttsProbe} onClick={() => void refreshTtsRuntime()}>{ttsProbe ? '检查中' : '检查 / 刷新音色'}</button>
                   </div>
                 </label>
+                {settings.higgsTtsProvider === 'boson' && (
+                  <label className="wide">
+                    API Token
+                    <input type="password" value={settings.higgsTtsApiToken} placeholder="仅保存在本机，不写入日志" onChange={(event) => updateSettings({ higgsTtsApiToken: event.target.value })} />
+                  </label>
+                )}
                 <label>
                   使用音色
                   <select value={settings.higgsTtsVoice} onChange={(event) => updateSettings({ higgsTtsVoice: event.target.value })}>
@@ -772,14 +1030,14 @@ export function ModelsPage() {
               </div>
             </div>
             {ttsDialogOpen && (
-              <div className="modal-backdrop" role="presentation" onMouseDown={() => setTtsDialogOpen(false)}>
+              <div className="modal-backdrop" role="presentation" onMouseDown={closeTtsDialog}>
                 <section className="modal-panel tts-modal" role="dialog" aria-modal="true" aria-labelledby="tts-modal-title" onMouseDown={(event) => event.stopPropagation()}>
                   <div className="modal-head">
                     <div>
-                      <h2 id="tts-modal-title">TTS 模型设置</h2>
-                      <p>配置 Higgs 服务、上传并保存音色，或调整生成参数。</p>
+                      <h2 id="tts-modal-title">上传 / 保存音色</h2>
+                      <p>上传参考音频、检查音频内容，并保存为可复用的本地音色。</p>
                     </div>
-                    <button type="button" onClick={() => setTtsDialogOpen(false)}>关闭</button>
+                    <button type="button" onClick={closeTtsDialog}>关闭</button>
                   </div>
                   <div className="tts-modal-body">
                     <div className="model-settings-grid">
@@ -790,7 +1048,7 @@ export function ModelsPage() {
                           value={settings.higgsTtsVoice}
                           placeholder="给音色起一个名字"
                           onChange={(event) => updateSettings({ higgsTtsVoice: event.target.value })}
-                          onBlur={(event) => updateSettings({ higgsTtsVoice: event.currentTarget.value.trim() || 'default' })}
+                          onBlur={(event) => updateSettings({ higgsTtsVoice: event.currentTarget.value.trim() || 'Elysia' })}
                         />
                         <datalist id="higgs-tts-voices">
                           {settings.higgsTtsVoices.map((voice) => <option key={voice} value={voice} />)}
@@ -798,7 +1056,7 @@ export function ModelsPage() {
                       </label>
                       <div className="wide model-subhead">
                         <strong>上传 / 保存音色</strong>
-                        <span>保存后后端会永久记录音色；之后只选择这个音色名，也会自动套用保存的参考信息。</span>
+                        <span>保存后后端会记录到本地音色库；之后只选择这个音色名，也会自动套用参考信息。</span>
                       </div>
                       <label className="wide">
                         参考音频
@@ -814,12 +1072,15 @@ export function ModelsPage() {
                           <button
                             type="button"
                             onClick={() => updateSettings({ higgsTtsReferenceAudioDataUrl: '', higgsTtsReferenceAudioName: '' })}
-                            disabled={!settings.higgsTtsReferenceAudioDataUrl}
+                            disabled={!settings.higgsTtsReferenceAudioDataUrl || referenceRecording}
                           >
                             清除
                           </button>
+                          <button type="button" className={referenceRecording ? 'record-button recording' : ''} onClick={() => void toggleReferenceRecording()}>
+                            {referenceRecording ? '停止录音' : '录音输入'}
+                          </button>
                         </div>
-                        <small>{settings.higgsTtsReferenceAudioName || '未上传参考音频'}</small>
+                        <small>{referenceRecording ? '正在录制参考音频...' : settings.higgsTtsReferenceAudioName || '未上传或录制参考音频'}</small>
                         {settings.higgsTtsReferenceAudioDataUrl && (
                           <audio
                             ref={referenceAudioRef}
@@ -836,8 +1097,8 @@ export function ModelsPage() {
                         参考音频准确文本
                         <div className="inline-control top">
                           <textarea rows={3} value={settings.higgsTtsReferenceText} placeholder="强烈建议填写音频中实际说出的完整文本" onChange={(event) => updateSettings({ higgsTtsReferenceText: event.target.value })} />
-                          <button type="button" disabled={referenceTextBusy || !settings.higgsTtsReferenceAudioDataUrl} onClick={() => void generateReferenceText()}>
-                            {referenceTextBusy ? '识别中' : '当前 ASR 生成'}
+                          <button type="button" disabled={referenceTextBusy || referenceRecording || !settings.higgsTtsReferenceAudioDataUrl} onClick={() => void generateReferenceText()}>
+                            {referenceTextBusy ? '识别中' : '当前 ASR 生成并填充'}
                           </button>
                         </div>
                       </label>

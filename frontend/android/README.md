@@ -1,5 +1,7 @@
 # ASRApp Android
 
+完整工具链、SDK 配置、构建与迁移说明见 [Android 环境指南](../../doc/asrapp/installation/ANDROID.md)。
+
 Kotlin + Jetpack Compose Android client for the ASR backend.
 
 ## Features

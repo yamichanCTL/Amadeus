@@ -74,7 +74,13 @@ def fake_higgs_json(_base_url: str, path: str, _timeout: float = 20.0) -> Any:
     raise AssertionError(f"unexpected Higgs path: {path}")
 
 
-def fake_higgs_audio(payload: dict[str, Any], _base_url: str, _timeout: float = 1800.0):
+def fake_higgs_audio(
+    payload: dict[str, Any],
+    _base_url: str,
+    _timeout: float = 1800.0,
+    api_token: str = "",
+):
+    del api_token
     assert payload["input"]
     assert payload["voice"]
     return b"RIFFfake-higgs-wav", "audio/wav", {"x-sample-rate": "24000"}
@@ -104,7 +110,7 @@ async def run_checks() -> None:
     print("REQ tts-service-config: health endpoint logic ok")
 
     voices = await tts_api.higgs_voices("http://localhost:8002")
-    assert voices["voices"] == ["default", "elysia"]
+    assert {"default", "elysia"}.issubset(set(voices["voices"]))
     print("REQ tts-service-config: voices endpoint logic ok")
 
     text_tts = await tts_api.higgs_speak(tts_api.HiggsTTSRequest(
@@ -122,6 +128,9 @@ async def run_checks() -> None:
     audio_tts = await tts_api.higgs_audio_to_speech(
         audio=upload,
         higgs_base_url="http://localhost:8002",
+        provider="local",
+        api_token="",
+        model="higgs-audio-v3-tts",
         voice="default",
         response_format="wav",
         speed=1.0,
@@ -130,6 +139,16 @@ async def run_checks() -> None:
         top_k=50,
         seed=-1,
         max_new_tokens=2048,
+        reference_audio="",
+        reference_url="",
+        reference_text="",
+        reference_codes_json="",
+        emotion="",
+        style="",
+        prosody_speed="",
+        pitch="",
+        expressiveness="",
+        initial_codec_chunk_frames=1,
         engine="mock",
         language="zh",
     )

@@ -28,6 +28,7 @@ from typing import Any
 from app.config import get_settings
 from app.core.asr.base import BaseASREngine
 from app.core.asr.registry import available_engines, get_engine_class
+from app.core.model_errors import classify_model_error
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -91,7 +92,14 @@ class ModelManager:
         cls = get_engine_class(name)
         kwargs = self._engine_kwargs.get(name, {})
         engine = cls(**kwargs)
-        await engine.load()
+        try:
+            await engine.load()
+        except Exception as exc:
+            failure = classify_model_error(exc, name)
+            logger.exception("Engine '%s' failed to load: %s", name, failure.detail)
+            if failure is exc:
+                raise
+            raise failure from exc
         self._engines[name] = engine
         logger.info("Engine '%s' ready.", name)
 
@@ -207,5 +215,13 @@ def get_model_manager() -> ModelManager:
             model_dir=str(settings.qwen3asr_model_dir),
             device=settings.default_qwen3asr_device,
             torch_dtype=settings.qwen3asr_torch_dtype,
+        )
+        _manager.configure(
+            "x-asr",
+            model_name=settings.default_x_asr_model,
+            model_dir=str(settings.x_asr_model_dir),
+            provider=settings.default_x_asr_provider,
+            num_threads=settings.x_asr_num_threads,
+            text_format=settings.x_asr_text_format,
         )
     return _manager

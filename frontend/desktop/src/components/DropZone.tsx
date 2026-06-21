@@ -37,6 +37,7 @@ export function DropZone({ onFiles }: { onFiles: (files: LocalAudioFile[]) => vo
         <span>⬆</span>
       </span>
       <strong>拖拽音频 / 视频文件到此处，或点击选择文件</strong>
+      <span>选择后需要确认，文件不会立即开始识别</span>
       <span>支持 mp3、wav、m4a、mp4、mov、wmv、flv 等格式，单文件最大 2GB</span>
       <span className="drop-actions" aria-hidden="true">
         <span className="fake-primary">选择文件</span>

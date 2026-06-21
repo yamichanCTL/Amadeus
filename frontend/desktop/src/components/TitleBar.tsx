@@ -2,8 +2,8 @@ export function TitleBar() {
   return (
     <header className="titlebar">
       <div className="titlebar-drag">
-        <strong>ASR Desktop</strong>
-        <span>语音转写工作台</span>
+        <strong>Amadeus</strong>
+        <span>智能语音工作台</span>
       </div>
       <div className="window-actions">
         <button type="button" title="最小化" onClick={() => window.electronAPI?.minimize()}>
