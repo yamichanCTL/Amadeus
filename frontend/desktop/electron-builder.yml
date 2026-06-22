@@ -1,11 +1,17 @@
 appId: com.asrapp.desktop
-productName: ASR Desktop
+productName: Amadeus
+icon: ../../img/Amadeus/amadeus.jpg
 directories:
   output: release
 files:
   - dist/**/*
   - dist-electron/**/*
   - "!dist-electron/electron/**/*"
+extraResources:
+  - from: ../../img/Amadeus
+    to: img/Amadeus
+    filter:
+      - amadeus.jpg
 win:
   signAndEditExecutable: false
   signDlls: false

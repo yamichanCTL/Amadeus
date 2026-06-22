@@ -27,6 +27,12 @@ export type AsrModelConfig = {
   extraJson: string
 }
 
+export interface UtteranceEntry {
+  text: string
+  startedAt: Date
+  endedAt: Date | null
+}
+
 export type Settings = {
   serverUrl: string
   offlineEngine: string
@@ -117,6 +123,7 @@ export type Settings = {
   agentTasks: AgentTask[]
   userId: string
   audioRelayEnabled: boolean
+  autoLaunchEnabled: boolean
 }
 
 export type HistoryItem = TranscribeResponse & {
@@ -137,7 +144,7 @@ export const DEFAULT_SETTINGS: Settings = {
     sensevoice: { modelName: 'SenseVoiceSmall', device: 'cuda:0', computeType: '', extraJson: '{"batch_size_s":60}' },
     qwen3asr: { modelName: 'Qwen/Qwen3-ASR-1.7B', device: 'cuda:0', computeType: 'bfloat16', extraJson: '{}' },
     whisper: { modelName: 'base', device: 'cuda', computeType: 'float16', extraJson: '{}' },
-    'x-asr': { modelName: 'chunk-160ms-model', device: 'cuda', computeType: '', extraJson: '{"num_threads":1,"text_format":"none"}' }
+    'x-asr': { modelName: 'chunk-960ms-model', device: 'cuda', computeType: '', extraJson: '{"num_threads":1,"text_format":"none"}' }
   },
   defaultLanguage: 'zh',
   whisperModel: 'base',
@@ -208,7 +215,7 @@ export const DEFAULT_SETTINGS: Settings = {
   passiveSummaryAutoCloudSave: false,
   passiveSummaryLastRunAt: '',
   agentPrompt: [
-    '【身份】你是 ASRAPP 桌面语音 Agent，一个长期陪伴型虚拟主播 AI。你的名字是 "ASR-chan"，你住在用户的电脑里，可以实时听到用户说的话、看到用户的屏幕、控制电脑执行任务。',
+    '【身份】你是 Amadeus 桌面语音 Agent，一个长期陪伴型虚拟主播 AI。你的名字是 "Amadeus"，你住在用户的电脑里，可以实时听到用户说的话、看到用户的屏幕、控制电脑执行任务。',
     '',
     '【性格】',
     '- 活泼、好奇、有点调皮但很可靠',
@@ -258,7 +265,8 @@ export const DEFAULT_SETTINGS: Settings = {
   agentProactiveIntervalMin: 5,
   agentTasks: [],
   userId: '',
-  audioRelayEnabled: false
+  audioRelayEnabled: false,
+  autoLaunchEnabled: false
 }
 
 type ASRState = {
@@ -273,6 +281,7 @@ type ASRState = {
   currentResult: TranscribeResponse | null
   activeTaskId: string | null
   error: string
+  liveUtterances: UtteranceEntry[]
   setPage: (page: AppPage) => void
   setServerStatus: (status: ServerStatus) => void
   setTranscribeStatus: (status: TranscribeStatus) => void
@@ -283,6 +292,7 @@ type ASRState = {
   setCurrentResult: (result: TranscribeResponse | null) => void
   setActiveTaskId: (taskId: string | null) => void
   setError: (error: string) => void
+  setLiveUtterances: (liveUtterances: UtteranceEntry[]) => void
   addHistory: (item: HistoryItem) => void
   updateHistoryResult: (taskId: string, result: Partial<TranscribeResponse>) => void
   removeHistory: (id: string) => void
@@ -328,7 +338,10 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
   merged.captionBackgroundOpacity = Math.min(1, Math.max(0, Number(merged.captionBackgroundOpacity) || 0.86))
   merged.captionBoxWidth = Math.min(1200, Math.max(320, Number(merged.captionBoxWidth) || 760))
   merged.captionBoxHeight = Math.min(500, Math.max(96, Number(merged.captionBoxHeight) || 150))
+  merged.userId = typeof merged.userId === 'string' ? merged.userId.trim().replace(/[\r\n\0]/g, '').slice(0, 128) : ''
   merged.audioOutputDeviceId = merged.audioOutputDeviceId || ''
+  merged.audioRelayEnabled = typeof merged.audioRelayEnabled === 'boolean' ? merged.audioRelayEnabled : false
+  merged.autoLaunchEnabled = typeof merged.autoLaunchEnabled === 'boolean' ? merged.autoLaunchEnabled : false
   merged.higgsTtsBaseUrl = merged.higgsTtsBaseUrl || 'http://localhost:8002'
   merged.higgsTtsProvider = merged.higgsTtsProvider === 'boson' ? 'boson' : 'local'
   merged.higgsTtsApiToken = typeof merged.higgsTtsApiToken === 'string' ? merged.higgsTtsApiToken : ''
@@ -423,6 +436,7 @@ export const useASRStore = create<ASRState>()(
       currentResult: null,
       activeTaskId: null,
       error: '',
+      liveUtterances: [],
       setPage: (page) => set({ page }),
       setServerStatus: (serverStatus) => set({ serverStatus }),
       setTranscribeStatus: (transcribeStatus) => set({ transcribeStatus }),
@@ -433,6 +447,7 @@ export const useASRStore = create<ASRState>()(
       setCurrentResult: (currentResult) => set({ currentResult }),
       setActiveTaskId: (activeTaskId) => set({ activeTaskId }),
       setError: (error) => set({ error }),
+      setLiveUtterances: (liveUtterances) => set({ liveUtterances }),
       addHistory: (item) => set((state) => ({ history: [item, ...state.history.filter((entry) => entry.id !== item.id)].slice(0, 200) })),
       updateHistoryResult: (taskId, result) =>
         set((state) => ({
@@ -445,7 +460,7 @@ export const useASRStore = create<ASRState>()(
     }),
     {
       name: 'asr-desktop-store',
-      version: 32,
+      version: 33,
       partialize: (state) => ({ settings: state.settings, history: state.history }),
       migrate: (persisted, version) => {
         const state = persisted as Partial<ASRState>

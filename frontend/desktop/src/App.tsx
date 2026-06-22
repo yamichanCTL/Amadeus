@@ -15,6 +15,7 @@ import { PlaceholderPage } from '@/pages/Placeholder'
 import { VoiceChangerPage } from '@/pages/VoiceChanger'
 import { DebugConsolePage } from '@/pages/DebugConsole'
 import { audioRelayMixer, runAudioRelayDeviceE2E, speechRecorder } from '@/services/audio'
+import { liveCaptionService } from '@/services/liveCaption'
 
 const isE2EMode = new URLSearchParams(window.location.search).get('e2e') === '1'
 
@@ -112,6 +113,18 @@ export default function App() {
     return () => { alive = false }
   }, [updateSettings])
 
+  // Sync auto-launch status from OS on startup
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      const enabled = await window.electronAPI?.getAutoLaunch().catch(() => false)
+      if (alive && typeof enabled === 'boolean') {
+        updateSettings({ autoLaunchEnabled: enabled })
+      }
+    })()
+    return () => { alive = false }
+  }, [updateSettings])
+
   useEffect(() => {
     if (!settings.audioRelayEnabled) {
       audioRelayMixer.stop()
@@ -164,7 +177,13 @@ export default function App() {
   }, [page])
 
   useEffect(() => {
-    const offClosed = window.electronAPI?.onCaptionOverlayClosed(() => updateSettings({ showDesktopCaptions: false }))
+    const offClosed = window.electronAPI?.onCaptionOverlayClosed(() => {
+      updateSettings({ showDesktopCaptions: false })
+      // Requirement 2b: closing caption overlay also stops live recognition
+      if (liveCaptionService.isActive) {
+        void liveCaptionService.stop()
+      }
+    })
     const offStyle = window.electronAPI?.onCaptionOverlayStyleChanged((bounds) =>
       updateSettings({
         captionBoxX: typeof bounds.x === 'number' ? bounds.x : settings.captionBoxX,
@@ -180,6 +199,14 @@ export default function App() {
       offSettings?.()
     }
   }, [setPage, settings.captionBoxHeight, settings.captionBoxWidth, settings.captionBoxX, settings.captionBoxY, updateSettings])
+
+  // Requirement 4c: tray icon toggle for live caption
+  useEffect(() => {
+    const off = window.electronAPI?.onLiveCaptionTrayToggle(() => {
+      void liveCaptionService.toggle()
+    })
+    return () => off?.()
+  }, [])
 
   useEffect(() => {
     if (!settings.passiveSummaryEnabled) return

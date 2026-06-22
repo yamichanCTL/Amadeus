@@ -36,5 +36,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   hideCaptionOverlay: () => ipcRenderer.invoke('captionOverlay:hide'),
   onCaptionOverlayClosed: (callback: () => void) => on('captionOverlay:closedByUser', callback),
   onCaptionOverlayStyleChanged: (callback: (payload: unknown) => void) => on('captionOverlay:styleChanged', callback),
-  onCaptionOverlaySettingsRequested: (callback: () => void) => on('captionOverlay:settingsRequested', callback)
+  onCaptionOverlaySettingsRequested: (callback: () => void) => on('captionOverlay:settingsRequested', callback),
+  getAutoLaunch: () => ipcRenderer.invoke('app:autoLaunch:get'),
+  setAutoLaunch: (enabled: boolean) => ipcRenderer.invoke('app:autoLaunch:set', enabled),
+  onLiveCaptionTrayToggle: (callback: () => void) => on('liveCaption:trayToggle', callback),
+  notifyLiveCaptionState: (active: boolean) => ipcRenderer.send('liveCaption:stateChanged', active)
 })

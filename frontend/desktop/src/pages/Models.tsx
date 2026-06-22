@@ -15,7 +15,7 @@ const defaultAsrConfigs: Record<string, AsrModelConfig> = {
   sensevoice: { modelName: 'SenseVoiceSmall', device: 'cuda:0', computeType: '', extraJson: '{"batch_size_s":60}' },
   qwen3asr: { modelName: 'Qwen/Qwen3-ASR-1.7B', device: 'cuda:0', computeType: 'bfloat16', extraJson: '{}' },
   whisper: { modelName: 'base', device: 'cuda', computeType: 'float16', extraJson: '{}' },
-  'x-asr': { modelName: 'chunk-160ms-model', device: 'cuda', computeType: '', extraJson: '{"num_threads":1,"text_format":"none"}' }
+  'x-asr': { modelName: 'chunk-960ms-model', device: 'cuda', computeType: '', extraJson: '{"num_threads":1,"text_format":"none"}' }
 }
 
 const engineLabels: Record<string, string> = {
@@ -113,7 +113,7 @@ export function ModelsPage() {
   const setModels = useASRStore((state) => state.setModels)
   const updateSettings = useASRStore((state) => state.updateSettings)
   const [activeTab, setActiveTab] = useState<ModelTab>('asr')
-  const [busy, setBusy] = useState('')
+  const [busyEngines, setBusyEngines] = useState<Set<string>>(new Set())
   const [error, setError] = useState('')
   const [llmModels, setLlmModels] = useState<LLMModelsResult | null>(null)
   const [translationModels, setTranslationModels] = useState<LLMModelsResult | null>(null)
@@ -260,28 +260,36 @@ export function ModelsPage() {
   }
 
   const load = async (engine: string) => {
-    if (busy) return
-    setBusy(engine)
+    if (busyEngines.has(engine)) return
+    setBusyEngines((prev) => new Set(prev).add(engine))
     try {
       await api.loadModel(engine, asrLoadPayload(engine))
       await refresh()
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : '模型加载失败')
+      setError(loadError instanceof Error ? loadError.message : `${engine} 模型加载失败`)
     } finally {
-      setBusy('')
+      setBusyEngines((prev) => {
+        const next = new Set(prev)
+        next.delete(engine)
+        return next
+      })
     }
   }
 
   const unload = async (engine: string) => {
-    if (busy) return
-    setBusy(engine)
+    if (busyEngines.has(engine)) return
+    setBusyEngines((prev) => new Set(prev).add(engine))
     try {
       await api.unloadModel(engine)
       await refresh()
     } catch (unloadError) {
       setError(unloadError instanceof Error ? unloadError.message : '模型卸载失败')
     } finally {
-      setBusy('')
+      setBusyEngines((prev) => {
+        const next = new Set(prev)
+        next.delete(engine)
+        return next
+      })
     }
   }
 
@@ -629,7 +637,7 @@ export function ModelsPage() {
             <h1>模型管理</h1>
             <p>集中管理 ASR、本地模型和 OpenAI 兼容模型配置。</p>
           </div>
-          <button type="button" disabled={Boolean(busy)} onClick={() => void refresh()}>刷新</button>
+          <button type="button" disabled={busyEngines.size > 0} onClick={() => void refresh()}>刷新</button>
         </div>
         <div className="model-tabs">
           <button type="button" className={activeTab === 'asr' ? 'active' : ''} onClick={() => setActiveTab('asr')}>ASR 模型设置</button>
@@ -692,9 +700,9 @@ export function ModelsPage() {
                           || (model.engine !== 'x-asr' && settings.offlineEngine === model.engine) ? '使用中' : model.engine === 'x-asr' ? '设为实时' : '设为离线'}
                       </button>
                       {model.is_loaded ? (
-                        <button type="button" disabled={Boolean(busy)} onClick={() => unload(model.engine)}>卸载</button>
+                        <button type="button" disabled={busyEngines.has(model.engine)} onClick={() => unload(model.engine)}>卸载</button>
                       ) : (
-                        <button type="button" disabled={Boolean(busy)} onClick={() => load(model.engine)}>加载</button>
+                        <button type="button" disabled={busyEngines.has(model.engine)} onClick={() => load(model.engine)}>加载</button>
                       )}
                     </div>
                     {isExpanded && (

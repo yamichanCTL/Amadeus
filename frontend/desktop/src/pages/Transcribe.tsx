@@ -4,9 +4,10 @@ import { AudioPlayer } from '@/components/AudioPlayer'
 import { DropZone, type LocalAudioFile } from '@/components/DropZone'
 import { RecordButton } from '@/components/RecordButton'
 import { ASRApi, isAsyncResponse, type LLMOperation, type TranscribeOptions, type TranscribeResponse } from '@/services/api'
-import { AudioRecorder, StreamingASRClient, blobToBase64 } from '@/services/audio'
+import { audioRelayMixer, blobToBase64, speechRecorder } from '@/services/audio'
+import { liveCaptionService } from '@/services/liveCaption'
 import { finishTelemetryTrace, recordTelemetryStage, startTelemetryTrace } from '@/services/telemetry'
-import { useASRStore } from '@/store/useASRStore'
+import { useASRStore, type UtteranceEntry } from '@/store/useASRStore'
 
 const terminalStatuses = new Set(['success', 'failed', 'cancelled'])
 
@@ -14,35 +15,11 @@ function formatClock(date = new Date()) {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-function formatDateTime(date: Date): string {
-  const y = date.getFullYear()
-  const m = String(date.getMonth() + 1).padStart(2, '0')
-  const d = String(date.getDate()).padStart(2, '0')
-  const h = String(date.getHours()).padStart(2, '0')
-  const min = String(date.getMinutes()).padStart(2, '0')
-  const s = String(date.getSeconds()).padStart(2, '0')
-  return `${y}-${m}-${d} ${h}:${min}:${s}`
-}
-
 function formatTime(date: Date): string {
   const h = String(date.getHours()).padStart(2, '0')
   const min = String(date.getMinutes()).padStart(2, '0')
   const s = String(date.getSeconds()).padStart(2, '0')
   return `${h}:${min}:${s}`
-}
-
-function todayDate(): string {
-  const now = new Date()
-  const y = now.getFullYear()
-  const m = String(now.getMonth() + 1).padStart(2, '0')
-  const d = String(now.getDate()).padStart(2, '0')
-  return `${y}-${m}-${d}`
-}
-
-interface UtteranceEntry {
-  text: string
-  startedAt: Date
-  endedAt: Date | null
 }
 
 export function TranscribePage() {
@@ -53,9 +30,9 @@ export function TranscribePage() {
   const currentResult = useASRStore((state) => state.currentResult)
   const activeTaskId = useASRStore((state) => state.activeTaskId)
   const error = useASRStore((state) => state.error)
+  const utterances = useASRStore((state) => state.liveUtterances)
   const setTranscribeStatus = useASRStore((state) => state.setTranscribeStatus)
   const setRecordStatus = useASRStore((state) => state.setRecordStatus)
-  const setLiveCaptionStatus = useASRStore((state) => state.setLiveCaptionStatus)
   const setCurrentResult = useASRStore((state) => state.setCurrentResult)
   const setActiveTaskId = useASRStore((state) => state.setActiveTaskId)
   const setError = useASRStore((state) => state.setError)
@@ -63,16 +40,38 @@ export function TranscribePage() {
   const updateHistoryResult = useASRStore((state) => state.updateHistoryResult)
   const updateSettings = useASRStore((state) => state.updateSettings)
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
-  const recorderRef = useRef(new AudioRecorder())
-  const streamerRef = useRef<StreamingASRClient | null>(null)
-  const utterancesRef = useRef<UtteranceEntry[]>([])
-  const liveFinalizedRef = useRef(true)
-  const [utterances, setUtterances] = useState<UtteranceEntry[]>([])
-  const [liveStatusText, setLiveStatusText] = useState('准备连接')
+  const recorderRef = useRef(speechRecorder)
+  const requestControllerRef = useRef<AbortController | null>(null)
+  const levelUpdateAtRef = useRef(0)
   const [taskStartedAt, setTaskStartedAt] = useState<Date | null>(null)
   const [taskEndedAt, setTaskEndedAt] = useState<Date | null>(null)
   const [llmStatus, setLlmStatus] = useState<LLMOperation | 'idle'>('idle')
   const [pendingFiles, setPendingFiles] = useState<LocalAudioFile[]>([])
+
+  // Derive status text from liveCaptionStatus
+  const liveStatusText = useMemo(() => {
+    switch (liveCaptionStatus) {
+      case 'idle': return '已停止'
+      case 'connecting': return '正在连接后端…'
+      case 'listening': return '连接成功，正在监听'
+      case 'transcribing': return '转写中…'
+      case 'stopping': return '正在停止…'
+      case 'error': return '连接错误'
+      default: return '准备连接'
+    }
+  }, [liveCaptionStatus])
+
+  useEffect(() => {
+    return () => {
+      recorderRef.current.cancel()
+      requestControllerRef.current?.abort()
+      // NOTE: do NOT stop liveCaptionService here — it survives page navigation (Req 4b)
+      const latest = useASRStore.getState().settings
+      if (!latest.audioRelayEnabled && !liveCaptionService.isActive) {
+        void recorderRef.current.prepare(latest.audioInputDeviceId || undefined).catch(() => undefined)
+      }
+    }
+  }, [])
 
   const translationConfig = () => ({
     provider: settings.translationProvider || settings.llmProvider,
@@ -81,11 +80,24 @@ export function TranscribePage() {
     apiToken: settings.translationApiToken.trim() || settings.llmApiToken
   })
 
+  const prepareRecorder = () => {
+    const latest = useASRStore.getState().settings
+    if (latest.audioRelayEnabled || audioRelayMixer.isActive()) return
+    void recorderRef.current.prepare(latest.audioInputDeviceId || undefined).catch(() => undefined)
+  }
+
   useEffect(() => {
-    return window.electronAPI?.onHotkeyTriggered(() => {
-      if (liveCaptionStatus === 'idle') void toggleRecording(true)
-    })
-  }, [liveCaptionStatus, recordStatus])
+    const handleGlobalRecording = () => {
+      const state = useASRStore.getState()
+      const processing = state.recordStatus === 'processing'
+        || ['uploading', 'processing', 'polling'].includes(state.transcribeStatus)
+        || state.liveCaptionStatus !== 'idle'
+      if (processing) void forceStop()
+      else void toggleRecording(true)
+    }
+    window.addEventListener('amadeus:toggle-recording', handleGlobalRecording)
+    return () => window.removeEventListener('amadeus:toggle-recording', handleGlobalRecording)
+  })
 
   const buildOptions = (): TranscribeOptions => {
     const options: TranscribeOptions = {
@@ -95,7 +107,8 @@ export function TranscribePage() {
       enable_punctuation: settings.enablePunctuation,
       enable_hotwords: true,
       allow_server_data_collection: settings.allowServerDataCollection,
-      archive_dir: settings.archiveDir || undefined
+      archive_dir: settings.archiveDir || undefined,
+      user_id: settings.userId || undefined,
     }
     const translate = translationConfig()
     const onlyTranslate = settings.llmAutoTranslate && !settings.llmAutoPolish
@@ -118,13 +131,20 @@ export function TranscribePage() {
     return options
   }
 
-  const pollTask = async (taskId: string) => {
+  const pollTask = async (taskId: string, signal: AbortSignal) => {
     setTranscribeStatus('polling')
     const startedAt = Date.now()
     const timeoutMs = settings.timeoutSec === 0 ? 30 * 60 * 1000 : settings.timeoutSec * 1000
     while (Date.now() - startedAt < timeoutMs) {
-      await new Promise((resolve) => window.setTimeout(resolve, 1000))
-      const result = await api.task(taskId)
+      if (signal.aborted) throw new DOMException('识别已强制停止', 'AbortError')
+      await new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(resolve, 1000)
+        signal.addEventListener('abort', () => {
+          window.clearTimeout(timer)
+          reject(new DOMException('识别已强制停止', 'AbortError'))
+        }, { once: true })
+      })
+      const result = await api.task(taskId, signal)
       if (terminalStatuses.has(result.status)) return result
     }
     throw new Error('任务超时')
@@ -159,7 +179,8 @@ export function TranscribePage() {
           duration_sec: result.duration_sec,
           elapsed_sec: result.elapsed_sec,
           timing: result.timing,
-          client_timing: result.client_timing
+          client_timing: result.client_timing,
+          user_id: settings.userId || undefined
         }
       })
       archived_audio = archived?.audio || ''
@@ -178,10 +199,21 @@ export function TranscribePage() {
     })
 
     if (settings.injectMode === 'copy' || !autoInject) await window.electronAPI?.textToClipboard(result.full_text)
-    if (settings.injectMode === 'inject' && autoInject) await window.electronAPI?.injectText(result.full_text)
+    if (settings.injectMode === 'inject' && autoInject) {
+      try {
+        const injected = await window.electronAPI?.injectText(result.full_text)
+        if (injected === false) setError('当前平台仅支持复制；识别文本已保存到剪贴板')
+      } catch (injectError) {
+        await window.electronAPI?.textToClipboard(result.full_text)
+        setError(injectError instanceof Error ? injectError.message : '自动输入失败，文本已复制到剪贴板')
+      }
+    }
   }
 
   const runTranscription = async (blob: Blob, filename: string, autoInject: boolean) => {
+    const controller = new AbortController()
+    requestControllerRef.current?.abort()
+    requestControllerRef.current = controller
     const trace = startTelemetryTrace('asr', `文件 ASR · ${filename}`, settings.offlineEngine)
     recordTelemetryStage(trace, '用户确认开始')
     setTranscribeStatus('uploading')
@@ -192,9 +224,10 @@ export function TranscribePage() {
     setTaskEndedAt(null)
     try {
       recordTelemetryStage(trace, '上传请求发送', { detail: `${blob.size} bytes` })
-      const response = await api.transcribe(blob, filename, buildOptions())
+      const response = await api.transcribe(blob, filename, buildOptions(), { signal: controller.signal })
       recordTelemetryStage(trace, isAsyncResponse(response) ? '服务端已入队' : '识别响应接收')
-      const result = isAsyncResponse(response) ? await pollTask(response.task_id) : response
+      if (isAsyncResponse(response)) setActiveTaskId(response.task_id)
+      const result = isAsyncResponse(response) ? await pollTask(response.task_id, controller.signal) : response
       if (result.timing) {
         const timingLabels: Record<string, string> = {
           upload_read_sec: '后端读取上传',
@@ -225,10 +258,17 @@ export function TranscribePage() {
       recordTelemetryStage(trace, '前端归档与展示')
       finishTelemetryTrace(trace, `${result.full_text.length} 字`)
     } catch (transcribeError) {
-      setTranscribeStatus('error')
-      setError(transcribeError instanceof Error ? transcribeError.message : '转写失败')
-      finishTelemetryTrace(trace, transcribeError instanceof Error ? transcribeError.message : '识别失败', 'error')
+      if (controller.signal.aborted || (transcribeError instanceof DOMException && transcribeError.name === 'AbortError')) {
+        setTranscribeStatus('cancelled')
+        setError('识别已强制停止')
+        finishTelemetryTrace(trace, '用户强制停止', 'error')
+      } else {
+        setTranscribeStatus('error')
+        setError(transcribeError instanceof Error ? transcribeError.message : '转写失败')
+        finishTelemetryTrace(trace, transcribeError instanceof Error ? transcribeError.message : '识别失败', 'error')
+      }
     } finally {
+      if (requestControllerRef.current === controller) requestControllerRef.current = null
       setActiveTaskId(null)
       await window.electronAPI?.hideStatusOverlay()
     }
@@ -251,12 +291,13 @@ export function TranscribePage() {
   const toggleRecording = async (autoInject = false) => {
     if (recordStatus === 'recording') {
       setRecordStatus('processing')
-      await window.electronAPI?.showStatusOverlay('processing')
+      await window.electronAPI?.showStatusOverlay('thinking', 0, '正在识别并准备输入文本')
       try {
         const { blob } = await recorderRef.current.stop()
         await runTranscription(blob, `recording_${Date.now()}.webm`, autoInject)
       } finally {
         setRecordStatus('idle')
+        prepareRecorder()
       }
       return
     }
@@ -264,9 +305,15 @@ export function TranscribePage() {
     if (transcribeStatus === 'uploading' || transcribeStatus === 'processing' || transcribeStatus === 'polling' || liveCaptionStatus !== 'idle') return
     setError('')
     try {
-      await recorderRef.current.start(settings.audioInputDeviceId || undefined)
+      await window.electronAPI?.showStatusOverlay('recording', 0)
+      const relayInput = audioRelayMixer.isActive() ? audioRelayMixer.createInputStream() : undefined
+      await recorderRef.current.start(settings.audioInputDeviceId || undefined, relayInput, (level) => {
+        const now = performance.now()
+        if (now - levelUpdateAtRef.current < 70) return
+        levelUpdateAtRef.current = now
+        void window.electronAPI?.showStatusOverlay('recording', level)
+      })
       setRecordStatus('recording')
-      await window.electronAPI?.showStatusOverlay('recording')
     } catch (recordError) {
       recorderRef.current.cancel()
       setRecordStatus('idle')
@@ -275,136 +322,40 @@ export function TranscribePage() {
     }
   }
 
-  const showLiveCaption = async (partial = '') => {
-    // Update the last utterance's text with the latest partial — avoids a
-    // separate "识别中" article and the "（空）" placeholder.
-    if (partial) {
-      setUtterances((prev) => {
-        const next = [...prev]
-        const last = next.length - 1
-        if (last >= 0 && next[last].endedAt === null) {
-          next[last] = { ...next[last], text: partial }
-        }
-        utterancesRef.current = next
-        return next
-      })
-    }
-    // Desktop caption overlay: show last 4 lines (finalized + current)
-    if (settings.showDesktopCaptions) {
-      const lines = utterancesRef.current.map((u) => u.text).filter(Boolean)
-      const display = lines.slice(-4).join('\n')
-      await window.electronAPI?.showCaptionOverlay(display, {
-        fontSize: settings.captionFontSize,
-        color: settings.captionFontColor,
-        backgroundOpacity: settings.captionBackgroundOpacity,
-        width: settings.captionBoxWidth,
-        height: settings.captionBoxHeight,
-        x: settings.captionBoxX,
-        y: settings.captionBoxY
-      })
-    }
-  }
-
-  const finalizeLiveCaption = () => {
-    if (liveFinalizedRef.current) return
-    liveFinalizedRef.current = true
-    setLiveCaptionStatus('idle')
-    setLiveStatusText('已停止')
-    updateSettings({ liveCaptionEnabled: false })
+  const forceStop = async () => {
+    recorderRef.current.cancel()
+    requestControllerRef.current?.abort(new DOMException('识别已强制停止', 'AbortError'))
+    requestControllerRef.current = null
+    await liveCaptionService.stop()
+    if (activeTaskId) await api.cancelTask(activeTaskId).catch(() => undefined)
+    setRecordStatus('idle')
+    setTranscribeStatus('cancelled')
     setTaskEndedAt(new Date())
-    const text = utterancesRef.current.map((u) => u.text).filter(Boolean).join('\n').trim()
-    if (!text) return
-    const result: TranscribeResponse = {
-      task_id: `live_${Date.now()}`,
-      status: 'success',
-      full_text: text,
-      segments: [],
-      language: settings.defaultLanguage,
-      engine_used: settings.streamingEngine,
-      confidence: null,
-      duration_sec: null,
-      elapsed_sec: null
-    }
-    setCurrentResult(result)
-    addHistory({ ...result, id: result.task_id, created_at: new Date().toISOString(), filename: 'live_caption.pcm' })
+    setError('识别已强制停止，可立即重新开始')
+    await Promise.all([
+      window.electronAPI?.hideStatusOverlay(),
+      window.electronAPI?.hideCaptionOverlay(),
+    ])
+    prepareRecorder()
   }
 
   const toggleLiveCaption = async () => {
     if (liveCaptionStatus !== 'idle') {
-      setLiveCaptionStatus('stopping')
-      setLiveStatusText('正在停止…')
-      const streamer = streamerRef.current
-      streamerRef.current = null
-      streamer?.stop()
-      await window.electronAPI?.hideCaptionOverlay()
-      finalizeLiveCaption()
+      // Delegate to singleton — it handles stop + history save
+      await liveCaptionService.stop()
+      setTaskEndedAt(new Date())
       return
     }
 
     if (recordStatus !== 'idle' || transcribeStatus === 'uploading' || transcribeStatus === 'polling') return
-    utterancesRef.current = []
-    setUtterances([])
-    liveFinalizedRef.current = false
-    setLiveCaptionStatus('connecting')
-    setLiveStatusText('正在连接后端…')
     const sessionStartedAt = new Date()
     setTaskStartedAt(sessionStartedAt)
     setTaskEndedAt(null)
-    streamerRef.current = new StreamingASRClient(settings.serverUrl, (event) => {
-      if (event.type === 'accepted') setLiveStatusText('连接成功，等待模型加载…')
-      if (event.type === 'loading') setLiveStatusText(event.message)
-      if (event.type === 'ready') setLiveStatusText('模型已加载，正在预热…')
-      if (event.type === 'configured') {
-        setLiveCaptionStatus('listening')
-        setLiveStatusText('连接成功，正在监听')
-      }
-      if (event.type === 'speech_start') {
-        const entry: UtteranceEntry = { text: '', startedAt: new Date(), endedAt: null }
-        setUtterances((prev) => {
-          const next = [...prev, entry]
-          utterancesRef.current = next
-          return next
-        })
-        setLiveCaptionStatus('transcribing')
-      }
-      if (event.type === 'partial') void showLiveCaption(event.text)
-      if (event.type === 'final') {
-        setUtterances((prev) => {
-          const next = [...prev]
-          const last = next.length - 1
-          if (last >= 0) {
-            // text is already filled by successive partials; just stamp endedAt
-            next[last] = { ...next[last], text: event.text || next[last].text, endedAt: new Date() }
-          }
-          utterancesRef.current = next
-          return next
-        })
-        void showLiveCaption()
-        setLiveCaptionStatus('listening')
-      }
-      if (event.type === 'error') {
-        setError(event.message)
-        setLiveStatusText(event.message)
-        setLiveCaptionStatus('error')
-      }
-      if (event.type === 'closed') {
-        streamerRef.current = null
-        finalizeLiveCaption()
-      }
-    })
-    await streamerRef.current.start({
-      engine: settings.streamingEngine,
-      language: settings.defaultLanguage === 'auto' ? undefined : settings.defaultLanguage,
-      deviceId: settings.audioInputDeviceId || undefined
-    })
-    updateSettings({ liveCaptionEnabled: true })
-  }
-
-  const cancelTask = async () => {
-    if (!activeTaskId) return
-    await api.cancelTask(activeTaskId)
-    setTranscribeStatus('cancelled')
-    setActiveTaskId(null)
+    try {
+      await liveCaptionService.start()
+    } catch (streamError) {
+      setError(streamError instanceof Error ? streamError.message : '实时识别启动失败')
+    }
   }
 
   const processCurrentText = async (operation: LLMOperation) => {
@@ -476,15 +427,13 @@ export function TranscribePage() {
           <section className="panel preview-panel">
             <div className="section-head compact">
               <h2>识别预览</h2>
-              <span className="soft-badge">{todayDate()}</span>
               <span className="soft-badge">自动识别：{settings.defaultLanguage === 'auto' ? '自动' : settings.defaultLanguage}</span>
             </div>
             {liveCaptionStatus !== 'idle' ? (
               <div className="preview-transcript">
                 {utterances.length === 0 ? (
                   <article>
-                    <time>{taskStartedAt ? formatDateTime(taskStartedAt) : '--:--:--'}</time>
-                    <strong>实时识别</strong>
+                    <time>{taskStartedAt ? formatTime(taskStartedAt) : '--:--:--'}  → ...</time>
                     <p>{liveStatusText}</p>
                   </article>
                 ) : (
@@ -493,8 +442,7 @@ export function TranscribePage() {
                     const inProgress = isLast && u.endedAt === null
                     return (
                       <article key={i}>
-                        <time>{formatDateTime(u.startedAt)} → {u.endedAt ? formatDateTime(u.endedAt) : '...'}</time>
-                        <strong>{inProgress ? '识别中' : '实时识别'}</strong>
+                        <time>{formatTime(u.startedAt)}  → {u.endedAt ? formatTime(u.endedAt) : '...'}</time>
                         <p>{u.text || (inProgress ? '…' : '')}</p>
                       </article>
                     )
@@ -504,16 +452,14 @@ export function TranscribePage() {
             ) : currentResult ? (
               <div className="preview-transcript">
                 <article>
-                  <time>{taskStartedAt ? formatDateTime(taskStartedAt) : '--:--:--'}
-                    {taskEndedAt ? ` → ${formatDateTime(taskEndedAt)}` : ''}
+                  <time>{taskStartedAt ? formatTime(taskStartedAt) : '--:--:--'}
+                    {taskEndedAt ? `  → ${formatTime(taskEndedAt)}` : '  → ...'}
                   </time>
-                  <strong>识别结果</strong>
                   <p>{currentResult.full_text || '暂无文本'}</p>
                 </article>
                 {currentResult.llm_outputs?.polish?.text && (
                   <article>
                     <time>AI</time>
-                    <strong>智能润色</strong>
                     <p>{currentResult.llm_outputs.polish.text}</p>
                   </article>
                 )}
@@ -583,6 +529,9 @@ export function TranscribePage() {
         <button type="button" className={liveCaptionStatus !== 'idle' ? 'primary' : ''} onClick={() => void toggleLiveCaption()}>
           {liveCaptionStatus === 'idle' ? '实时识别' : '停止识别'}
         </button>
+        {(recordStatus !== 'idle' || liveCaptionStatus !== 'idle' || ['uploading', 'processing', 'polling'].includes(transcribeStatus)) && (
+          <button type="button" className="force-stop-button" onClick={() => void forceStop()}>强制停止</button>
+        )}
         <div className="network-meter">
           <span />
           <strong>网络良好</strong>

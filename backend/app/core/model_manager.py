@@ -9,6 +9,7 @@ Responsibilities
 - Maintain a pool of live engine objects keyed by engine name.
 - Support hot-swapping: unload old instance, load new one atomically.
 - Provide thread-safe access (asyncio Lock per engine slot).
+- Multiple engines can load concurrently; GPU cache is cleared before each load.
 
 Usage
 ─────
@@ -28,10 +29,45 @@ from typing import Any
 from app.config import get_settings
 from app.core.asr.base import BaseASREngine
 from app.core.asr.registry import available_engines, get_engine_class
-from app.core.model_errors import classify_model_error
+from app.core.model_errors import ModelRuntimeError, classify_model_error
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+def _get_gpu_memory_info() -> dict[str, Any]:
+    """Return GPU memory info for all visible CUDA devices, or empty dict."""
+    try:
+        import torch  # type: ignore[import]
+    except ImportError:
+        return {}
+    if not torch.cuda.is_available():
+        return {}
+    result: dict[str, Any] = {}
+    for i in range(torch.cuda.device_count()):
+        try:
+            total = torch.cuda.get_device_properties(i).total_memory
+            reserved = torch.cuda.memory_reserved(i)
+            allocated = torch.cuda.memory_allocated(i)
+            free = total - reserved
+            result[f"cuda:{i}"] = {
+                "total_mb": round(total / 1024 ** 2, 1),
+                "reserved_mb": round(reserved / 1024 ** 2, 1),
+                "allocated_mb": round(allocated / 1024 ** 2, 1),
+                "free_mb": round(free / 1024 ** 2, 1),
+            }
+        except Exception:
+            result[f"cuda:{i}"] = {"error": "unavailable"}
+    return result
+
+
+def _clear_gpu_cache() -> None:
+    """Release unused cached GPU memory without affecting loaded tensors."""
+    try:
+        import torch
+    except ImportError:
+        return
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
 
 
 class ModelManager:
@@ -41,6 +77,10 @@ class ModelManager:
     Engines are loaded lazily: the first call to `get_engine("x")` triggers
     `WhisperEngine.load()` (or equivalent).  Subsequent calls return the
     already-loaded instance.
+
+    Different engines can load concurrently (each has its own asyncio.Lock).
+    GPU out-of-memory is caught and surfaced as ModelRuntimeError, with
+    automatic cache cleanup on failure.
     """
 
     def __init__(self) -> None:
@@ -88,15 +128,29 @@ class ModelManager:
             return self._engines[name]
 
     async def _load_engine(self, name: str) -> None:
-        """Internal: instantiate + load engine.  Must be called under lock."""
+        """Internal: instantiate + load engine. Must be called under per-engine lock.
+
+        Multiple engines can load concurrently (each has its own lock).
+        GPU cache is cleared before loading to maximize available memory.
+        CUDA OOM is caught and surfaced as ModelRuntimeError.
+        """
         cls = get_engine_class(name)
         kwargs = self._engine_kwargs.get(name, {})
         engine = cls(**kwargs)
         try:
+            gpu_info = _get_gpu_memory_info()
+            if gpu_info:
+                loaded = [n for n, e in self._engines.items() if e.is_loaded]
+                logger.info(
+                    "Loading engine '%s' (already loaded: %s). GPU: %s",
+                    name, loaded or 'none', gpu_info,
+                )
+            _clear_gpu_cache()
             await engine.load()
         except Exception as exc:
             failure = classify_model_error(exc, name)
             logger.exception("Engine '%s' failed to load: %s", name, failure.detail)
+            _clear_gpu_cache()
             if failure is exc:
                 raise
             raise failure from exc
@@ -117,8 +171,12 @@ class ModelManager:
 
         async with lock:
             if name in self._engines:
-                await self._engines[name].unload()
+                old_engine = self._engines[name]
+                await old_engine.unload()
                 del self._engines[name]
+                # Free GPU memory from the unloaded engine before loading new one
+                _clear_gpu_cache()
+                logger.info("Engine '%s' unloaded for hot-swap.", name)
 
             if kwargs:
                 self._engine_kwargs[name] = kwargs
@@ -145,6 +203,10 @@ class ModelManager:
         logger.info("All ASR engines unloaded.")
 
     # ── Introspection ─────────────────────────────────────────────────────────
+
+    def get_gpu_memory_info(self) -> dict[str, Any]:
+        """Return current GPU memory info for diagnostics."""
+        return _get_gpu_memory_info()
 
     def list_engines(self) -> list[dict[str, Any]]:
         """Return metadata for all known engines (loaded or not)."""

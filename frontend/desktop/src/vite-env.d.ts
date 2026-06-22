@@ -53,6 +53,10 @@ declare global {
       onCaptionOverlayClosed: (callback: () => void) => () => void
       onCaptionOverlayStyleChanged: (callback: (bounds: Partial<CaptionOverlayOptions>) => void) => () => void
       onCaptionOverlaySettingsRequested: (callback: () => void) => () => void
+      getAutoLaunch: () => Promise<boolean>
+      setAutoLaunch: (enabled: boolean) => Promise<boolean>
+      onLiveCaptionTrayToggle: (callback: () => void) => () => void
+      notifyLiveCaptionState: (active: boolean) => void
     }
   }
 }

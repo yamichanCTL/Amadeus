@@ -88,10 +88,10 @@ class Settings(BaseSettings):
     qwen3asr_torch_dtype: str = "bfloat16"
 
     # X-ASR true streaming Zipformer
-    default_x_asr_model: str = "chunk-160ms-model"
+    default_x_asr_model: str = "chunk-960ms-model"
     x_asr_model_dir: Path = (
         _PROJECT_ROOT
-        / "thirdparty/X-ASR/X-ASR-zh-en/deployment/models/chunk-160ms-model"
+        / "thirdparty/X-ASR/X-ASR-zh-en/deployment/models/chunk-960ms-model"
     )
     default_x_asr_provider: Literal["cpu", "cuda"] = "cuda"
     x_asr_num_threads: int = 1

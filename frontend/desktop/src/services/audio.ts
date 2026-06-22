@@ -281,10 +281,20 @@ export class AudioRelayMixer {
   private microphoneSource: MediaStreamAudioSourceNode | null = null
   private microphoneGain: GainNode | null = null
   private injectionGain: GainNode | null = null
+  private micAnalyser: AnalyserNode | null = null
   private injectedSources = new Set<AudioBufferSourceNode>()
   private nextPcmTime = 0
   private pcmPushChain: Promise<void> = Promise.resolve()
   private sinkApplied = false
+  // 监听上下文：临时把真实麦克风引到系统默认扬声器用于通路调试，
+  // 与主 context（已 setSinkId 到虚拟线缆）完全独立，不影响虚拟麦克风输出。
+  private monitorContext: AudioContext | null = null
+  private monitorSource: MediaStreamAudioSourceNode | null = null
+  private monitorGain: GainNode | null = null
+  private monitorAnalyser: AnalyserNode | null = null
+  private monitorStream: MediaStream | null = null
+  private monitorTimer: ReturnType<typeof setTimeout> | null = null
+  private monitorResolve: (() => void) | null = null
 
   isActive() {
     return Boolean(this.context && this.inputStream?.active)
@@ -305,14 +315,29 @@ export class AudioRelayMixer {
       this.inputStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           deviceId: options.inputDeviceId ? { exact: options.inputDeviceId } : undefined,
-          // ASR clones this track. Keeping browser AEC enabled is essential
-          // when injected TTS shares a physical output with the microphone.
-          echoCancellation: true,
-          noiseSuppression: true,
+          // 纯透传：ASR 通过 createInputStream() clone 同一轨道，任何浏览器
+          // DSP（AEC/NS/AGC）都会同时扭曲虚拟麦克风输出与 ASR 输入。回声/反馈
+          // 由结构保证——TTS 走独立虚拟 sink，且下面的回环保护拒绝线缆反馈。
+          echoCancellation: false,
+          noiseSuppression: false,
           autoGainControl: false,
         },
         video: false,
       })
+      // 回环保护：输入若落到虚拟线缆的输出端（如 CABLE Output）再写入
+      // CABLE Input 会形成反馈，必须拒绝。real mic（如 DJI）不受影响。
+      const inputLabel = this.inputStream.getAudioTracks()[0]?.label || ''
+      const outputLabel = options.outputDeviceId
+        ? await resolveOutputLabel(options.outputDeviceId)
+        : ''
+      if (isLoopbackPair(inputLabel, outputLabel)) {
+        this.inputStream.getTracks().forEach((track) => track.stop())
+        this.inputStream = null
+        throw new Error(
+          `虚拟麦克风中转检测到回环：输入「${inputLabel || '系统默认'}」与输出「${outputLabel || '系统默认'}」属于同一条虚拟线缆，会形成反馈。请把输入选为真实麦克风（如 DJI Mic），或在 Windows 声音设置里把默认录音设备改为真实麦克风。`,
+        )
+      }
+
       this.context = new AudioContext()
       await this.setOutputDevice(options.outputDeviceId || '')
 
@@ -324,6 +349,11 @@ export class AudioRelayMixer {
       this.microphoneSource.connect(this.microphoneGain)
       this.microphoneGain.connect(this.context.destination)
       this.injectionGain.connect(this.context.destination)
+      // 输入电平探针：仅作电平读取，不继续连接，不影响虚拟输出或 ASR。
+      this.micAnalyser = this.context.createAnalyser()
+      this.micAnalyser.fftSize = 1024
+      this.micAnalyser.smoothingTimeConstant = 0.7
+      this.microphoneSource.connect(this.micAnalyser)
       await this.context.resume()
       this.nextPcmTime = this.context.currentTime + 0.02
       return { sinkApplied: this.sinkApplied }
@@ -417,8 +447,85 @@ export class AudioRelayMixer {
     this.pcmPushChain = Promise.resolve()
   }
 
+  /** 真实麦克风输入电平 0..1（仅采样一次）；未运行返回 null。 */
+  getInputLevel(): number | null {
+    const analyser = this.micAnalyser
+    if (!analyser) return null
+    return readAnalyserLevel(analyser)
+  }
+
+  /** 是否正在通路监听中。 */
+  isMonitoring(): boolean {
+    return this.monitorContext !== null
+  }
+
+  /** 监听通路电平 0..1（仅采样一次）；未在监听返回 null。 */
+  getMonitorLevel(): number | null {
+    const analyser = this.monitorAnalyser
+    if (!analyser) return null
+    return readAnalyserLevel(analyser)
+  }
+
+  /**
+   * 临时把真实麦克风引到系统默认扬声器，用于通路调试（真实麦克风 in → 默认扬声器 out）。
+   * 不触碰主 context 的虚拟 sink，虚拟麦克风输出与 TTS 叠加均不受影响。
+   * relay 必须处于活动状态。durationMs 为 0 时不自动停止，需手动调用 stopMonitor()。
+   */
+  startMonitor(durationMs: number): Promise<void> {
+    if (!this.inputStream?.active) return Promise.reject(new Error('麦克风中转尚未启动'))
+    const stream = this.inputStream
+    if (this.monitorContext) return Promise.resolve()
+    return new Promise<void>((resolve) => {
+      this.monitorResolve = resolve
+      try {
+        // clone 一份输入轨道，停止监听时不影响 relay 的输入。
+        this.monitorStream = new MediaStream(stream.getAudioTracks().map((track) => track.clone()))
+        // 不调用 setSinkId → 走系统默认扬声器。
+        this.monitorContext = new AudioContext()
+        this.monitorSource = this.monitorContext.createMediaStreamSource(this.monitorStream)
+        this.monitorGain = this.monitorContext.createGain()
+        this.monitorGain.gain.value = 1
+        this.monitorAnalyser = this.monitorContext.createAnalyser()
+        this.monitorAnalyser.fftSize = 1024
+        this.monitorAnalyser.smoothingTimeConstant = 0.7
+        this.monitorSource.connect(this.monitorGain)
+        this.monitorGain.connect(this.monitorAnalyser)
+        this.monitorAnalyser.connect(this.monitorContext.destination)
+        void this.monitorContext.resume().catch(() => undefined)
+        if (durationMs > 0) {
+          this.monitorTimer = setTimeout(() => this.stopMonitor(), Math.max(200, durationMs))
+        }
+      } catch (error) {
+        this.stopMonitor()
+        resolve()
+      }
+    })
+  }
+
+  /** 提前停止监听。 */
+  stopMonitor() {
+    if (this.monitorTimer) { clearTimeout(this.monitorTimer); this.monitorTimer = null }
+    try { this.monitorSource?.disconnect() } catch { /* ignore */ }
+    try { this.monitorGain?.disconnect() } catch { /* ignore */ }
+    try { this.monitorAnalyser?.disconnect() } catch { /* ignore */ }
+    this.monitorStream?.getTracks().forEach((track) => track.stop())
+    this.monitorContext?.close().catch(() => undefined)
+    this.monitorContext = null
+    this.monitorSource = null
+    this.monitorGain = null
+    this.monitorAnalyser = null
+    this.monitorStream = null
+    if (this.monitorResolve) {
+      const resolve = this.monitorResolve
+      this.monitorResolve = null
+      resolve()
+    }
+  }
+
   stop() {
+    this.stopMonitor()
     this.stopInjectedAudio()
+    try { this.micAnalyser?.disconnect() } catch { /* ignore */ }
     try { this.microphoneSource?.disconnect() } catch { /* ignore */ }
     try { this.microphoneGain?.disconnect() } catch { /* ignore */ }
     try { this.injectionGain?.disconnect() } catch { /* ignore */ }
@@ -429,6 +536,7 @@ export class AudioRelayMixer {
     this.microphoneSource = null
     this.microphoneGain = null
     this.injectionGain = null
+    this.micAnalyser = null
     this.nextPcmTime = 0
     this.sinkApplied = false
   }
@@ -536,9 +644,15 @@ export function base64ToBlob(base64: string, mimeType: string) {
 
 function buildWsUrl(serverUrl: string, path: string): string {
   const trimmed = (serverUrl || '').trim()
-  // Empty → same-origin (e.g. through Vite proxy)
+  // Empty → same-origin (e.g. through Vite proxy).
+  // In Electron (file:// / app://) window.location.host is empty;
+  // fall back to localhost:8000 matching normalizeServerUrl() in api.ts.
   if (!trimmed || trimmed === '/') {
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const protocol = window.location.protocol
+    if (protocol === 'file:' || protocol === 'app:') {
+      return `ws://localhost:8000${path}`
+    }
+    const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:'
     return `${wsProtocol}//${window.location.host}${path}`
   }
   const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`
@@ -612,6 +726,54 @@ type PcmCallback = (pcm: Int16Array, sampleRate: number) => void
 
 function isLikelyLoopbackInput(label: string) {
   return /monitor|stereo\s*mix|what\s*u\s*hear|loopback|立体声混音|输出监听/i.test(label)
+}
+
+/**
+ * 判断输入端点与输出端点是否属于同一条虚拟线缆（如输入 CABLE Output、输出 CABLE Input），
+ * 或输入本身就是回环设备。命中则禁止建立中转，否则会形成反馈。
+ */
+export function isLoopbackPair(inputLabel: string, outputLabel: string): boolean {
+  if (!inputLabel) return false
+  if (isLikelyLoopbackInput(inputLabel)) return true
+  if (!outputLabel) return false
+  const inputNorm = normalizeCableLabel(inputLabel)
+  const outputNorm = normalizeCableLabel(outputLabel)
+  // 两端都识别为线缆、前缀相同、且一端 input 一端 output → 同一条线缆。
+  if (inputNorm && outputNorm && inputNorm.prefix === outputNorm.prefix && inputNorm.end !== outputNorm.end) {
+    return true
+  }
+  return false
+}
+
+function normalizeCableLabel(label: string): { prefix: string; end: 'input' | 'output' } | null {
+  const match = label.match(/^(.+?)\s*(input|output)\s*$/i)
+  if (!match) return null
+  return { prefix: match[1].trim().toLowerCase(), end: match[2].toLowerCase() as 'input' | 'output' }
+}
+
+/** 用 deviceId 在 enumerateDevices 结果中查输出设备 label。 */
+async function resolveOutputLabel(outputDeviceId: string): Promise<string> {
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    const device = devices.find((item) => item.kind === 'audiooutput' && item.deviceId === outputDeviceId)
+    return device?.label || ''
+  } catch {
+    return ''
+  }
+}
+
+/** 复用 AudioRecorder.startLevelMonitor 的电平公式，保持视觉一致。 */
+function readAnalyserLevel(analyser: AnalyserNode): number {
+  const samples = new Float32Array(analyser.fftSize)
+  analyser.getFloatTimeDomainData(samples)
+  let squareSum = 0
+  let peak = 0
+  for (const sample of samples) {
+    squareSum += sample * sample
+    peak = Math.max(peak, Math.abs(sample))
+  }
+  const rms = Math.sqrt(squareSum / samples.length)
+  return Math.min(1, Math.max(peak * 0.7, rms * 4))
 }
 
 export class PcmStreamer {

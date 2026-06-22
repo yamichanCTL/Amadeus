@@ -1,4 +1,5 @@
 import { AppPage, useASRStore } from '@/store/useASRStore'
+import amadeusLogo from '../../../../img/Amadeus/amadeus.jpg'
 
 const items: Array<{ page?: AppPage; label: string; icon: string }> = [
   { page: 'home', label: '首页', icon: '⌂' },
@@ -20,15 +21,9 @@ export function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="brand-block">
-        <div className="brand-mark" aria-hidden="true">
-          <span />
-          <span />
-          <span />
-          <span />
-        </div>
+        <img className="brand-logo" src={amadeusLogo} alt="Amadeus" />
         <div>
           <strong>Amadeus</strong>
-          <small>智能语音助手</small>
         </div>
       </div>
       <nav>

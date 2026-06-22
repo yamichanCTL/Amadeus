@@ -4,6 +4,107 @@
 > **子文档**:
 > - [桌面端文档](desktop/README.md)
 
+## [2026-06-23] 实时识别多项改进：独立时间戳、字幕框优化、托盘开关、页面切换不中断
+
+- **类型**: feat / fix
+- **描述**:
+  1. **每句话独立时间戳**（需求1）：实时识别保存历史时，每句话独立成块（`HH:MM:SS → HH:MM:SS\n文本`），`segments` 保留毫秒级 start/end。不再把所有句子 join 成一段。
+  2. **字幕框优化**（需求2）：
+     - 点击"实时识别"立即弹出字幕框显示"正在聆听…"（不再等到首条文本到达）
+     - 点击字幕框 × 关闭按钮同时停止实时识别
+     - 字幕框只显示最近 2 行，超出自动刷掉（原 4 行）
+     - 动态调整大小保持支持
+  3. **离线识别超时设置**（需求3）：已实装（Settings 页`超时秒数`输入框，0=不限制）
+  4. **托盘图标实时识别开关**（需求4a/4c）：Windows 托盘右键菜单增加"开启实时识别"/"停止实时识别"项，点击切换状态，菜单标签同步更新
+  5. **切换 UI 界面不终止实时识别**（需求4b）：将 `StreamingASRClient` 生命周期从 `TranscribePage` 组件本地 ref 提升为 `LiveCaptionService` 模块级单例，页面切换不再触发 streamer.stop()。两处开关（UI 按钮 + 托盘菜单）统一调用同一单例。
+- **影响范围**:
+  - `frontend/desktop/src/services/liveCaption.ts`：**新文件** - `LiveCaptionService` 模块级单例，管理流式识别完整生命周期
+  - `frontend/desktop/src/store/useASRStore.ts`：新增 `UtteranceEntry` 类型导出、`liveUtterances` + `setLiveUtterances` 状态
+  - `frontend/desktop/src/pages/Transcribe.tsx`：移除本地 streamer/utterances 逻辑（~80行），改用 `liveCaptionService` + store
+  - `frontend/desktop/src/App.tsx`：字幕框关闭时停止识别；监听托盘 toggle IPC
+  - `frontend/desktop/electron/main.ts`：`buildTrayMenu()` 动态托盘菜单；`liveCaption:stateChanged` IPC
+  - `frontend/desktop/electron/preload.ts`：新增 `onLiveCaptionTrayToggle`、`notifyLiveCaptionState`
+  - `frontend/desktop/src/vite-env.d.ts`：新增类型声明
+- **验证**: Renderer TypeScript 零错误；Vite 生产构建通过（77 模块）。
+- **Plan**: [实时识别多项改进](plans/2026-06-23-fix-previous-round-regressions.md)
+
+## [2026-06-23] 修复实时识别 WebSocket、多模型并发加载、X-ASR 默认 960ms chunk
+
+- **类型**: fix / feat
+- **描述**:
+  1. **修复实时识别 WebSocket 连接超时**：`audio.ts` 的 `buildWsUrl()` 在 Electron `file://`/`app://` 协议下 `window.location.host` 为空，导致生成 `ws:///v1/stream`（三斜杠的无效 URL）。新增与 `api.ts` 的 `normalizeServerUrl()` 一致的 fallback 逻辑，Electron 环境下自动 fallback 到 `ws://localhost:8000`。
+  2. **支持同时加载多个模型**：Models 页面的 `busy: string` 单值状态阻止了并发加载。改为 `busyEngines: Set<string>`，每个引擎独立追踪加载状态，不同引擎可同时加载。加载失败（如显存不足）时后端返回分类错误信息，前端仅展示该引擎的错误，不影响其他引擎的加载。
+  3. **X-ASR 默认使用 960ms chunk 模型**：前端 `DEFAULT_SETTINGS` 和 `defaultAsrConfigs`、后端 `config.py` 的 `default_x_asr_model` 和 `x_asr_model_dir` 均改为 `chunk-960ms-model`。识别时模型未加载会自动加载（后端 `/v1/stream` 已内置 lazy load）。
+  4. **清理过时 docstring**：`model_manager.py` 删除已移除的全局信号量描述。
+- **影响范围**:
+  - `frontend/desktop/src/services/audio.ts`：`buildWsUrl()` Electron fallback
+  - `frontend/desktop/src/pages/Models.tsx`：`busyEngines: Set<string>` 并发加载
+  - `frontend/desktop/src/store/useASRStore.ts`：默认 chunk-960ms-model
+  - `backend/app/config.py`：默认 chunk-960ms-model
+  - `backend/app/core/model_manager.py`：更新 docstring
+- **验证**: Renderer TypeScript 通过（`npx tsc --noEmit` 零错误）。
+- **Plan**: [修复上一轮引入的问题 + 新增需求](plans/2026-06-23-fix-previous-round-regressions.md)
+
+## [2026-06-23] 修复上一轮引入的回归问题
+
+- **类型**: fix
+- **描述**:
+  1. **移除全局加载信号量**：上轮加入的 `_global_load_semaphore(1)` 强制串行化所有模型加载，反而阻止了并发加载。已移除；保留 `_clear_gpu_cache()` 与 GPU 内存日志用于 OOM 诊断；CUDA OOM 仍由 `classify_model_error` 捕获并返回中文提示。
+  2. **修复托盘/窗口/.exe 图标不显示**：新增 `resolveAssetPath()` 辅助函数，dev 模式从仓库根 `img/Amadeus/` 读取，生产环境从 `process.resourcesPath` 读取。`electron-builder.yml` 新增 `icon` 字段与 `extraResources` 配置将 `amadeus.jpg` 打包到安装目录。
+  3. **修复通路监听 toggle 卡死**：`startMonitor(0)` 的 Promise 永不自行 resolve，`await` 它会导致事件循环卡在 Promise 上。改为 fire-and-forget 模式 + `useRef`(monitorActiveRef) 作为防竞态门，避免 React state 闭包陈旧导致的重复启动/无法停止。
+  4. **确认虚拟麦克风纯透传未被破坏**：`audio.ts` 中 `echoCancellation: false, noiseSuppression: false, autoGainControl: false` 完整保留，micAnalyser 电平探针与 injectionGain TTS 叠加路径均正确。
+- **影响范围**:
+  - `backend/app/core/model_manager.py`：移除全局信号量
+  - `frontend/desktop/electron/main.ts`：`resolveAssetPath()`、`loadAppIcon()`、修正 createTray/createWindow
+  - `frontend/desktop/electron-builder.yml`：`icon` + `extraResources`
+  - `frontend/desktop/src/pages/Settings.tsx`：`toggleMonitor` fire-and-forget + `monitorActiveRef`
+  - `frontend/desktop/src/services/audio.ts`：新增 `isMonitoring()`
+- **验证**: Renderer/Electron TypeScript 通过；Vite 生产构建通过（76 模块）；Python compileall 通过。
+- **Plan**: [修复上一轮引入的问题](plans/2026-06-23-fix-previous-round-regressions.md)
+
+## [2026-06-22] 多模型加载保护、开机自启、品牌图标与通路测试优化
+
+- **类型**: feat / fix / refactor
+- **描述**:
+  1. **模型并发加载保护**：`ModelManager._load_engine()` 增加全局 `asyncio.Semaphore(1)` 序列化所有模型加载，避免并发 GPU 分配导致 CUDA OOM 或驱动卡死；加载前调用 `torch.cuda.empty_cache()` 清理碎片，加载失败时同样清理；新增 `get_gpu_memory_info()` 供诊断查询；`hot_swap` 先卸载旧模型再加载新模型并清理缓存。
+  2. **开机自动启动**：设置页新增"开机自动启动 Amadeus"checkbox，通过 Electron `app.setLoginItemSettings` 实现；启动时从 OS 读取当前状态同步到 store。
+  3. **托盘图标**：托盘图标改为从 `img/Amadeus/amadeus.jpg` 加载并 resize 到 16×16，失败时用空图标降级。
+  4. **应用图标**：`BrowserWindow` 构造时设置 icon 为 `img/Amadeus/amadeus.jpg`。
+  5. **删除过时文案**：移除 TitleBar 的"智能语音工作台"和 Sidebar 的"智能语音助手"。
+  6. **Sidebar 品牌图标**：品牌区音频波形条形图替换为 amadeus.jpg 图片（`brand-logo` class）。
+  7. **通路测试交互改造**：设置页通路测试改为 toggle 模式（点击开始监听 → 再次点击停止），不再限时 5 秒，删除独立停止按钮。`AudioRelayMixer.startMonitor(durationMs)` 支持 `durationMs=0` 不自动停止。
+- **影响范围**:
+  - `backend/app/core/model_manager.py`：全局信号量 + GPU 内存清理
+  - `frontend/desktop/electron/main.ts`：托盘图标、窗口图标、auto-launch IPC
+  - `frontend/desktop/electron/preload.ts`：auto-launch API
+  - `frontend/desktop/src/components/Sidebar.tsx`：品牌图标 + 文案
+  - `frontend/desktop/src/components/TitleBar.tsx`：文案
+  - `frontend/desktop/src/pages/Settings.tsx`：通路测试交互 + 开机自启
+  - `frontend/desktop/src/store/useASRStore.ts`：`autoLaunchEnabled` 字段
+  - `frontend/desktop/src/vite-env.d.ts`：auto-launch 类型声明
+  - `frontend/desktop/src/App.tsx`：auto-launch 启动同步
+  - `frontend/desktop/src/services/audio.ts`：`startMonitor(0)` 无限监听
+  - `frontend/desktop/src/styles/global.css`：`.brand-logo` 样式
+- **验证**: renderer/Electron TypeScript 通过；Vite 生产构建通过（76 模块）；Python compileall 通过。
+- **Plan**: [多模型加载、开机启动、托盘图标与 UI 优化](plans/2026-06-22-multi-model-loading-autostart-tray-icons.md)
+
+## [2026-06-22] 修复虚拟麦克风错误叠加导致 ASR 异常
+
+- **类型**: fix / feature
+- **描述**: 关闭 `AudioRelayMixer` 的浏览器 AEC/NS/AGC DSP 实现纯透传（波形一致），确保 `createInputStream()` clone 的 ASR 轨道不受 DSP 扭曲；新增回环保护拒绝将虚拟线缆输出端用作输入；新增设置页通路调试面板（输入/监听电平条 + 5 秒默认扬声器监听）验证“真实麦克风 → 虚拟麦克风 → 默认扬声器”通路。
+- **修改文件**:
+  - `frontend/desktop/src/services/audio.ts`: `AudioRelayMixer.start()` 约束改为 `echoCancellation: false, noiseSuppression: false, autoGainControl: false`；新增 `isLoopbackPair()` 导出函数与 `normalizeCableLabel`、`resolveOutputLabel` 辅助函数；新增 `micAnalyser` 节点与 `getInputLevel()` 方法；新增独立 `monitorContext` 与 `startMonitor()`/`stopMonitor()`/`getMonitorLevel()` 方法；`stop()` 清理新增节点。
+  - `frontend/desktop/src/pages/Settings.tsx`: 新增通路调试面板（输入/监听电平条 + 开始监听/停止按钮），仅在 `audioRelayEnabled` 时渲染；新增 RAF/定时器电平刷新循环。
+- **验证**: renderer/Electron TypeScript 通过；Vite 生产构建通过（75 模块）；Python compileall 通过。
+
+## [2026-06-22] 恢复异常回退的 Amadeus 桌面实现
+
+- **类型**: fix / docs
+- **描述**: 对照 2026-06-21 的实际补丁记录，恢复被回退的 Electron 主进程、语音识别页、设置页、响应式样式、持久状态版本和安装包产品名。恢复内容包括麦克风预热与真实电平、统一强制停止、Windows user32 跨应用粘贴、中下部动态状态浮窗、字幕控制、用户 ID、持久音频中转、560×460 最小窗口和隔离 Windows E2E 接入。
+- **影响范围**: `frontend/desktop/electron/main.ts`、`frontend/desktop/electron-builder.yml`、`frontend/desktop/src/pages/Transcribe.tsx`、`frontend/desktop/src/pages/Settings.tsx`、`frontend/desktop/src/store/useASRStore.ts`、`frontend/desktop/src/styles/global.css`
+- **验证**: renderer/Electron TypeScript、Vite 生产构建、Python compileall、后端定向 pytest（`6 passed`）、VitePress 文档构建和 `git diff --check` 均通过。
+- **Plan**: [恢复异常回退的 Amadeus 桌面文件](plans/2026-06-22-restore-amadeus-reverted-files.md)
+
 ## [2026-06-21] Amadeus 桌面录音、浮窗、跨应用输入与音频路由
 
 - **类型**: feat / fix / refactor / docs

@@ -7,6 +7,7 @@ import {
   globalShortcut,
   ipcMain,
   Menu,
+  nativeImage,
   nativeTheme,
   screen,
   session,
@@ -17,6 +18,7 @@ import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
+import { runAmadeusWindowsE2E } from './e2e'
 
 type ClosePreference = 'ask' | 'background' | 'quit'
 
@@ -42,6 +44,28 @@ type ArchiveArgs = {
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
 const isWindows = process.platform === 'win32'
 
+function resolveAssetPath(relativePath: string): string {
+  // In production, extraResources land in process.resourcesPath.
+  // In development, __dirname is dist-electron/ so walk up to the repo root.
+  if (isDev) {
+    return path.join(__dirname, '..', '..', '..', relativePath)
+  }
+  return path.join(process.resourcesPath, relativePath)
+}
+
+function loadAppIcon(): Electron.NativeImage | undefined {
+  const iconPath = resolveAssetPath('img/Amadeus/amadeus.jpg')
+  try {
+    const icon = nativeImage.createFromPath(iconPath)
+    if (!icon.isEmpty()) return icon
+  } catch {
+    // fall through
+  }
+  return undefined
+}
+const isE2EMode = process.argv.includes('--amadeus-e2e')
+const e2eUserData = process.argv.find((arg) => arg.startsWith('--amadeus-e2e-user-data='))?.slice('--amadeus-e2e-user-data='.length)
+
 let mainWindow: BrowserWindow | null = null
 let statusOverlay: BrowserWindow | null = null
 let captionOverlay: BrowserWindow | null = null
@@ -50,9 +74,24 @@ let forceQuit = false
 let mouseHook: ChildProcessWithoutNullStreams | null = null
 let keyboardHook: ChildProcessWithoutNullStreams | null = null
 let registeredHotkey = ''
+let lastTriggerAt = 0
+let captionCloseRequestCount = 0
+let captionSettingsRequestCount = 0
 
-if (isDev) {
-  app.setPath('userData', path.join(os.tmpdir(), 'asr-desktop-dev'))
+app.setName('Amadeus')
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+
+function emitHotkeyTriggered() {
+  const now = Date.now()
+  if (now - lastTriggerAt < 250) return
+  lastTriggerAt = now
+  mainWindow?.webContents.send('hotkey:triggered')
+}
+
+if (isE2EMode && e2eUserData) {
+  app.setPath('userData', path.resolve(e2eUserData))
+} else if (isDev) {
+  app.setPath('userData', path.join(os.tmpdir(), 'amadeus-desktop-dev'))
 }
 
 const prefPath = () => path.join(app.getPath('userData'), 'preferences.json')
@@ -73,15 +112,18 @@ async function writeClosePreference(closePreference: ClosePreference) {
 }
 
 function createWindow() {
+  const windowIcon = loadAppIcon()
+
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 720,
-    minWidth: 800,
-    minHeight: 560,
+    minWidth: 560,
+    minHeight: 460,
     frame: false,
     titleBarStyle: 'hidden',
     backgroundColor: '#f3f3f3',
     show: false,
+    ...(windowIcon ? { icon: windowIcon } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -93,7 +135,7 @@ function createWindow() {
   mainWindow.once('ready-to-show', () => mainWindow?.show())
   mainWindow.webContents.on('before-input-event', (_event, input) => {
     if (registeredHotkey === 'AltRight' && input.type === 'keyDown' && input.code === 'AltRight' && !input.isAutoRepeat) {
-      mainWindow?.webContents.send('hotkey:triggered')
+      emitHotkeyTriggered()
     }
   })
 
@@ -101,7 +143,10 @@ function createWindow() {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL!)
     mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
+    mainWindow.loadFile(
+      path.join(__dirname, '..', 'dist', 'index.html'),
+      isE2EMode ? { query: { e2e: '1' } } : undefined
+    )
   }
 
   mainWindow.on('closed', () => {
@@ -129,8 +174,8 @@ function createWindow() {
       defaultId: 0,
       cancelId: 2,
       checkboxLabel: '记住我的选择',
-      title: '关闭 ASR Desktop',
-      message: '要将 ASR Desktop 保持在后台运行吗？'
+      title: '关闭 Amadeus',
+      message: '要让 Amadeus 继续在后台运行吗？'
     })
 
     if (result.checkboxChecked && result.response !== 2) {
@@ -149,30 +194,51 @@ function createWindow() {
 function configureDisplayMediaCapture() {
   if (!isWindows) return
 
+  if (isE2EMode) {
+    session.defaultSession.setPermissionCheckHandler((_webContents, permission) => permission === 'media')
+    session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => callback(permission === 'media'))
+  }
+
   session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
     const sources = await desktopCapturer.getSources({ types: ['screen'] })
     callback({ video: sources[0], audio: 'loopback' })
   })
 }
 
+let liveCaptionActive = false
+
+function buildTrayMenu(): Electron.Menu {
+  return Menu.buildFromTemplate([
+    { label: '显示窗口', click: () => showMainWindow() },
+    { type: 'separator' },
+    {
+      label: liveCaptionActive ? '停止实时识别' : '开启实时识别',
+      click: () => mainWindow?.webContents.send('liveCaption:trayToggle')
+    },
+    { type: 'separator' },
+    {
+      label: '退出',
+      click: () => {
+        forceQuit = true
+        app.quit()
+      }
+    }
+  ])
+}
+
 function createTray() {
   if (!isWindows) return
 
-  tray = new Tray(path.join(process.execPath))
-  tray.setToolTip('ASR Desktop')
-  tray.setContextMenu(
-    Menu.buildFromTemplate([
-      { label: '显示窗口', click: () => showMainWindow() },
-      { type: 'separator' },
-      {
-        label: '退出',
-        click: () => {
-          forceQuit = true
-          app.quit()
-        }
-      }
-    ])
-  )
+  const trayIcon = (() => {
+    const icon = loadAppIcon()
+    if (icon) {
+      try { return icon.resize({ width: 16, height: 16 }) } catch { /* fall through */ }
+    }
+    return nativeImage.createEmpty()
+  })()
+  tray = new Tray(trayIcon)
+  tray.setToolTip('Amadeus')
+  tray.setContextMenu(buildTrayMenu())
   tray.on('double-click', showMainWindow)
 }
 
@@ -215,9 +281,14 @@ function createOverlayWindow(kind: 'status' | 'caption', bounds: Electron.Rectan
     alwaysOnTop: true,
     skipTaskbar: true,
     focusable: kind === 'caption',
-    webPreferences: {
-      sandbox: true
-    }
+    webPreferences: kind === 'caption'
+      ? {
+          preload: path.join(__dirname, 'overlay-preload.js'),
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: false
+        }
+      : { sandbox: true }
   })
   overlay.setAlwaysOnTop(true, 'screen-saver')
   overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
@@ -228,30 +299,113 @@ function overlayHtml(body: string) {
   return `data:text/html;charset=utf-8,${encodeURIComponent(body)}`
 }
 
-async function showStatusOverlay(status: string) {
+function statusOverlayHtml() {
+  return `
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; overflow: hidden; font-family: "Segoe UI", sans-serif; color: white; }
+      .box { width: 100vw; height: 100vh; display: grid; grid-template-columns: 78px minmax(0, 1fr); align-items: center; gap: 16px; padding: 12px 18px; background: rgba(14, 22, 35, .9); border: 1px solid rgba(255,255,255,.2); border-radius: 18px; box-shadow: 0 18px 52px rgba(0,0,0,.3); }
+      .wave { height: 42px; display: flex; align-items: center; justify-content: center; gap: 4px; }
+      .wave i { width: 5px; height: calc(7px + var(--level, 0) * var(--scale, 20px)); border-radius: 99px; background: linear-gradient(180deg, #9fb7ff, #5a7cff); transition: height 70ms linear; }
+      .wave i:nth-child(2), .wave i:nth-child(6) { --scale: 27px; }
+      .wave i:nth-child(3), .wave i:nth-child(5) { --scale: 34px; }
+      .wave i:nth-child(4) { --scale: 40px; }
+      .copy { min-width: 0; display: grid; gap: 3px; }
+      strong { font-size: 15px; letter-spacing: .2px; }
+      small { color: rgba(235,241,255,.72); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .thinking .wave i { animation: think-wave 900ms ease-in-out infinite; }
+      .thinking .wave i:nth-child(2n) { animation-delay: 120ms; }
+      .error .wave i { background: #ff8b82; }
+      @keyframes think-wave { 0%, 100% { height: 8px; opacity: .55; } 50% { height: 30px; opacity: 1; } }
+    </style>
+    <div class="box" id="box">
+      <div class="wave" id="wave">${Array.from({ length: 7 }, () => '<i></i>').join('')}</div>
+      <div class="copy"><strong id="title">语音输入中</strong><small id="detail">正在检测麦克风输入</small></div>
+    </div>
+    <script>
+      (() => {
+        const box = document.getElementById('box');
+        const wave = document.getElementById('wave');
+        const title = document.getElementById('title');
+        const detail = document.getElementById('detail');
+        let phase = 'recording';
+        let dots = 1;
+        setInterval(() => {
+          if (phase !== 'thinking') return;
+          dots = dots % 3 + 1;
+          title.textContent = 'thinking' + '.'.repeat(dots);
+        }, 420);
+        window.amadeusStatus = {
+          update(nextPhase, rawLevel, message) {
+            phase = nextPhase || 'recording';
+            box.className = 'box ' + phase;
+            const level = Math.max(0, Math.min(1, Number(rawLevel) || 0));
+            wave.style.setProperty('--level', String(Math.max(.08, Math.sqrt(level))));
+            if (phase === 'recording') {
+              title.textContent = '语音输入中';
+              detail.textContent = level > .012 ? '麦克风输入正常' : '等待声音，请检查输入设备';
+            } else if (phase === 'thinking') {
+              title.textContent = 'thinking.';
+              detail.textContent = message || '正在识别并整理文本';
+            } else {
+              title.textContent = '识别异常';
+              detail.textContent = message || '可在 Amadeus 中强制停止';
+            }
+          }
+        };
+      })();
+    </script>`
+}
+
+async function showStatusOverlay(status: string, level = 0, message = '') {
   if (!isWindows) return false
   const workArea = screen.getPrimaryDisplay().workArea
-  const width = 220
-  const height = 48
+  const width = 340
+  const height = 82
   if (!statusOverlay || statusOverlay.isDestroyed()) {
     statusOverlay = createOverlayWindow('status', {
-      x: workArea.x + workArea.width - width - 24,
-      y: workArea.y + 24,
+      x: Math.round(workArea.x + (workArea.width - width) / 2),
+      y: Math.round(workArea.y + workArea.height * .72 - height / 2),
       width,
       height
     })
+    await statusOverlay.loadURL(overlayHtml(statusOverlayHtml()))
   }
-  await statusOverlay.loadURL(
-    overlayHtml(`
-      <style>
-        body { margin: 0; font-family: "Segoe UI", sans-serif; color: white; }
-        .box { box-sizing: border-box; width: 100vw; height: 100vh; padding: 0 18px; display: flex; align-items: center; justify-content: center; background: rgba(20, 31, 43, .88); border: 1px solid rgba(255,255,255,.22); border-radius: 10px; }
-      </style>
-      <div class="box">${status === 'recording' ? '语音输入中' : '转写中'}</div>
-    `)
+  const phase = status === 'recording' ? 'recording' : status === 'error' ? 'error' : 'thinking'
+  await statusOverlay.webContents.executeJavaScript(
+    `window.amadeusStatus?.update(${JSON.stringify(phase)}, ${Number(level) || 0}, ${JSON.stringify(message)})`
   )
   statusOverlay.showInactive()
   return true
+}
+
+function captionOverlayHtml() {
+  return `
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; overflow: hidden; font-family: "Microsoft YaHei", "Segoe UI", sans-serif; color: white; }
+      .caption { position: relative; width: 100vw; height: 100vh; display: grid; place-items: center; padding: 26px 54px 18px 28px; border-radius: 10px; border: 1px solid rgba(255,255,255,.18); }
+      .text { width: 100%; line-height: 1.45; text-align: center; word-break: break-word; white-space: pre-wrap; }
+      .actions { position: absolute; top: 8px; right: 8px; display: flex; gap: 5px; }
+      button { width: 30px; height: 28px; border: 1px solid rgba(255,255,255,.18); border-radius: 7px; background: rgba(15,23,42,.58); color: white; cursor: pointer; }
+      button:hover { background: rgba(68,84,112,.88); }
+    </style>
+    <div class="caption" id="caption">
+      <div class="actions"><button id="settings" title="字幕设置">⚙</button><button id="close" title="关闭字幕">×</button></div>
+      <div class="text" id="text">正在聆听…</div>
+    </div>
+    <script>
+      document.getElementById('settings').addEventListener('click', () => window.captionOverlay?.openSettings());
+      document.getElementById('close').addEventListener('click', () => window.captionOverlay?.close());
+      window.setCaption = (text, options) => {
+        const caption = document.getElementById('caption');
+        const content = document.getElementById('text');
+        document.body.style.color = options.color;
+        caption.style.background = 'rgba(12,18,24,' + options.backgroundOpacity + ')';
+        content.style.fontSize = options.fontSize + 'px';
+        content.textContent = text || '正在聆听…';
+      };
+    </script>`
 }
 
 async function showCaptionOverlay(text: string, rawOptions: CaptionOverlayOptions) {
@@ -273,24 +427,14 @@ async function showCaptionOverlay(text: string, rawOptions: CaptionOverlayOption
       const bounds = captionOverlay?.getBounds()
       if (bounds) mainWindow?.webContents.send('captionOverlay:styleChanged', bounds)
     })
+    await captionOverlay.loadURL(overlayHtml(captionOverlayHtml()))
   }
   captionOverlay.setBounds({ x: options.x ?? 0, y: options.y ?? 0, width: options.width, height: options.height })
-  await captionOverlay.loadURL(
-    overlayHtml(`
-      <style>
-        body { margin: 0; overflow: hidden; font-family: "Microsoft YaHei", "Segoe UI", sans-serif; color: ${options.color}; }
-        .caption { box-sizing: border-box; width: 100vw; height: 100vh; display: flex; align-items: center; justify-content: center; padding: 18px 28px; background: rgba(12, 18, 24, ${options.backgroundOpacity}); border-radius: 8px; border: 1px solid rgba(255,255,255,.18); }
-        .text { width: 100%; line-height: 1.45; font-size: ${options.fontSize}px; text-align: center; word-break: break-word; }
-      </style>
-      <div class="caption"><div class="text">${escapeHtml(text || '正在聆听...')}</div></div>
-    `)
+  await captionOverlay.webContents.executeJavaScript(
+    `window.setCaption?.(${JSON.stringify(text || '正在聆听…')}, ${JSON.stringify(options)})`
   )
-  captionOverlay.show()
+  captionOverlay.showInactive()
   return true
-}
-
-function escapeHtml(value: string) {
-  return value.replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!)
 }
 
 function stopMouseHook() {
@@ -329,7 +473,7 @@ while ($true) {
   keyboardHook = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script])
   keyboardHook.stdout.on('data', (chunk) => {
     if (chunk.toString().split(/\r?\n/).some((item: string) => item.trim() === 'AltRight')) {
-      mainWindow?.webContents.send('hotkey:triggered')
+      emitHotkeyTriggered()
     }
   })
   keyboardHook.on('exit', () => { keyboardHook = null })
@@ -359,7 +503,7 @@ while ($true) {
   mouseHook = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script])
   mouseHook.stdout.on('data', (chunk) => {
     const names = chunk.toString().split(/\r?\n/).map((item: string) => item.trim()).filter(Boolean)
-    if (names.includes(watched)) mainWindow?.webContents.send('hotkey:triggered')
+    if (names.includes(watched)) emitHotkeyTriggered()
   })
   mouseHook.on('exit', () => {
     mouseHook = null
@@ -371,6 +515,21 @@ async function defaultArchiveDir() {
   const dir = path.join(app.getPath('userData'), 'archive')
   await fs.mkdir(dir, { recursive: true })
   return dir
+}
+
+async function readUserId() {
+  try {
+    return (await fs.readFile(path.join(await defaultArchiveDir(), 'userid'), 'utf8')).trim()
+  } catch {
+    return ''
+  }
+}
+
+async function writeUserId(rawUserId: string) {
+  const userId = String(rawUserId || '').trim().replace(/[\r\n\0]/g, '').slice(0, 128)
+  const target = path.join(await defaultArchiveDir(), 'userid')
+  await fs.writeFile(target, userId, 'utf8')
+  return { userId, path: target }
 }
 
 function safeStem(filename: string) {
@@ -397,6 +556,40 @@ async function archiveTranscription(args: ArchiveArgs) {
   return paths
 }
 
+async function injectText(text: string) {
+  clipboard.writeText(text)
+  if (!isWindows) return false
+  const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class AmadeusPaste {
+  [DllImport("user32.dll", SetLastError=true)] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  public static void Paste() {
+    keybd_event(0x11, 0, 0, UIntPtr.Zero);
+    keybd_event(0x56, 0, 0, UIntPtr.Zero);
+    keybd_event(0x56, 0, 2, UIntPtr.Zero);
+    keybd_event(0x11, 0, 2, UIntPtr.Zero);
+  }
+}
+"@
+Start-Sleep -Milliseconds 90
+[AmadeusPaste]::Paste()
+`
+  const encoded = Buffer.from(script, 'utf16le').toString('base64')
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true })
+    const timer = setTimeout(() => { child.kill(); reject(new Error('文本注入超时，文本已保留在剪贴板')) }, 3000)
+    child.on('error', (error) => { clearTimeout(timer); reject(error) })
+    child.on('exit', (code) => {
+      clearTimeout(timer)
+      if (code === 0) resolve()
+      else reject(new Error(`文本注入失败 (${code ?? 'unknown'})，文本已保留在剪贴板`))
+    })
+  })
+  return true
+}
+
 function registerIpc() {
   ipcMain.on('win:minimize', () => mainWindow?.minimize())
   ipcMain.on('win:maximize', () => {
@@ -418,6 +611,8 @@ function registerIpc() {
     return result.canceled ? '' : result.filePaths[0]
   })
   ipcMain.handle('app:defaultArchiveDir', defaultArchiveDir)
+  ipcMain.handle('app:userId:get', readUserId)
+  ipcMain.handle('app:userId:set', (_event, userId: string) => writeUserId(userId))
   ipcMain.handle('dialog:saveFile', async (_event, name: string) => {
     const result = await dialog.showSaveDialog(mainWindow!, { defaultPath: name })
     return result.canceled ? '' : result.filePath
@@ -439,11 +634,12 @@ function registerIpc() {
     return true
   })
   ipcMain.handle('hotkey:register', (_event, accelerator: string) => {
+    if (isE2EMode) return true
     if (registeredHotkey && registeredHotkey !== 'AltRight') globalShortcut.unregister(registeredHotkey)
     stopKeyboardHook()
     registeredHotkey = accelerator
     if (accelerator === 'AltRight') return startRightAltHook()
-    return globalShortcut.register(accelerator, () => mainWindow?.webContents.send('hotkey:triggered'))
+    return globalShortcut.register(accelerator, emitHotkeyTriggered)
   })
   ipcMain.handle('hotkey:unregister', () => {
     if (registeredHotkey && registeredHotkey !== 'AltRight') globalShortcut.unregister(registeredHotkey)
@@ -451,7 +647,7 @@ function registerIpc() {
     registeredHotkey = ''
     return true
   })
-  ipcMain.handle('mouse:register', (_event, button: string) => startMouseHook(button))
+  ipcMain.handle('mouse:register', (_event, button: string) => isE2EMode ? true : startMouseHook(button))
   ipcMain.handle('mouse:unregister', () => {
     stopMouseHook()
     return true
@@ -460,13 +656,8 @@ function registerIpc() {
     clipboard.writeText(text)
     return true
   })
-  ipcMain.handle('text:inject', (_event, text: string) => {
-    clipboard.writeText(text)
-    if (!isWindows || mainWindow?.isFocused()) return true
-    spawn('powershell.exe', ['-NoProfile', '-Command', 'Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait("^v")'], { windowsHide: true })
-    return true
-  })
-  ipcMain.handle('statusOverlay:show', (_event, status: string) => showStatusOverlay(status))
+  ipcMain.handle('text:inject', (_event, text: string) => injectText(text))
+  ipcMain.handle('statusOverlay:show', (_event, status: string, level?: number, message?: string) => showStatusOverlay(status, level, message))
   ipcMain.handle('statusOverlay:hide', () => {
     statusOverlay?.hide()
     return true
@@ -476,9 +667,32 @@ function registerIpc() {
     captionOverlay?.hide()
     return true
   })
+  ipcMain.on('captionOverlay:closeRequested', () => {
+    captionCloseRequestCount += 1
+    captionOverlay?.hide()
+    mainWindow?.webContents.send('captionOverlay:closedByUser')
+  })
+  ipcMain.on('captionOverlay:settingsRequested', () => {
+    captionSettingsRequestCount += 1
+    showMainWindow()
+    mainWindow?.webContents.send('captionOverlay:settingsRequested')
+  })
+  ipcMain.handle('app:autoLaunch:get', () => {
+    return app.getLoginItemSettings().openAtLogin
+  })
+  ipcMain.handle('app:autoLaunch:set', (_event, enabled: boolean) => {
+    app.setLoginItemSettings({ openAtLogin: enabled })
+    return true
+  })
+  ipcMain.on('liveCaption:stateChanged', (_event, active: boolean) => {
+    liveCaptionActive = active
+    if (tray && !tray.isDestroyed()) {
+      tray.setContextMenu(buildTrayMenu())
+    }
+  })
 }
 
-const gotLock = app.requestSingleInstanceLock()
+const gotLock = isE2EMode || app.requestSingleInstanceLock()
 if (!gotLock) app.quit()
 
 app.on('second-instance', showMainWindow)
@@ -487,7 +701,43 @@ app.whenReady().then(() => {
   configureDisplayMediaCapture()
   registerIpc()
   createWindow()
-  createTray()
+  if (!isE2EMode) createTray()
+
+  if (isE2EMode && mainWindow) {
+    const testMainWindow = mainWindow
+    const run = async () => {
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 700))
+        await runAmadeusWindowsE2E({
+          mainWindow: testMainWindow,
+          showStatusOverlay,
+          getStatusOverlay: () => statusOverlay,
+          showCaptionOverlay,
+          getCaptionOverlay: () => captionOverlay,
+          injectText,
+          writeUserId,
+          readUserId,
+          getCaptionRequestCounts: () => ({
+            close: captionCloseRequestCount,
+            settings: captionSettingsRequestCount
+          })
+        })
+      } catch (error) {
+        const dir = path.join(app.getPath('userData'), 'e2e')
+        await fs.mkdir(dir, { recursive: true })
+        await fs.writeFile(
+          path.join(dir, 'fatal.json'),
+          JSON.stringify({ error: error instanceof Error ? error.stack || error.message : String(error) }, null, 2),
+          'utf8'
+        )
+      } finally {
+        forceQuit = true
+        setTimeout(() => app.quit(), 400)
+      }
+    }
+    if (testMainWindow.webContents.isLoading()) testMainWindow.webContents.once('did-finish-load', () => void run())
+    else void run()
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
