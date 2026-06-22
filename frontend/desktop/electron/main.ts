@@ -154,20 +154,27 @@ function createWindow() {
   })
 
   mainWindow.on('close', async (event) => {
+    // Always prevent default synchronously — Electron requires this
+    // before the first await, otherwise the window may be destroyed.
+    // We decide below whether to actually close, hide, or ask.
     if (!isWindows || forceQuit) return
 
+    event.preventDefault()
+
     const preference = await readClosePreference()
+
+    if (preference === 'quit') {
+      forceQuit = true
+      mainWindow?.close()
+      return
+    }
+
     if (preference === 'background') {
-      event.preventDefault()
       mainWindow?.hide()
       return
     }
-    if (preference === 'quit') {
-      forceQuit = true
-      return
-    }
 
-    event.preventDefault()
+    // preference === 'ask' (default)
     const result = await dialog.showMessageBox(mainWindow!, {
       type: 'question',
       buttons: ['后台运行', '退出', '取消'],
@@ -186,8 +193,9 @@ function createWindow() {
       mainWindow?.hide()
     } else if (result.response === 1) {
       forceQuit = true
-      app.quit()
+      mainWindow?.close()
     }
+    // response === 2 (取消): nothing — close was already prevented
   })
 }
 
@@ -244,8 +252,11 @@ function createTray() {
 
 function showMainWindow() {
   if (!mainWindow || mainWindow.isDestroyed()) return
+  // restore() must come before show() — when the window was hidden to tray
+  // it is not "minimized", so isMinimized() would return false.  restore()
+  // handles both minimized and hidden-then-needs-restore edge cases.
+  mainWindow.restore()
   mainWindow.show()
-  if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.focus()
 }
 
@@ -559,27 +570,33 @@ async function archiveTranscription(args: ArchiveArgs) {
 async function injectText(text: string) {
   clipboard.writeText(text)
   if (!isWindows) return false
+  // keybd_event needs inter-key delays so the OS registers Ctrl↓ V↓ V↑ Ctrl↑
+  // as a proper keystroke sequence. Without delays modern apps may ignore it.
   const script = `
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 public static class AmadeusPaste {
   [DllImport("user32.dll", SetLastError=true)] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+  public static void Sleep(int ms) { System.Threading.Thread.Sleep(ms); }
   public static void Paste() {
-    keybd_event(0x11, 0, 0, UIntPtr.Zero);
-    keybd_event(0x56, 0, 0, UIntPtr.Zero);
-    keybd_event(0x56, 0, 2, UIntPtr.Zero);
-    keybd_event(0x11, 0, 2, UIntPtr.Zero);
+    keybd_event(0x11, 0, 0, UIntPtr.Zero);   // Ctrl down
+    Sleep(40);
+    keybd_event(0x56, 0, 0, UIntPtr.Zero);   // V down
+    Sleep(40);
+    keybd_event(0x56, 0, 2, UIntPtr.Zero);   // V up
+    Sleep(20);
+    keybd_event(0x11, 0, 2, UIntPtr.Zero);   // Ctrl up
   }
 }
 "@
-Start-Sleep -Milliseconds 90
+Start-Sleep -Milliseconds 150
 [AmadeusPaste]::Paste()
 `
   const encoded = Buffer.from(script, 'utf16le').toString('base64')
   await new Promise<void>((resolve, reject) => {
     const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true })
-    const timer = setTimeout(() => { child.kill(); reject(new Error('文本注入超时，文本已保留在剪贴板')) }, 3000)
+    const timer = setTimeout(() => { child.kill(); reject(new Error('文本注入超时，文本已保留在剪贴板')) }, 4000)
     child.on('error', (error) => { clearTimeout(timer); reject(error) })
     child.on('exit', (code) => {
       clearTimeout(timer)
