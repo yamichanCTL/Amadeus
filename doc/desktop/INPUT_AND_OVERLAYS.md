@@ -9,12 +9,19 @@ Amadeus 在应用运行期间预热设置中选定的真实麦克风。预热流
 
 启用应用级音频中转时不再额外打开预热流。录音、实时字幕和 Agent 免按键识别从 `AudioRelayMixer` 克隆轨道，物理麦克风仍只由中转总线持有一次。
 
+## 扬声器作为输入
+
+设置页的“音频输入”可选择“扬声器（系统音频输出）”。Windows Electron 主进程只对 Amadeus 主窗口放行 `display-capture`/`media` 权限，并通过系统 loopback 轨道采集当前默认播放设备；视频轨道在取得流后立即关闭。该输入统一用于快捷离线识别、实时字幕、Agent 单次语音和 Agent 免按键识别。
+
+“音频输入”与“音频输入来源”会同步更新，选择扬声器时不会再把 `__speaker_loopback__` 当成普通麦克风 deviceId。扬声器回环与虚拟麦克风中转互斥，以免把系统播放重新送回输出总线形成反馈。设置页“测试输入”在扬声器模式下应先播放一段系统声音，再显示实际 peak/RMS 结果；采集失败会直接显示系统音频错误，不静默回退到麦克风。
+
 ## 动态状态浮窗
 
 普通录音状态浮窗位于主显示器水平居中、距屏幕底部约 28% 的位置，窗口不获取键盘焦点：
 
-- 采集阶段由 renderer 中的 `AnalyserNode` 计算 peak/RMS，每 70 ms 更新七段波形；低电平时明确提示检查输入设备。
+- 普通 recording/thinking/error 浮窗为 200×32。采集阶段由 renderer 中的 `AnalyserNode` 计算 peak/RMS，每次采样把新电平追加到 28 段历史队列；波形从左向右滚动，展示约一段短时间内的声音变化，而不是把同一个瞬时电平画成更粗的柱。文字只显示“语音输入中”，不根据瞬时低电平误报输入设备异常。
 - 停止录音并提交后切换为 `thinking.`、`thinking..`、`thinking...` 循环动画。
+- 当前焦点不能输入文本时，同一浮窗切换为识别结果，并启用“复制”和“×”按钮；复制会写入剪贴板并关闭浮窗，关闭只隐藏浮窗。
 - 异常时可在 Amadeus 主界面点击“强制停止”；同一全局触发键在处理中再次按下也会执行强停。
 
 强停会同时终止 MediaRecorder、前端 fetch/轮询、已知后端异步任务和实时 WebSocket，然后立即恢复可再次录音的状态。同步模型已进入底层推理调用时，前端请求会立即断开，但设备/模型运行时是否能抢占当前 GPU kernel 仍取决于具体引擎。
@@ -23,9 +30,9 @@ Amadeus 在应用运行期间预热设置中选定的真实麦克风。预热流
 
 自动输入遵循以下流程：
 
-1. 识别结果先写入系统剪贴板，确保任何失败都保留可手动粘贴的文本。
-2. Windows 主进程等待 90 ms，通过 `user32.dll` 的键盘事件发送标准 Ctrl+V；状态浮窗保持非聚焦，因此 VS Code/Codex 输入框、浏览器文本框等原前台控件仍是粘贴目标。
-3. 注入失败或超时会在 Amadeus 显示错误，并保留剪贴板内容。非 Windows 平台明确降级为复制。
+1. Windows 主进程通过 PowerShell 直接调用 UI Automation，检查原前台焦点控件是否启用、可聚焦，并读取 `ValuePattern.IsReadOnly`；仅暴露 `ControlType.Edit` 的编辑器也按可输入处理。QQ、TIM、微信、VS Code、Cursor、Trae 等 Electron 自绘编辑器可能只暴露 Pane/Document，因此再按焦点元素所属进程启用受限兼容分支。其他无法确认的应用仍采用保守分支，不发送按键，也不提前覆盖剪贴板。
+2. 焦点可编辑时才写入系统剪贴板，并通过 `SendInput` 发送标准 Ctrl+V；录音/Thinking 浮窗保持非聚焦，因此 VS Code/Codex 输入框、浏览器文本框等原前台控件仍是粘贴目标。
+3. 粘贴成功后直接关闭 Thinking 浮窗，不创建结果框。只有焦点不可编辑、平台不支持或注入失败时，状态浮窗才显示完整识别结果；用户可点击“复制”后关闭，也可点击“×”直接关闭。
 
 Windows 不允许低权限进程向管理员权限窗口注入输入；如果目标 VS Code/浏览器以管理员身份运行，Amadeus 也必须处于相同权限级别，或改用“复制到剪贴板”。
 
@@ -74,7 +81,7 @@ powershell.exe -ExecutionPolicy Bypass -File scripts/run_amadeus_windows_e2e.ps1
 1. Amadeus 品牌和 `archive/userid` 实际读写。
 2. 580×500 主窗口无整页横向溢出。
 3. 专用 textarea 中真实执行 Windows user32 Ctrl+V，读取输入值并截图。
-4. 录音波形、Thinking、字幕浮窗截图，字幕设置和关闭按钮 IPC。
+4. 录音波形、Thinking、识别结果和字幕浮窗截图，验证结果复制/关闭按钮与字幕设置/关闭按钮 IPC。
 5. 直接调用生产 `AudioRelayMixer`：枚举 DJI MIC MINI、CABLE Input/Output，将 DJI 轨道常态连接到 `CABLE Input`，通过真实 `pushPcm16()` 叠加 997 Hz 测试音，再从 `CABLE Output` 采样 RMS/peak 证明 Cable 回环。
 
 结果位于 `%TEMP%/amadeus-e2e-<时间>/userData/e2e/result.json`；任何子项失败时脚本退出码为 1，并保留截图和 `audio-relay.json`。

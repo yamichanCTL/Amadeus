@@ -248,7 +248,7 @@ def _decode_audio(audio_bytes: bytes) -> tuple[int, np.ndarray]:
 
 
 def _decode_audio_ffmpeg(audio_bytes: bytes) -> tuple[int, np.ndarray]:
-    ffmpeg = shutil.which("ffmpeg") or ("/usr/bin/ffmpeg" if Path("/usr/bin/ffmpeg").exists() else None)
+    ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         raise RuntimeError(
             "ffmpeg is required to decode this audio format, but it was not found in PATH."

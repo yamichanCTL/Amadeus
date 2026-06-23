@@ -1,4 +1,4 @@
-import { app, BrowserWindow, screen } from 'electron'
+import { app, BrowserWindow, clipboard, screen } from 'electron'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 
@@ -130,7 +130,7 @@ export async function runAmadeusWindowsE2E(harness: Harness) {
       const recording = await recordingWindow?.webContents.executeJavaScript(`({
         title: document.getElementById('title')?.textContent || '',
         detail: document.getElementById('detail')?.textContent || '',
-        level: document.getElementById('wave')?.style.getPropertyValue('--level') || ''
+        level: Number.parseFloat(document.querySelector('#wave i:last-child')?.style.height || '0')
       })`)
       const bounds = recordingWindow?.getBounds()
       const workArea = recordingWindow ? screen.getPrimaryDisplay().workArea : null
@@ -139,18 +139,45 @@ export async function runAmadeusWindowsE2E(harness: Harness) {
       await delay(1000)
       const thinking = await recordingWindow?.webContents.executeJavaScript(`document.getElementById('title')?.textContent || ''`)
       const thinkingScreenshot = await capture(recordingWindow || null, path.join(outputDir, 'status-thinking.png'))
-      recordingWindow?.hide()
+      const resultMarker = `覆盖层结果-${Date.now()}`
+      await harness.showStatusOverlay('result', 0, resultMarker)
+      await delay(200)
+      const result = await recordingWindow?.webContents.executeJavaScript(`({
+        text: document.getElementById('resultText')?.textContent || '',
+        copyButton: document.getElementById('btnCopy')?.textContent || '',
+        closeButton: document.getElementById('btnClose')?.textContent || ''
+      })`)
+      const resultScreenshot = await capture(recordingWindow || null, path.join(outputDir, 'status-result.png'))
+      await recordingWindow?.webContents.executeJavaScript(`document.getElementById('btnCopy').click()`)
+      await delay(200)
+      const copied = clipboard.readText()
+      await harness.showStatusOverlay('result', 0, resultMarker)
+      await recordingWindow?.webContents.executeJavaScript(`document.getElementById('btnClose').click()`)
+      await delay(200)
       const centered = Boolean(bounds && workArea
         && Math.abs(bounds.x + bounds.width / 2 - (workArea.x + workArea.width / 2)) <= 2
         && bounds.y > workArea.y + workArea.height / 2)
       return {
-        passed: recording?.title === '语音输入中' && Number(recording?.level) > 0 && /^thinking\.{1,3}$/.test(thinking) && centered,
+        passed: recording?.title === '语音输入中'
+          && recording?.detail === ''
+          && Number(recording?.level) > 3
+          && /^thinking\.{1,3}$/.test(thinking)
+          && result?.text === resultMarker
+          && result.copyButton.includes('复制')
+          && Boolean(result.closeButton)
+          && copied === resultMarker
+          && !recordingWindow?.isVisible()
+          && bounds?.width === 200
+          && bounds?.height === 32
+          && centered,
         recording,
         thinking,
+        result,
+        copied,
         bounds,
         workArea,
         centered,
-        screenshots: [recordingScreenshot, thinkingScreenshot]
+        screenshots: [recordingScreenshot, thinkingScreenshot, resultScreenshot]
       }
     })
 

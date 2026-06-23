@@ -4,6 +4,26 @@
 > **子文档**:
 > - [桌面端文档](desktop/README.md)
 
+## [2026-06-24] 修复跨应用注入、可迁移路径与 X-ASR CUDA 冲突
+
+- **类型**: fix / refactor / deployment
+- **描述**: 普通收音/Thinking/Error 浮窗缩小为 200×32，28 段波形改为连续电平时间历史；自动输入保留 UI Automation 严格判断，并为 QQ/TIM/微信、VS Code/Cursor/Trae 的自绘编辑器加入受限进程兼容分支。后端模型、数据、外部源码和动态库路径集中到 `.env`，应用代码不再包含部署机绝对路径。CUDA X-ASR 使用独立 spawn worker 隔离 sherpa CUDA 12/cuDNN 9 与主进程 PyTorch CUDA 13/cuDNN 9.20，修复 `CUDNN_STATUS_SUBLIBRARY_VERSION_MISMATCH`。桌面与后端默认 ASR 超时保持 20 秒。
+- **影响范围**: `frontend/desktop/electron/`、`backend/app/config.py`、`backend/app/core/asr/engines/x_asr.py`、`backend/.env.example`、后端路径使用点与部署文档
+- **验证**: X-ASR 960 ms CUDA 真机解码通过（213 块、6 partial、1 final）；Python 单元测试、前端 TypeScript/Vite 和文档构建见 Plan 执行记录。QQ/VS Code 的 SendInput 仍需 Windows 本机 E2E 验证。
+- **Plan**: [优化状态浮窗与自动输入](plans/2026-06-23-refine-status-overlay-and-auto-inject.md)
+
+## [2026-06-23] 修复扬声器输入、离线结果投递与 20 秒超时
+
+- **类型**: fix / feat
+- **描述**:
+  1. Windows 正式构建放行主窗口的系统音频采集权限，扬声器 loopback 统一接入快捷录音、实时字幕、Agent 语音与设置页输入测试；来源选择保持同步，失败不再错误回退到麦克风占位设备。
+  2. 离线 ASR 完成后使用 UI Automation 检查当前焦点是否可编辑；可编辑时在光标处粘贴，不可编辑时复用 Thinking 浮窗展示结果，并提供“复制”和“×”按钮。
+  3. 录音浮窗删除低电平设备告警，只显示“语音输入中”，并扩大 RMS/peak 波形。
+  4. 桌面端和后端默认转写超时统一为 20 秒；请求显式携带 `timeout_sec`，同步/异步 ASR 推理均执行限制，`0` 仍表示不限制。
+- **影响范围**: `frontend/desktop/electron/`、`frontend/desktop/src/{services,pages,store}`、`backend/app/{config.py,schemas/transcribe.py,api/v1/transcribe.py,tasks/asr_task.py}`、桌面与 Backend API 文档
+- **验证**: Renderer/Electron TypeScript、Vite 生产构建、Python 模块编译和后端默认值断言通过；Windows loopback 与真实跨应用注入需在 Windows E2E 中完成硬件验证。
+- **Plan**: [修复扬声器输入与离线识别结果投递](plans/2026-06-23-fix-speaker-input-and-offline-result-delivery.md)
+
 ## [2026-06-23] 实时识别多项改进：独立时间戳、字幕框优化、托盘开关、页面切换不中断
 
 - **类型**: feat / fix

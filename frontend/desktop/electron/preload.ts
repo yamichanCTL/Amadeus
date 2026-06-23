@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   textToClipboard: (text: string) => ipcRenderer.invoke('text:toClipboard', text),
   showStatusOverlay: (status: string, level = 0, message = '') => ipcRenderer.invoke('statusOverlay:show', status, level, message),
   hideStatusOverlay: () => ipcRenderer.invoke('statusOverlay:hide'),
+  onStatusResultCopied: (callback: (text: string) => void) => on('statusOverlay:resultCopied', callback),
+  onStatusResultClosed: (callback: () => void) => on('statusOverlay:resultClosed', callback),
   showCaptionOverlay: (text: string, options: unknown) => ipcRenderer.invoke('captionOverlay:show', text, options),
   hideCaptionOverlay: () => ipcRenderer.invoke('captionOverlay:hide'),
   onCaptionOverlayClosed: (callback: () => void) => on('captionOverlay:closedByUser', callback),

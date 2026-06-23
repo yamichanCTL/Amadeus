@@ -7,11 +7,12 @@
 
 ## 运行结构
 
-`x-asr` 封装上游 X-ASR-zh-en 的 160 / 480 / 960 / 1920 ms Zipformer ONNX 模型。当前只加载用户选中的一套权重，所有会话共享该 OnlineRecognizer；每个话语通过 `create_streaming_session()` 创建独立 sherpa-onnx stream：
+`x-asr` 封装上游 X-ASR-zh-en 的 160 / 480 / 960 / 1920 ms Zipformer ONNX 模型。CPU 模式在后端进程内共享 OnlineRecognizer；CUDA 模式默认启动专用 spawn 子进程，该进程只加载 sherpa 的 CUDA 12/cuDNN 9 runtime，所有会话通过管道复用其中的 OnlineRecognizer：
 
 ```
-ModelManager
-└── XASREngine（共享 OnlineRecognizer / ONNX 权重）
+ModelManager / FireRedVAD（主进程，可使用 PyTorch CUDA）
+└── XASREngine
+    └── CUDA worker（共享 OnlineRecognizer / ONNX 权重）
     ├── utterance stream A（独立 encoder/decoder 状态）
     └── utterance stream B（独立 encoder/decoder 状态）
 ```
@@ -50,12 +51,15 @@ uv pip install --python .venv/bin/python 'sherpa-onnx>=1.10.0'
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `DEFAULT_X_ASR_MODEL` | `chunk-160ms-model` | 模型显示名 |
-| `X_ASR_MODEL_DIR` | thirdparty 下 160 ms 目录 | 模型绝对或相对路径 |
+| `DEFAULT_X_ASR_MODEL` | `chunk-960ms-model` | 模型显示名 |
+| `X_ASR_MODEL_DIR` | thirdparty 下 960 ms 目录 | 相对 `backend/` 的模型路径，也可由 env 指向外部目录 |
 | `DEFAULT_X_ASR_PROVIDER` | `cuda` | `cpu` 或 `cuda` |
 | `X_ASR_NUM_THREADS` | `1` | CPU 推理线程数 |
 | `X_ASR_TEXT_FORMAT` | `none` | `none` / `lower` / `capitalize` |
 | `X_ASR_CUDA_LIBRARY_PATH` | 空 | NVIDIA CUDA 12 / cuDNN 9 动态库根目录 |
+| `X_ASR_LIBSTDCPP_PATH` | 空 | sherpa wheel 所需的兼容 `libstdc++.so.6`，仅写在部署机 `.env` |
+| `X_ASR_ISOLATE_CUDA` | `true` | 在独立进程隔离 CUDA X-ASR，避免与 PyTorch runtime 冲突 |
+| `X_ASR_WORKER_TIMEOUT_SEC` | `90` | worker 启动及单次命令超时 |
 
 本机 CUDA 安装和实机验证命令见[模型管理稳定性与 CUDA](../../desktop/MODEL_MANAGEMENT.md)。请求 `cuda` 时如果安装的是 CPU-only sherpa wheel，加载会直接失败，避免 ONNX Runtime 静默回退 CPU。
 
@@ -68,7 +72,7 @@ uv pip install --python .venv/bin/python 'sherpa-onnx>=1.10.0'
 3. 展开 X-ASR 模型卡，勾选 160 / 480 / 960 / 1920 ms 窗口；页面同时显示本地下载状态。
 4. 选择 CUDA、线程数等参数并点击“加载”，后端热切换到所选窗口。
 
-窗口越小，首个 partial 更快；窗口越大，官方基准准确率通常更高，但算法等待更长。默认仍为 160 ms。
+窗口越小，首个 partial 更快；窗口越大，官方基准准确率通常更高，但算法等待更长。当前默认是 960 ms。
 
 设置保存在桌面端 Zustand 持久化存储中，实时字幕、免按键对话和实时 ASR+TTS 都使用 `streamingEngine`。
 
@@ -107,7 +111,7 @@ POST /v1/models/x-asr/load
 
 - 四套目录均已从 Hugging Face 下载完整 ONNX 文件，不是 Git LFS pointer。
 - 单元测试覆盖四种窗口的文件解析、模型加载、同一 stream 的 partial/final、完整 WAV 兼容路径，以及 `StreamingASRSession` 不回退调用离线 `transcribe()`。
-- 同一段 6.8 秒中文录音在 CPU 上逐套实际解码均产生 partial 和 final；当前受限运行环境屏蔽 GPU 设备，因此本轮没有重复 CUDA 实机加载，CUDA 基线见[模型管理稳定性与 CUDA](../../desktop/MODEL_MANAGEMENT.md)。
+- 2026-06-24 在同一后端主进程已加载 PyTorch CUDA runtime 的部署环境中，960 ms 模型通过独立 worker 使用 `sherpa-onnx 1.13.2+cuda12.cudnn9` 完成 213 个 PCM 块、6 次 partial 和 1 次 final 的真实 GPU 解码；未再出现 `CUDNN_STATUS_SUBLIBRARY_VERSION_MISMATCH`。
 
 ---
 

@@ -144,6 +144,7 @@ async def test_x_asr_rejects_cpu_only_runtime_when_cuda_requested(tmp_path, monk
     recognizer = FakeRecognizer()
     _install_fake_sherpa(monkeypatch, recognizer)
     monkeypatch.setattr(sys.modules["sherpa_onnx"], "__version__", "1.12.39", raising=False)
+    monkeypatch.setattr("app.core.asr.engines.x_asr.settings.x_asr_isolate_cuda", False)
     engine = XASREngine(model_dir=str(_model_dir(tmp_path)), device="cuda")
 
     with pytest.raises(RuntimeError, match="CPU-only"):
@@ -159,7 +160,8 @@ async def test_x_asr_cuda_warmup_failure_does_not_mark_model_loaded(tmp_path, mo
     recognizer = FailingRecognizer()
     _install_fake_sherpa(monkeypatch, recognizer)
     monkeypatch.setattr(sys.modules["sherpa_onnx"], "__version__", "1.13.2+cuda12.cudnn9", raising=False)
-    monkeypatch.setattr("app.core.asr.engines.x_asr._preload_cuda_libraries", lambda _: None)
+    monkeypatch.setattr("app.core.asr.engines.x_asr.settings.x_asr_isolate_cuda", False)
+    monkeypatch.setattr("app.core.asr.engines.x_asr._preload_cuda_libraries", lambda *_: None)
 
     async def run_inline(function, *args):
         return function(*args)

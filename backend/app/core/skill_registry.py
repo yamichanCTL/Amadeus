@@ -22,22 +22,21 @@ import json
 import logging
 import os
 import platform
-import shutil
-import subprocess
 import sys
-import tempfile
 import time
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 from typing import Any
 
 import httpx
 
+from app.config import get_settings
 from app.schemas.skill import SkillDefinition, SkillExecuteResult, SkillParameter
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+settings = get_settings()
+PROJECT_ROOT = settings.project_root
+FRONTEND_DESKTOP_DIR = settings.frontend_desktop_dir
 
 SkillHandler = Callable[..., Awaitable[SkillExecuteResult]]
 
@@ -607,13 +606,13 @@ async def _skill_self_improve(**params: Any) -> SkillExecuteResult:
 
         # Step 1: Delegate the coding task
         coding_prompt = (
-            f"You are improving the ASRAPP project at /home/yami/AI/asrapp.\n\n"
+            f"You are improving the ASRAPP project at {PROJECT_ROOT}.\n\n"
             f"Task: {task}\n\n"
             f"Rules:\n"
             f"1. Make the minimal changes needed to accomplish the task\n"
             f"2. After making changes, verify by running the build checks:\n"
-            f"   - Frontend: cd /home/yami/AI/asrapp/frontend/desktop && npx tsc --noEmit\n"
-            f"   - Backend: cd /home/yami/AI/asrapp && .venv/bin/python -m compileall -q backend/app\n"
+            f"   - Frontend: cd {FRONTEND_DESKTOP_DIR} && npx tsc --noEmit\n"
+            f"   - Backend: cd {PROJECT_ROOT} && .venv/bin/python -m compileall -q backend/app\n"
             f"3. Report what files you changed and what you accomplished\n"
         )
 
@@ -630,16 +629,34 @@ async def _skill_self_improve(**params: Any) -> SkillExecuteResult:
         build_ok = None
         build_output = ""
         try:
-            process = await asyncio.create_subprocess_shell(
-                "cd /home/yami/AI/asrapp/frontend/desktop && npx tsc --noEmit 2>&1 && echo '---FRONTEND OK---' && cd /home/yami/AI/asrapp && .venv/bin/python -m compileall -q backend/app 2>&1 && echo '---BACKEND OK---'",
+            frontend_process = await asyncio.create_subprocess_exec(
+                "npx",
+                "tsc",
+                "--noEmit",
+                cwd=str(FRONTEND_DESKTOP_DIR),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
-            build_output = stdout.decode("utf-8", errors="replace")[-2000:]
-            if stderr_text := stderr.decode("utf-8", errors="replace").strip():
-                build_output += "\n" + stderr_text[-500:]
-            build_ok = process.returncode == 0
+            frontend_stdout, frontend_stderr = await asyncio.wait_for(
+                frontend_process.communicate(), timeout=30
+            )
+            backend_process = await asyncio.create_subprocess_exec(
+                str(PROJECT_ROOT / ".venv/bin/python"),
+                "-m",
+                "compileall",
+                "-q",
+                "backend/app",
+                cwd=str(PROJECT_ROOT),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            backend_stdout, backend_stderr = await asyncio.wait_for(
+                backend_process.communicate(), timeout=30
+            )
+            build_output = (frontend_stdout + frontend_stderr + backend_stdout + backend_stderr).decode(
+                "utf-8", errors="replace"
+            )[-2500:]
+            build_ok = frontend_process.returncode == 0 and backend_process.returncode == 0
         except Exception:
             build_output = "Build check skipped (timeout or error)"
 
@@ -709,7 +726,7 @@ async def _skill_tts_gpt_sovits(**params: Any) -> SkillExecuteResult:
 
         if audio_bytes:
             # Save to temp file for playback
-            output_path = PROJECT_ROOT / "tts" / "output" / f"tts_{int(time.time()*1000)}.wav"
+            output_path = settings.tts_data_dir / "output" / f"tts_{int(time.time()*1000)}.wav"
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_bytes(audio_bytes)
 
@@ -757,7 +774,7 @@ async def _skill_tts_start_server(**params: Any) -> SkillExecuteResult:
             return SkillExecuteResult(
                 skill="tts_start_server",
                 success=False,
-                error="Failed to start GPT-SoVITS server. Make sure GPT-SoVITS is installed at /home/yami/AI/GPT-SoVITS",
+                error="Failed to start GPT-SoVITS server. Configure GPT_SOVITS_DIR and verify api_v2.py exists.",
             )
     except Exception as exc:
         return SkillExecuteResult(skill="tts_start_server", success=False, error=str(exc))

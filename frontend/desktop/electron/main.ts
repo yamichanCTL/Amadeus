@@ -115,10 +115,10 @@ function createWindow() {
   const windowIcon = loadAppIcon()
 
   mainWindow = new BrowserWindow({
-    width: 1100,
-    height: 720,
-    minWidth: 560,
-    minHeight: 460,
+    width: 1280,
+    height: 800,
+    minWidth: 720,
+    minHeight: 520,
     frame: false,
     titleBarStyle: 'hidden',
     backgroundColor: '#f3f3f3',
@@ -202,14 +202,33 @@ function createWindow() {
 function configureDisplayMediaCapture() {
   if (!isWindows) return
 
-  if (isE2EMode) {
-    session.defaultSession.setPermissionCheckHandler((_webContents, permission) => permission === 'media')
-    session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => callback(permission === 'media'))
+  const isTrustedMediaRequest = (webContents: Electron.WebContents | null, permission: string) => {
+    const isMainWindow = Boolean(mainWindow && webContents && !mainWindow.isDestroyed() && webContents.id === mainWindow.webContents.id)
+    return isMainWindow && (
+      permission === 'media'
+      || permission === 'display-capture'
+      || permission === 'speaker-selection'
+    )
   }
 
-  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+  // Chromium asks for display-capture permission before invoking the handler.
+  // This must also be granted in packaged builds; limiting it to E2E made the
+  // speaker option look selected while getDisplayMedia could not return audio.
+  session.defaultSession.setPermissionCheckHandler((webContents, permission) => (
+    isTrustedMediaRequest(webContents, permission)
+  ))
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(isTrustedMediaRequest(webContents, permission))
+  })
+
+  session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
+    if (!request.audioRequested || !request.videoRequested) {
+      callback({})
+      return
+    }
     const sources = await desktopCapturer.getSources({ types: ['screen'] })
-    callback({ video: sources[0], audio: 'loopback' })
+    const screenSource = sources[0]
+    callback(screenSource ? { video: screenSource, audio: 'loopback' } : {})
   })
 }
 
@@ -299,7 +318,12 @@ function createOverlayWindow(kind: 'status' | 'caption', bounds: Electron.Rectan
           nodeIntegration: false,
           sandbox: false
         }
-      : { sandbox: true }
+      : {
+          preload: path.join(__dirname, 'status-overlay-preload.js'),
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: false
+        }
   })
   overlay.setAlwaysOnTop(true, 'screen-saver')
   overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
@@ -313,54 +337,111 @@ function overlayHtml(body: string) {
 function statusOverlayHtml() {
   return `
     <style>
-      * { box-sizing: border-box; }
-      body { margin: 0; overflow: hidden; font-family: "Segoe UI", sans-serif; color: white; }
-      .box { width: 100vw; height: 100vh; display: grid; grid-template-columns: 78px minmax(0, 1fr); align-items: center; gap: 16px; padding: 12px 18px; background: rgba(14, 22, 35, .9); border: 1px solid rgba(255,255,255,.2); border-radius: 18px; box-shadow: 0 18px 52px rgba(0,0,0,.3); }
-      .wave { height: 42px; display: flex; align-items: center; justify-content: center; gap: 4px; }
-      .wave i { width: 5px; height: calc(7px + var(--level, 0) * var(--scale, 20px)); border-radius: 99px; background: linear-gradient(180deg, #9fb7ff, #5a7cff); transition: height 70ms linear; }
-      .wave i:nth-child(2), .wave i:nth-child(6) { --scale: 27px; }
-      .wave i:nth-child(3), .wave i:nth-child(5) { --scale: 34px; }
-      .wave i:nth-child(4) { --scale: 40px; }
-      .copy { min-width: 0; display: grid; gap: 3px; }
-      strong { font-size: 15px; letter-spacing: .2px; }
-      small { color: rgba(235,241,255,.72); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .thinking .wave i { animation: think-wave 900ms ease-in-out infinite; }
-      .thinking .wave i:nth-child(2n) { animation-delay: 120ms; }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body { overflow: hidden; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; color: white; }
+      .box { width: 100vw; height: 100vh; display: grid; grid-template-columns: 122px minmax(0, 1fr); align-items: center; gap: 6px; padding: 4px 7px; background: rgba(14, 22, 35, .9); border: 1px solid rgba(255,255,255,.2); border-radius: 9px; box-shadow: 0 8px 20px rgba(0,0,0,.28); }
+      .box.result { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 7px 9px; border-radius: 12px; }
+      .wave { height: 22px; display: flex; align-items: center; justify-content: flex-start; gap: 2px; overflow: hidden; }
+      .wave i { flex: 0 0 2px; width: 2px; height: 3px; border-radius: 99px; background: linear-gradient(180deg, #a9beff, #5a7cff); transition: height 55ms linear; }
+      .copy { min-width: 0; display: block; overflow: hidden; }
+      strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; letter-spacing: 0; }
+      small { display: none !important; }
+      .thinking .wave i { animation: think-wave 840ms ease-in-out infinite; }
+      .thinking .wave i:nth-child(3n+1) { animation-delay: 90ms; }
+      .thinking .wave i:nth-child(3n+2) { animation-delay: 180ms; }
       .error .wave i { background: #ff8b82; }
-      @keyframes think-wave { 0%, 100% { height: 8px; opacity: .55; } 50% { height: 30px; opacity: 1; } }
+      .result-text { font-size: 14px; line-height: 1.5; max-height: 52px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: rgba(235,241,255,.92); }
+      .result-actions { display: flex; gap: 8px; align-items: center; }
+      .result-actions button { width: 36px; height: 36px; border: 1px solid rgba(255,255,255,.25); border-radius: 10px; background: rgba(255,255,255,.12); color: white; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; transition: background .15s; }
+      .result-actions button:hover { background: rgba(255,255,255,.28); }
+      .result-actions .btn-copy { width: auto; padding: 0 14px; font-size: 13px; gap: 5px; background: rgba(90,124,255,.35); border-color: rgba(90,124,255,.5); }
+      .result-actions .btn-copy:hover { background: rgba(90,124,255,.55); }
+      .result .wave, .result .copy { display: none; }
+      @keyframes think-wave { 0%, 100% { height: 3px; opacity: .5; } 50% { height: 19px; opacity: 1; } }
     </style>
     <div class="box" id="box">
-      <div class="wave" id="wave">${Array.from({ length: 7 }, () => '<i></i>').join('')}</div>
-      <div class="copy"><strong id="title">语音输入中</strong><small id="detail">正在检测麦克风输入</small></div>
+      <div class="wave" id="wave">${Array.from({ length: 28 }, () => '<i></i>').join('')}</div>
+      <div class="copy" id="copyBlock"><strong id="title">语音输入中</strong><small id="detail" style="display:none"></small></div>
+      <div class="result-text" id="resultText" style="display:none"></div>
+      <div class="result-actions" id="resultActions" style="display:none">
+        <button class="btn-copy" id="btnCopy" title="复制到剪贴板">📋 复制</button>
+        <button id="btnClose" title="关闭">✕</button>
+      </div>
     </div>
     <script>
       (() => {
         const box = document.getElementById('box');
         const wave = document.getElementById('wave');
+        const copyBlock = document.getElementById('copyBlock');
         const title = document.getElementById('title');
         const detail = document.getElementById('detail');
+        const resultText = document.getElementById('resultText');
+        const resultActions = document.getElementById('resultActions');
+        const btnCopy = document.getElementById('btnCopy');
+        const btnClose = document.getElementById('btnClose');
         let phase = 'recording';
         let dots = 1;
+        let resultTextContent = '';
+        const bars = Array.from(wave.querySelectorAll('i'));
+        const history = Array.from({ length: bars.length }, () => 0);
+
+        const appendLevel = (rawLevel) => {
+          const level = Math.max(0, Math.min(1, Number(rawLevel) || 0));
+          history.shift();
+          history.push(Math.max(.03, Math.sqrt(level)));
+          bars.forEach((bar, index) => {
+            bar.style.height = Math.round(3 + history[index] * 19) + 'px';
+          });
+        };
+
         setInterval(() => {
           if (phase !== 'thinking') return;
           dots = dots % 3 + 1;
           title.textContent = 'thinking' + '.'.repeat(dots);
         }, 420);
+
+        btnCopy.addEventListener('click', () => {
+          window.statusOverlay?.copyResult(resultTextContent);
+        });
+        btnClose.addEventListener('click', () => {
+          window.statusOverlay?.closeResult();
+        });
+
         window.amadeusStatus = {
+          onCopy: null,
+          onClose: null,
           update(nextPhase, rawLevel, message) {
             phase = nextPhase || 'recording';
             box.className = 'box ' + phase;
-            const level = Math.max(0, Math.min(1, Number(rawLevel) || 0));
-            wave.style.setProperty('--level', String(Math.max(.08, Math.sqrt(level))));
-            if (phase === 'recording') {
-              title.textContent = '语音输入中';
-              detail.textContent = level > .012 ? '麦克风输入正常' : '等待声音，请检查输入设备';
-            } else if (phase === 'thinking') {
-              title.textContent = 'thinking.';
-              detail.textContent = message || '正在识别并整理文本';
+
+            if (phase === 'result') {
+              wave.style.display = 'none';
+              copyBlock.style.display = 'none';
+              resultText.style.display = '';
+              resultActions.style.display = '';
+              resultText.textContent = message || '';
+              resultTextContent = message || '';
+              title.textContent = '识别完成';
             } else {
-              title.textContent = '识别异常';
-              detail.textContent = message || '可在 Amadeus 中强制停止';
+              wave.style.display = '';
+              copyBlock.style.display = '';
+              resultText.style.display = 'none';
+              resultActions.style.display = 'none';
+
+              if (phase === 'recording') {
+                appendLevel(rawLevel);
+                title.textContent = '语音输入中';
+                detail.style.display = 'none';
+                detail.textContent = '';
+              } else if (phase === 'thinking') {
+                detail.style.display = '';
+                title.textContent = 'thinking.';
+                detail.textContent = message || '正在识别并整理文本';
+              } else {
+                detail.style.display = '';
+                title.textContent = '识别异常';
+                detail.textContent = message || '可在 Amadeus 中强制停止';
+              }
             }
           }
         };
@@ -371,8 +452,8 @@ function statusOverlayHtml() {
 async function showStatusOverlay(status: string, level = 0, message = '') {
   if (!isWindows) return false
   const workArea = screen.getPrimaryDisplay().workArea
-  const width = 340
-  const height = 82
+  const width = status === 'result' ? 360 : 200
+  const height = status === 'result' ? 64 : 32
   if (!statusOverlay || statusOverlay.isDestroyed()) {
     statusOverlay = createOverlayWindow('status', {
       x: Math.round(workArea.x + (workArea.width - width) / 2),
@@ -381,8 +462,19 @@ async function showStatusOverlay(status: string, level = 0, message = '') {
       height
     })
     await statusOverlay.loadURL(overlayHtml(statusOverlayHtml()))
+  } else {
+    // Resize if needed when switching between phases
+    statusOverlay.setBounds({
+      x: Math.round(workArea.x + (workArea.width - width) / 2),
+      y: Math.round(workArea.y + workArea.height * .72 - height / 2),
+      width,
+      height
+    })
   }
-  const phase = status === 'recording' ? 'recording' : status === 'error' ? 'error' : 'thinking'
+  const phase = status === 'recording' ? 'recording' : status === 'error' ? 'error' : status === 'result' ? 'result' : 'thinking'
+  const interactive = phase === 'result'
+  statusOverlay.setFocusable(interactive)
+  statusOverlay.setIgnoreMouseEvents(!interactive)
   await statusOverlay.webContents.executeJavaScript(
     `window.amadeusStatus?.update(${JSON.stringify(phase)}, ${Number(level) || 0}, ${JSON.stringify(message)})`
   )
@@ -462,25 +554,63 @@ function stopKeyboardHook() {
 
 function startRightAltHook() {
   stopKeyboardHook()
-  // Electron accelerators cannot represent a standalone right-side modifier.
-  // On Windows, poll VK_RMENU so the trigger remains global and preserves left/right identity.
+  // Use a WH_KEYBOARD_LL hook (low-level keyboard hook) instead of polling
+  // GetAsyncKeyState. This:
+  // 1) Detects right Alt press globally while preserving left/right identity
+  // 2) BLOCKS the key from reaching the foreground app, preventing cursor
+  //    position changes, menu activation, or Alt+key side effects
   if (!isWindows) return true
   const script = `
-Add-Type @"
+Add-Type -AssemblyName System.Windows.Forms
+$code = @"
 using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
-public static class KeyboardState {
-  [DllImport("user32.dll")]
-  public static extern short GetAsyncKeyState(int vKey);
+using System.Windows.Forms;
+
+public static class RightAltHook {
+    private const int WH_KEYBOARD_LL = 13;
+    private const int VK_RMENU = 0xA5;
+    private static IntPtr hookId;
+    private static LowLevelKeyboardProc proc = HookCallback;
+
+    delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")] static extern IntPtr SetWindowsHookEx(int idHook, LowLevelKeyboardProc lpfn, IntPtr hMod, uint dwThreadId);
+    [DllImport("user32.dll")] static extern bool UnhookWindowsHookEx(IntPtr hhk);
+    [DllImport("user32.dll")] static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+    [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct KBDLLHOOKSTRUCT { public uint vkCode; public uint scanCode; public uint flags; public uint time; public IntPtr dwExtraInfo; }
+
+    static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
+        if (nCode >= 0) {
+            KBDLLHOOKSTRUCT kb = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
+            if (kb.vkCode == VK_RMENU) {
+                // Detect key down (not auto-repeat)
+                const int WM_KEYDOWN = 0x0100, WM_SYSKEYDOWN = 0x0104;
+                if ((wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN) && (kb.flags & 0x80) == 0) {
+                    Console.WriteLine("AltRight");
+                }
+                // Block the key from reaching the foreground application
+                return (IntPtr)1;
+            }
+        }
+        return CallNextHookEx(hookId, nCode, wParam, lParam);
+    }
+
+    public static void Run() {
+        using (Process curProcess = Process.GetCurrentProcess())
+        using (ProcessModule curModule = curProcess.MainModule)
+            hookId = SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(curModule.ModuleName), 0);
+        Application.Run();
+    }
 }
 "@
-$last = $false
-while ($true) {
-  $down = ([KeyboardState]::GetAsyncKeyState(0xA5) -band 0x8000) -ne 0
-  if ($down -and -not $last) { Write-Output "AltRight" }
-  $last = $down
-  Start-Sleep -Milliseconds 35
-}`
+Add-Type -TypeDefinition $code -ReferencedAssemblies "System.Windows.Forms"
+[RightAltHook]::Run()
+`
   keyboardHook = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script])
   keyboardHook.stdout.on('data', (chunk) => {
     if (chunk.toString().split(/\r?\n/).some((item: string) => item.trim() === 'AltRight')) {
@@ -568,43 +698,211 @@ async function archiveTranscription(args: ArchiveArgs) {
 }
 
 async function injectText(text: string) {
-  clipboard.writeText(text)
   if (!isWindows) return false
-  // keybd_event needs inter-key delays so the OS registers Ctrl↓ V↓ V↑ Ctrl↑
-  // as a proper keystroke sequence. Without delays modern apps may ignore it.
-  const script = `
-Add-Type @"
+
+  // Encode the text as base64 so it survives PowerShell string interpolation
+  // without injection risk (backticks, quotes, dollar signs are all safe).
+  const textB64 = Buffer.from(text, 'utf8').toString('base64')
+
+  // Combined focus detection AND text injection in a single PowerShell process.
+  // Running two separate spawns (one to check focus, another to send keys)
+  // created a timing gap where focus could shift between them. A single process
+  // eliminates that gap.
+  //
+  // Two injection methods are used in sequence (belt-and-suspenders):
+  // 1. WM_PASTE  — sent directly to the target HWND, bypasses keyboard hooks
+  //                and IME interception (critical for QQ and similar apps).
+  // 2. SendInput — standard Ctrl+V simulation with scan codes, covering
+  //                Electron/Chromium apps that ignore WM_PASTE.
+  // Both operate on the same clipboard; the app only processes one.
+  const combinedScript = `
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+Add-Type -AssemblyName System.Windows.Forms
+
+$text = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${textB64}'))
+
+# === Phase 1: Focus detection (same logic as before) ===
+
+try {
+  $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+  if ($null -eq $focused -or -not $focused.Current.IsEnabled -or -not $focused.Current.IsKeyboardFocusable) {
+    exit 3
+  }
+
+  $editable = $false
+  $valuePattern = $null
+
+  if ($focused.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern)) {
+    if (-not $valuePattern.Current.IsReadOnly) {
+      $editable = $true
+    } else {
+      exit 3
+    }
+  }
+
+  if (-not $editable) {
+    if ($focused.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit) {
+      $editable = $true
+    }
+  }
+
+  # Electron/Chromium custom editors and native RichEdit controls commonly
+  # expose a focusable Document, Pane, Group or Custom control type without
+  # ValuePattern. Instead of a fragile process-name whitelist (which breaks
+  # every time the user switches chat apps), use control-type heuristics that
+  # work across ALL applications.
+  #
+  # These control types are the standard building blocks of rich text editors
+  # in: Electron apps (QQ, VS Code, Discord, Slack, DingTalk, Feishu, etc.),
+  # native Win32 RichEdit, Qt editors, and browser contenteditable surfaces.
+  if (-not $editable) {
+    $ctrlType = $focused.Current.ControlType
+    $isTextHost = ($ctrlType -eq [System.Windows.Automation.ControlType]::Document) -or
+                  ($ctrlType -eq [System.Windows.Automation.ControlType]::Pane) -or
+                  ($ctrlType -eq [System.Windows.Automation.ControlType]::Group) -or
+                  ($ctrlType -eq [System.Windows.Automation.ControlType]::Custom)
+
+    if ($isTextHost) {
+      # Additional signal: TextPattern indicates rich text editing capability
+      $textPattern = $null
+      $hasTextPattern = $focused.TryGetCurrentPattern(
+        [System.Windows.Automation.TextPattern]::Pattern, [ref]$textPattern
+      )
+
+      # Element naming hints (case-insensitive substring match)
+      $name = $focused.Current.Name
+      $className = $focused.Current.ClassName
+      $autoId = $focused.Current.AutomationId
+      $looksLikeEditor = $hasTextPattern -or
+        $name -match '编辑|输入|内容|text|edit|input|chat|message|content|rich|compose|editor|document|body|draft|reply|comment|note|code' -or
+        $className -match 'edit|input|rich|text|chat|content|webview|render|document|scintilla|richtext' -or
+        $autoId -match 'edit|input|text|chat|message|content|rich|compose'
+
+      # Control type alone is a strong signal: a keyboard-focused Document/Pane
+      # without ValuePattern is almost always a rich text editor. The naming
+      # hints and TextPattern just add confidence. We treat it as editable
+      # even without those extra signals — a false positive (paste into a
+      # non-text Pane) is harmless (Ctrl+V silently ignored), while a false
+      # negative breaks the entire auto-inject feature for that app.
+      $editable = $true
+    }
+  }
+
+  if (-not $editable) { exit 3 }
+
+  # === Phase 2: Inject text at cursor ===
+  #
+  # We do NOT use ValuePattern.SetValue — it replaces ALL content instead of
+  # inserting at the cursor position (regression: overwrites existing text in
+  # VSCode, browser forms, etc.). Clipboard-based paste inserts at cursor.
+
+  # Walk up the UI Automation tree to find a window with a real HWND.
+  # WM_PASTE needs a target window handle; this also bypasses keyboard hooks
+  # and IME/TSF interception that can block SendInput in apps like QQ.
+  $targetHwnd = [IntPtr]::Zero
+  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+  $current = $focused
+  while ($current -ne $null -and $targetHwnd -eq [IntPtr]::Zero) {
+    $hwnd = $current.Current.NativeWindowHandle
+    if ($hwnd -ne 0) { $targetHwnd = [IntPtr]$hwnd }
+    try { $current = $walker.GetParent($current) } catch { break }
+  }
+
+  # Write text to clipboard (always — both methods need it)
+  [System.Windows.Forms.Clipboard]::SetText($text)
+  Start-Sleep -Milliseconds 80
+
+  $pasteCode = @'
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 public static class AmadeusPaste {
-  [DllImport("user32.dll", SetLastError=true)] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
-  public static void Sleep(int ms) { System.Threading.Thread.Sleep(ms); }
-  public static void Paste() {
-    keybd_event(0x11, 0, 0, UIntPtr.Zero);   // Ctrl down
-    Sleep(40);
-    keybd_event(0x56, 0, 0, UIntPtr.Zero);   // V down
-    Sleep(40);
-    keybd_event(0x56, 0, 2, UIntPtr.Zero);   // V up
-    Sleep(20);
-    keybd_event(0x11, 0, 2, UIntPtr.Zero);   // Ctrl up
+  [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+  [DllImport("user32.dll")] static extern uint MapVirtualKey(uint uCode, uint uMapType);
+
+  [StructLayout(LayoutKind.Sequential)]
+  struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+  [StructLayout(LayoutKind.Sequential)]
+  struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+  [StructLayout(LayoutKind.Sequential)]
+  struct HARDWAREINPUT { public uint uMsg; public ushort wParamL; public ushort wParamH; }
+  [StructLayout(LayoutKind.Explicit)]
+  struct INPUT_UNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; [FieldOffset(0)] public HARDWAREINPUT hi; }
+  [StructLayout(LayoutKind.Sequential)]
+  struct INPUT { public uint type; public INPUT_UNION u; }
+
+  [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+
+  const uint INPUT_KEYBOARD = 1;
+  const uint KEYEVENTF_KEYUP = 0x0002;
+  const uint KEYEVENTF_SCANCODE = 0x0008;
+  const uint WM_PASTE = 0x0302;
+
+  // Method 1: WM_PASTE directly to the target window.
+  // Bypasses keyboard hooks, IME/TSF interception, and UIPI restrictions.
+  // Works for: native Win32 controls, Chromium/Electron render windows.
+  public static void TryWmPaste(IntPtr hwnd) {
+    if (hwnd == IntPtr.Zero) return;
+    SendMessage(hwnd, WM_PASTE, IntPtr.Zero, IntPtr.Zero);
+  }
+
+  // Method 2: SendInput with scan codes.
+  // SendInput places keystrokes in the system input queue; they are dispatched
+  // to the foreground window's thread. Including scan codes (MapVirtualKey)
+  // makes the simulated input indistinguishable from real keyboard input,
+  // improving compatibility with apps that validate scan codes.
+  static void Key(ushort vk, bool up) {
+    var input = new INPUT { type = INPUT_KEYBOARD };
+    input.u.ki.wVk = vk;
+    input.u.ki.wScan = (ushort)MapVirtualKey(vk, 0);
+    if (up) input.u.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
+    else input.u.ki.dwFlags = KEYEVENTF_SCANCODE;
+    SendInput(1, new INPUT[] { input }, Marshal.SizeOf(typeof(INPUT)));
+  }
+
+  public static void SendCtrlV() {
+    Thread.Sleep(50);
+    Key(0x11, false); Thread.Sleep(50);   // Ctrl down
+    Key(0x56, false); Thread.Sleep(50);   // V down
+    Key(0x56, true);  Thread.Sleep(30);   // V up
+    Key(0x11, true);                       // Ctrl up
   }
 }
-"@
-Start-Sleep -Milliseconds 150
-[AmadeusPaste]::Paste()
+'@
+  Add-Type -TypeDefinition $pasteCode -ReferencedAssemblies "System.Windows.Forms"
+
+  # Two-pronged paste: WM_PASTE for apps that block simulated keyboard input
+  # (QQ etc.), SendInput for apps that only process paste via keyboard events.
+  # Both operate on the same clipboard content; the app will only accept one.
+  if ($targetHwnd -ne [IntPtr]::Zero) {
+    [AmadeusPaste]::TryWmPaste($targetHwnd)
+    Start-Sleep -Milliseconds 60
+  }
+  [AmadeusPaste]::SendCtrlV()
+  exit 0
+
+} catch {
+  Write-Error $_
+  exit 4
+}
 `
-  const encoded = Buffer.from(script, 'utf16le').toString('base64')
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true })
+  const encoded = Buffer.from(combinedScript, 'utf16le').toString('base64')
+
+  // Single spawn: detect focus AND inject text in one shot.
+  // Exit codes: 0 = injected successfully, 3 = not an editable field,
+  //             anything else = error.
+  return await new Promise<boolean>((resolve, reject) => {
+    const child = spawn('powershell.exe', ['-STA', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true })
     const timer = setTimeout(() => { child.kill(); reject(new Error('文本注入超时，文本已保留在剪贴板')) }, 4000)
     child.on('error', (error) => { clearTimeout(timer); reject(error) })
     child.on('exit', (code) => {
       clearTimeout(timer)
-      if (code === 0) resolve()
+      if (code === 0) resolve(true)
+      else if (code === 3) resolve(false)
       else reject(new Error(`文本注入失败 (${code ?? 'unknown'})，文本已保留在剪贴板`))
     })
   })
-  return true
 }
 
 function registerIpc() {
@@ -678,6 +976,15 @@ function registerIpc() {
   ipcMain.handle('statusOverlay:hide', () => {
     statusOverlay?.hide()
     return true
+  })
+  ipcMain.on('statusOverlay:copyResult', (_event, text: string) => {
+    clipboard.writeText(text)
+    statusOverlay?.hide()
+    mainWindow?.webContents.send('statusOverlay:resultCopied', text)
+  })
+  ipcMain.on('statusOverlay:closeResult', () => {
+    statusOverlay?.hide()
+    mainWindow?.webContents.send('statusOverlay:resultClosed')
   })
   ipcMain.handle('captionOverlay:show', (_event, text: string, options: CaptionOverlayOptions) => showCaptionOverlay(text, options))
   ipcMain.handle('captionOverlay:hide', () => {

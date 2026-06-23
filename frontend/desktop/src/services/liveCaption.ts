@@ -6,7 +6,7 @@
  * call the same start()/stop()/toggle() methods.
  */
 
-import { StreamingASRClient, speechRecorder, audioRelayMixer } from './audio'
+import { StreamingASRClient, speechRecorder, audioRelayMixer, captureSpeakerAudio } from './audio'
 import { useASRStore, type UtteranceEntry } from '@/store/useASRStore'
 import type { TranscribeResponse } from '@/services/api'
 
@@ -87,14 +87,17 @@ class LiveCaptionService {
     })
 
     try {
-      const preparedInput = audioRelayMixer.isActive()
-        ? audioRelayMixer.createInputStream()
-        : speechRecorder.takePreparedStream(settings.audioInputDeviceId || undefined)
+      const useSpeaker = settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__'
+      const preparedInput = useSpeaker
+        ? await captureSpeakerAudio()
+        : audioRelayMixer.isActive()
+          ? audioRelayMixer.createInputStream()
+          : speechRecorder.takePreparedStream(settings.audioInputDeviceId || undefined)
 
       await this.streamer.start({
         engine: settings.streamingEngine,
         language: settings.defaultLanguage === 'auto' ? undefined : settings.defaultLanguage,
-        deviceId: settings.audioInputDeviceId || undefined,
+        deviceId: useSpeaker ? undefined : (settings.audioInputDeviceId || undefined),
         inputStream: preparedInput,
         userId: settings.userId || undefined,
       })

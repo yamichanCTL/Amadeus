@@ -21,17 +21,17 @@ import numpy as np
 import soundfile as sf
 
 
-def gpu_process_memory() -> str:
+def gpu_process_memory(pid: int) -> str:
     result = subprocess.run(
         ["nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"],
         capture_output=True,
         text=True,
         check=False,
     )
-    pid = str(os.getpid())
+    target_pid = str(pid)
     for line in result.stdout.splitlines():
         columns = [item.strip() for item in line.split(",")]
-        if columns and columns[0] == pid:
+        if columns and columns[0] == target_pid:
             return f"{columns[1]} MiB" if len(columns) > 1 else "detected"
     return "not-reported"
 
@@ -91,7 +91,8 @@ async def main() -> None:
             "model": info.get("model_name"),
             "chunk_ms": info.get("chunk_ms"),
             "provider": info.get("device"),
-            "gpu_process_memory": gpu_process_memory(),
+            "worker_pid": info.get("worker_pid"),
+            "gpu_process_memory": gpu_process_memory(int(info.get("worker_pid") or os.getpid())),
             "gpu_used_before_mib": gpu_before,
             "gpu_used_after_load_mib": gpu_after_load,
             "gpu_load_delta_mib": (

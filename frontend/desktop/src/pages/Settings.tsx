@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { HotkeyCapture, TriggerCapture } from '@/components/TriggerCapture'
-import { audioRelayMixer, listAudioInputDevices, listAudioOutputDevices, testAudioInputDevice, testAudioOutputDevice } from '@/services/audio'
+import { audioRelayMixer, captureSpeakerAudio, listAudioInputDevices, listAudioOutputDevices, testAudioInputDevice, testAudioOutputDevice } from '@/services/audio'
 import { useASRStore } from '@/store/useASRStore'
 
 export function SettingsPage() {
@@ -129,6 +129,10 @@ export function SettingsPage() {
       setRouteStatus('已停止：真实麦克风不再透传')
       return
     }
+    if (settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__') {
+      setRouteStatus('扬声器回环输入不能同时启用虚拟麦克风中转，请先选择真实麦克风')
+      return
+    }
     setRouteStatus('正在接管真实麦克风并建立混音总线…')
     try {
       const result = await audioRelayMixer.start({
@@ -163,9 +167,15 @@ export function SettingsPage() {
 
   const testMicrophone = async () => {
     setTestingMicrophone(true)
-    setMicrophoneTest('检测中，请对着麦克风说话…')
+    const useSpeaker = settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__'
+    setMicrophoneTest(useSpeaker ? '检测中，请播放一段系统声音…' : '检测中，请对着麦克风说话…')
     try {
-      const result = await testAudioInputDevice(settings.audioInputDeviceId || undefined)
+      const speakerStream = useSpeaker ? await captureSpeakerAudio() : undefined
+      const result = await testAudioInputDevice(
+        useSpeaker ? undefined : (settings.audioInputDeviceId || undefined),
+        1200,
+        speakerStream,
+      )
       const level = Math.round(result.peak * 100)
       const aec = result.echoCancellation === null ? 'AEC 状态未知' : result.echoCancellation ? 'AEC 已启用' : 'AEC 不可用'
       setMicrophoneTest(
@@ -179,6 +189,28 @@ export function SettingsPage() {
     } finally {
       setTestingMicrophone(false)
     }
+  }
+
+  const changeAudioInput = (deviceId: string) => {
+    const useSpeaker = deviceId === '__speaker_loopback__'
+    if (useSpeaker && audioRelayMixer.isActive()) audioRelayMixer.stop()
+    updateSettings({
+      audioInputDeviceId: deviceId,
+      inputSource: useSpeaker ? 'speaker' : 'file',
+      ...(useSpeaker ? { audioRelayEnabled: false } : {}),
+    })
+  }
+
+  const changeInputSource = (inputSource: typeof settings.inputSource) => {
+    const useSpeaker = inputSource === 'speaker'
+    if (useSpeaker && audioRelayMixer.isActive()) audioRelayMixer.stop()
+    updateSettings({
+      inputSource,
+      audioInputDeviceId: useSpeaker
+        ? '__speaker_loopback__'
+        : settings.audioInputDeviceId === '__speaker_loopback__' ? '' : settings.audioInputDeviceId,
+      ...(useSpeaker ? { audioRelayEnabled: false } : {}),
+    })
   }
 
   return (
@@ -225,10 +257,11 @@ export function SettingsPage() {
           开机自动启动 Amadeus
         </label>
         <label>
-          麦克风
+          音频输入
           <div className="inline-control">
-            <select value={settings.audioInputDeviceId} onChange={(event) => updateSettings({ audioInputDeviceId: event.target.value })}>
+            <select value={settings.audioInputDeviceId} onChange={(event) => changeAudioInput(event.target.value)}>
               <option value="">跟随系统</option>
+              <option value="__speaker_loopback__">扬声器（系统音频输出）</option>
               {devices.map((device) => (
                 <option key={device.deviceId} value={device.deviceId}>{device.label || device.deviceId}</option>
               ))}
@@ -333,11 +366,12 @@ export function SettingsPage() {
           {settings.triggerType === 'keyboard' && settings.triggerKey === 'AltRight' && <small>默认：右 Alt；Windows 支持全局触发，其他平台需保持应用获得键盘事件。</small>}
         </label>
         <label>
-          实时字幕来源
-          <select value={settings.inputSource} onChange={(event) => updateSettings({ inputSource: event.target.value as typeof settings.inputSource })}>
+          音频输入来源
+          <select value={settings.inputSource} onChange={(event) => changeInputSource(event.target.value as typeof settings.inputSource)}>
             <option value="file">麦克风</option>
-            <option value="speaker">扬声器</option>
+            <option value="speaker">扬声器（系统音频输出）</option>
           </select>
+          <small>同时影响实时字幕和快捷识别（右 Alt）的音频来源。选择扬声器可录制系统播放的声音。</small>
         </label>
         <label>
           切片秒数

@@ -16,7 +16,6 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[1]
-_PROJECT_ROOT = _BACKEND_ROOT.parent if _BACKEND_ROOT.name == "backend" else _BACKEND_ROOT
 
 
 class Settings(BaseSettings):
@@ -35,7 +34,7 @@ class Settings(BaseSettings):
     secret_key: str = Field(default="dev-secret-key-change-in-prod")
 
     # ── Database ──────────────────────────────────────────────────────────────
-    database_url: str = f"sqlite+aiosqlite:///{_PROJECT_ROOT / 'data/asr.db'}"
+    database_url: str = "sqlite+aiosqlite:///data/asr.db"
 
     # ── Redis / Celery ────────────────────────────────────────────────────────
     redis_url: str = "redis://localhost:6379/0"
@@ -43,10 +42,14 @@ class Settings(BaseSettings):
     celery_result_backend: str = "redis://localhost:6379/2"
 
     # ── Paths ─────────────────────────────────────────────────────────────────
-    models_dir: Path = _BACKEND_ROOT / "models"
-    audio_upload_dir: Path = _PROJECT_ROOT / "data/uploads"
-    transcript_dir: Path = _PROJECT_ROOT / "data/transcripts"
-    archive_dir: Path = _PROJECT_ROOT / "data/archive"
+    project_root: Path = Path("..")
+    frontend_desktop_dir: Path = Path("../frontend/desktop")
+    models_dir: Path = Path("models")
+    audio_upload_dir: Path = Path("data/uploads")
+    transcript_dir: Path = Path("data/transcripts")
+    archive_dir: Path = Path("data/archive")
+    tts_data_dir: Path = Path("tts")
+    gpt_sovits_dir: Path | None = None
 
     # ── ASR engine defaults ───────────────────────────────────────────────────
     default_engine: str = "fireredasr2"
@@ -54,8 +57,8 @@ class Settings(BaseSettings):
     preload_default_engine: bool = False
 
     # SenseVoice
-    sensevoice_model_dir: Path = _BACKEND_ROOT / "models/SenseVoiceSmall"
-    sensevoice_src_path: Path = Path("/home/yami/AI/audio/ASR/SenseVoice")
+    sensevoice_model_dir: Path = Path("models/SenseVoiceSmall")
+    sensevoice_src_path: Path | None = None
     default_sensevoice_device: str = "cuda:0"
     sensevoice_batch_size_s: int = 60
 
@@ -63,7 +66,7 @@ class Settings(BaseSettings):
     fireredasr2_src_path: Path | None = None
     default_fireredasr2_model: str = "FireRedASR2-AED"
     default_fireredasr2_device: Literal["cpu", "cuda"] = "cuda"
-    fireredasr2_model_dir: Path = _BACKEND_ROOT / "models/fireredasr2/FireRedASR2-AED"
+    fireredasr2_model_dir: Path = Path("models/fireredasr2/FireRedASR2-AED")
     fireredasr2_asr_type: Literal["aed", "llm"] = "aed"
     fireredasr2_beam_size: int = 3
     fireredasr2_batch_size: int = 1
@@ -72,7 +75,7 @@ class Settings(BaseSettings):
 
     # FireRedVAD for native streaming endpoint detection
     firered_vad_src_path: Path | None = None
-    firered_vad_model_dir: Path = _BACKEND_ROOT / "models/fireredasr2/FireRedVAD/Stream-VAD"
+    firered_vad_model_dir: Path = Path("models/fireredasr2/FireRedVAD/Stream-VAD")
     firered_vad_use_gpu: bool = False
     firered_vad_speech_threshold: float = 0.25
 
@@ -83,20 +86,22 @@ class Settings(BaseSettings):
 
     # Qwen3-ASR
     default_qwen3asr_model: str = "Qwen/Qwen3-ASR-1.7B"
-    qwen3asr_model_dir: Path = _BACKEND_ROOT / "models/Qwen3-ASR-1.7B"
+    qwen3asr_model_dir: Path = Path("models/Qwen3-ASR-1.7B")
     default_qwen3asr_device: str = "cuda:0"
     qwen3asr_torch_dtype: str = "bfloat16"
 
     # X-ASR true streaming Zipformer
     default_x_asr_model: str = "chunk-960ms-model"
-    x_asr_model_dir: Path = (
-        _PROJECT_ROOT
-        / "thirdparty/X-ASR/X-ASR-zh-en/deployment/models/chunk-960ms-model"
+    x_asr_model_dir: Path = Path(
+        "../thirdparty/X-ASR/X-ASR-zh-en/deployment/models/chunk-960ms-model"
     )
     default_x_asr_provider: Literal["cpu", "cuda"] = "cuda"
     x_asr_num_threads: int = 1
     x_asr_text_format: Literal["none", "lower", "capitalize"] = "none"
     x_asr_cuda_library_path: str = ""
+    x_asr_libstdcpp_path: Path | None = None
+    x_asr_isolate_cuda: bool = True
+    x_asr_worker_timeout_sec: int = 90
 
     # ── Pipeline feature flags ─────────────────────────────────────────────
     enable_vad: bool = False
@@ -120,6 +125,7 @@ class Settings(BaseSettings):
 
     # ── Task / upload limits ──────────────────────────────────────────────────
     max_upload_size_mb: int = 500
+    transcribe_timeout_sec: int = 20
     sync_max_duration_sec: float = 60.0
     celery_task_time_limit: int = 3600
     celery_task_always_eager: bool = False
@@ -169,12 +175,17 @@ class Settings(BaseSettings):
 
     def _resolve_relative_paths(self) -> None:
         """Resolve local paths independently of the process cwd."""
+        if not self.project_root.is_absolute():
+            self.project_root = (_BACKEND_ROOT / self.project_root).resolve()
+
         data_path_fields = (
             "audio_upload_dir",
             "transcript_dir",
             "archive_dir",
+            "tts_data_dir",
         )
         model_path_fields = (
+            "frontend_desktop_dir",
             "models_dir",
             "sensevoice_model_dir",
             "sensevoice_src_path",
@@ -186,7 +197,7 @@ class Settings(BaseSettings):
         for name in data_path_fields:
             value = getattr(self, name)
             if isinstance(value, Path) and not value.is_absolute():
-                setattr(self, name, (_PROJECT_ROOT / value).resolve())
+                setattr(self, name, (self.project_root / value).resolve())
 
         for name in model_path_fields:
             value = getattr(self, name)
@@ -197,6 +208,10 @@ class Settings(BaseSettings):
             self.fireredasr2_src_path = (_BACKEND_ROOT / self.fireredasr2_src_path).resolve()
         if self.firered_vad_src_path is not None and not self.firered_vad_src_path.is_absolute():
             self.firered_vad_src_path = (_BACKEND_ROOT / self.firered_vad_src_path).resolve()
+        if self.gpt_sovits_dir is not None and not self.gpt_sovits_dir.is_absolute():
+            self.gpt_sovits_dir = (_BACKEND_ROOT / self.gpt_sovits_dir).resolve()
+        if self.x_asr_libstdcpp_path is not None and not self.x_asr_libstdcpp_path.is_absolute():
+            self.x_asr_libstdcpp_path = (_BACKEND_ROOT / self.x_asr_libstdcpp_path).resolve()
 
     def _resolve_database_url(self) -> None:
         """Resolve relative SQLite database paths against the project data root."""
@@ -208,9 +223,19 @@ class Settings(BaseSettings):
                 return
             path = Path(db_path)
             if not path.is_absolute():
-                path = (_PROJECT_ROOT / path).resolve()
+                path = (self.project_root / path).resolve()
                 self.database_url = f"{prefix}{path}"
             return
+
+    def x_asr_cuda_library_roots(self) -> tuple[Path, ...]:
+        roots: list[Path] = []
+        for item in self.x_asr_cuda_library_path.split(os.pathsep):
+            raw = item.strip()
+            if not raw:
+                continue
+            path = Path(raw).expanduser()
+            roots.append(path if path.is_absolute() else (_BACKEND_ROOT / path).resolve())
+        return tuple(roots)
 
     # ── Convenience helpers ───────────────────────────────────────────────────
     @property

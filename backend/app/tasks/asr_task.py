@@ -153,12 +153,27 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
 
             # ── 6. ASR inference ──────────────────────────────────────────
             manager = get_model_manager()
-            model_started = time.perf_counter()
-            engine = await manager.get_engine(engine_name)
-            timing["model_ready_sec"] = round(time.perf_counter() - model_started, 6)
-            asr_started = time.perf_counter()
-            result = await engine.transcribe(audio_bytes, options)
-            timing["asr_sec"] = round(time.perf_counter() - asr_started, 6)
+
+            async def load_and_transcribe():
+                model_started = time.perf_counter()
+                engine = await manager.get_engine(engine_name)
+                timing["model_ready_sec"] = round(time.perf_counter() - model_started, 6)
+                asr_started = time.perf_counter()
+                result = await engine.transcribe(audio_bytes, options)
+                timing["asr_sec"] = round(time.perf_counter() - asr_started, 6)
+                return result
+
+            timeout_sec = max(
+                0,
+                int(engine_opts_raw.get("timeout_sec", settings.transcribe_timeout_sec)),
+            )
+            if timeout_sec > 0:
+                try:
+                    result = await asyncio.wait_for(load_and_transcribe(), timeout=timeout_sec)
+                except TimeoutError as exc:
+                    raise TimeoutError(f"ASR execution exceeded {timeout_sec} seconds") from exc
+            else:
+                result = await load_and_transcribe()
             logger.info(
                 "Task %s: ASR complete — %d chars, engine=%s",
                 task_id, len(result.full_text), result.engine_name,

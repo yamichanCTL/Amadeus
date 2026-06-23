@@ -23,9 +23,11 @@
 
 普通录音使用浏览器 `MediaRecorder` 生成 `audio/webm;codecs=opus`，停止后与文件识别共用 `POST /v1/transcribe`。应用级 `speechRecorder` 会预热当前真实麦克风，触发后立即使用已存活轨道并以 100 ms timeslice 采集，避免设备/AEC 初始化吞掉开头。录音启动失败会清理麦克风轨道并恢复空闲状态；网络层 `Failed to fetch` 会显示实际 ASR 请求目标，并提示检查后端、后端地址、HTTPS/HTTP 混合内容和 CORS。
 
-录音浮窗位于屏幕中下方，采集阶段用真实 RMS/peak 驱动波形，提交后循环显示 `thinking.` / `thinking..` / `thinking...`。处理中再次按全局触发键或点击“强制停止”，会同步停止录音器、HTTP 请求/轮询、已知后端任务和 WebSocket，并立即恢复可再次开始状态。
+录音浮窗位于屏幕中下方，普通状态尺寸为 200×32。采集阶段只显示“语音输入中”，并把真实 RMS/peak 连续追加到 28 段时间历史波形；提交后循环显示 `thinking.` / `thinking..` / `thinking...`。处理中再次按全局触发键或点击“强制停止”，会同步停止录音器、HTTP 请求/轮询、已知后端任务和 WebSocket，并立即恢复可再次开始状态。
 
-自动输入先写剪贴板，再由 Electron 主进程向原前台窗口发送标准 Ctrl+V，可用于 VS Code/Codex 输入框和浏览器文本框；失败时保留剪贴板并显示明确错误。详见[输入、浮窗与跨应用注入](INPUT_AND_OVERLAYS.md)。
+自动输入先由 Electron 主进程检查原前台焦点是否为可编辑文本控件；确认可编辑后才写剪贴板并发送标准 Ctrl+V，成功后直接关闭 Thinking 浮窗，不生成结果框。无法输入时才复用 Thinking 浮窗展示 ASR 结果，并提供“复制”和“×”按钮。详见[输入、浮窗与跨应用注入](INPUT_AND_OVERLAYS.md)。
+
+设置中的任务超时默认 20 秒，并随每次 `/v1/transcribe` 请求发送到后端；后端同步和异步 ASR 推理都使用同一限制。`0` 表示不限制，首次加载大型模型时可按实际机器性能调高。
 
 ## 实时预览与字幕控制
 

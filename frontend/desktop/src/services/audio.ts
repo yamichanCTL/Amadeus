@@ -159,6 +159,26 @@ export class AudioRecorder {
 
 export const speechRecorder = new AudioRecorder()
 
+/** Capture system audio output (speaker loopback) for offline ASR.
+ *  Uses getDisplayMedia with the Electron display media request handler
+ *  configured in main.ts to bypass the source-picker UI. */
+export async function captureSpeakerAudio(): Promise<MediaStream> {
+  // Request display media with system audio — the Electron main process
+  // handler auto-selects the first screen and enables audio loopback.
+  const stream = await navigator.mediaDevices.getDisplayMedia({
+    video: { width: 1, height: 1, frameRate: 1 } as MediaTrackConstraints,
+    audio: true,
+  })
+  // Stop the video track immediately — we only need the audio
+  stream.getVideoTracks().forEach((track) => track.stop())
+  const audioTracks = stream.getAudioTracks()
+  if (!audioTracks.length) {
+    stream.getTracks().forEach((track) => track.stop())
+    throw new Error('扬声器采集失败：系统未返回音频轨道，请确认 Windows 正在播放声音')
+  }
+  return stream
+}
+
 export async function listAudioInputDevices() {
   const devices = await navigator.mediaDevices.enumerateDevices()
   return devices.filter((device) => device.kind === 'audioinput')
@@ -177,16 +197,20 @@ export type AudioInputTestResult = {
   echoCancellation: boolean | null
 }
 
-export async function testAudioInputDevice(deviceId?: string, durationMs = 1200): Promise<AudioInputTestResult> {
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      deviceId: deviceId ? { exact: deviceId } : undefined,
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: false,
-    },
-    video: false,
-  })
+export async function testAudioInputDevice(
+  deviceId?: string,
+  durationMs = 1200,
+  inputStream?: MediaStream,
+): Promise<AudioInputTestResult> {
+  const stream = inputStream || await navigator.mediaDevices.getUserMedia({
+      audio: {
+        deviceId: deviceId ? { exact: deviceId } : undefined,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: false,
+      },
+      video: false,
+    })
   const context = new AudioContext()
   const source = context.createMediaStreamSource(stream)
   const analyser = context.createAnalyser()
@@ -874,6 +898,7 @@ export class StreamingASRClient {
   private readonly urls: string[]
   private readonly onEvent: (event: StreamEvent) => void
   private pcmStreamer: PcmStreamer | null = null
+  private pendingInputStream: MediaStream | null = null
   private connectTimer: ReturnType<typeof setTimeout> | null = null
   private startedAt = 0
   private speechStartedAt = 0
@@ -898,6 +923,8 @@ export class StreamingASRClient {
     this.startedAt = performance.now()
     this.stoppedByUser = false
     this.closedEmitted = false
+    this.releasePendingInput()
+    this.pendingInputStream = config.inputStream || null
     this.sessionTrace = startTelemetryTrace('websocket', '实时 ASR 会话', config.engine || 'x-asr')
     this.firstPartialSeen = false
     const attempted: string[] = []
@@ -958,7 +985,11 @@ export class StreamingASRClient {
           this.ws.send(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength))
         }
       })
-      this.pcmStreamer.start(config.deviceId, config.inputStream).catch((error) => {
+      const inputStream = this.pendingInputStream || undefined
+      this.pendingInputStream = null
+      this.pcmStreamer.start(config.deviceId, inputStream).catch((error) => {
+        this.pcmStreamer?.stop()
+        this.pcmStreamer = null
         this.onEvent({ type: 'error', message: error instanceof Error ? error.message : '无法启动麦克风实时音频流' })
         this.ws?.close()
       })
@@ -974,6 +1005,7 @@ export class StreamingASRClient {
         if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null }
         this.pcmStreamer?.stop()
         this.pcmStreamer = null
+        this.releasePendingInput()
         emitClosed()
       }
       ws.onerror = () => {
@@ -990,6 +1022,7 @@ export class StreamingASRClient {
         if (index + 1 < this.urls.length) {
           connect(index + 1)
         } else {
+          this.releasePendingInput()
           this.onEvent({ type: 'error', message: `无效 WebSocket 地址: ${wsUrl}` })
         }
         return
@@ -1012,6 +1045,7 @@ export class StreamingASRClient {
           return
         }
         this.ws = null
+        this.releasePendingInput()
         recordTelemetry({ category: 'websocket', operation: 'ASR WebSocket 连接', status: 'error', detail: attempted.join(', ') })
         this.onEvent({
           type: 'error',
@@ -1069,11 +1103,17 @@ export class StreamingASRClient {
     }
     this.pcmStreamer?.stop()
     this.pcmStreamer = null
+    this.releasePendingInput()
     if (ws && ws.readyState !== WebSocket.CLOSED) ws.close(1000, 'client stop')
     if (!this.closedEmitted) {
       this.closedEmitted = true
       this.onEvent({ type: 'closed', intentional: true })
     }
+  }
+
+  private releasePendingInput() {
+    this.pendingInputStream?.getTracks().forEach((track) => track.stop())
+    this.pendingInputStream = null
   }
 }
 

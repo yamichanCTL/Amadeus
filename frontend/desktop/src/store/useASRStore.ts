@@ -164,7 +164,7 @@ export const DEFAULT_SETTINGS: Settings = {
   triggerType: 'keyboard',
   triggerKey: 'AltRight',
   injectMode: 'inject',
-  timeoutSec: 60,
+  timeoutSec: 20,
   allowServerDataCollection: false,
   archiveDir: '',
   audioInputDeviceId: '',
@@ -338,9 +338,13 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
   merged.captionBackgroundOpacity = Math.min(1, Math.max(0, Number(merged.captionBackgroundOpacity) || 0.86))
   merged.captionBoxWidth = Math.min(1200, Math.max(320, Number(merged.captionBoxWidth) || 760))
   merged.captionBoxHeight = Math.min(500, Math.max(96, Number(merged.captionBoxHeight) || 150))
+  merged.timeoutSec = Math.min(3600, Math.max(0, Number.isFinite(Number(merged.timeoutSec)) ? Number(merged.timeoutSec) : 20))
+  const useSpeakerInput = merged.inputSource === 'speaker' || merged.audioInputDeviceId === '__speaker_loopback__'
+  merged.inputSource = useSpeakerInput ? 'speaker' : 'file'
+  merged.audioInputDeviceId = useSpeakerInput ? '__speaker_loopback__' : (merged.audioInputDeviceId || '')
   merged.userId = typeof merged.userId === 'string' ? merged.userId.trim().replace(/[\r\n\0]/g, '').slice(0, 128) : ''
   merged.audioOutputDeviceId = merged.audioOutputDeviceId || ''
-  merged.audioRelayEnabled = typeof merged.audioRelayEnabled === 'boolean' ? merged.audioRelayEnabled : false
+  merged.audioRelayEnabled = useSpeakerInput ? false : typeof merged.audioRelayEnabled === 'boolean' ? merged.audioRelayEnabled : false
   merged.autoLaunchEnabled = typeof merged.autoLaunchEnabled === 'boolean' ? merged.autoLaunchEnabled : false
   merged.higgsTtsBaseUrl = merged.higgsTtsBaseUrl || 'http://localhost:8002'
   merged.higgsTtsProvider = merged.higgsTtsProvider === 'boson' ? 'boson' : 'local'

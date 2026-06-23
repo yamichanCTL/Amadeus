@@ -44,22 +44,39 @@ uv sync --extra x-asr --extra dev
 
 ## 配置
 
-后端读取 `backend/.env`。至少按目标机器确认以下字段；路径可以是绝对路径，也可以使用配置类支持的相对路径：
+从模板创建本机配置，实际 `.env` 不提交仓库：
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+后端应用代码不包含部署机绝对路径。数据目录相对 `PROJECT_ROOT` 解析，模型、前端和外部源码目录相对 `backend/` 解析，因此从任意 cwd 启动结果一致。只有本机动态库或项目外源码确实无法用相对路径表达时，才在 `.env` 中写绝对路径。
 
 ```dotenv
 APP_HOST=0.0.0.0
 APP_PORT=8000
 SECRET_KEY=replace-in-production
+PROJECT_ROOT=..
+FRONTEND_DESKTOP_DIR=../frontend/desktop
 DATABASE_URL=sqlite+aiosqlite:///data/asr.db
+MODELS_DIR=models
+AUDIO_UPLOAD_DIR=data/uploads
+TRANSCRIPT_DIR=data/transcripts
+ARCHIVE_DIR=data/archive
 DEFAULT_ENGINE=fireredasr2
 DEFAULT_STREAM_ENGINE=x-asr
-X_ASR_MODEL_DIR=../thirdparty/X-ASR/X-ASR-zh-en/deployment/models/chunk-160ms-model
+X_ASR_MODEL_DIR=../thirdparty/X-ASR/X-ASR-zh-en/deployment/models/chunk-960ms-model
 DEFAULT_X_ASR_PROVIDER=cuda
+X_ASR_CUDA_LIBRARY_PATH=/path/to/cuda12-python-packages/nvidia
+X_ASR_LIBSTDCPP_PATH=/path/to/compatible/libstdc++.so.6
+X_ASR_ISOLATE_CUDA=true
 FIREREDASR2_MODEL_DIR=models/fireredasr2/FireRedASR2-AED
 FIRERED_VAD_MODEL_DIR=models/fireredasr2/FireRedVAD/Stream-VAD
 SENSEVOICE_MODEL_DIR=models/SenseVoiceSmall
 QWEN3ASR_MODEL_DIR=models/Qwen3-ASR-1.7B
 ```
+
+CUDA X-ASR 使用 spawn 子进程隔离 sherpa 的 CUDA 12/cuDNN 9 runtime，避免与主进程 FireRedVAD/PyTorch 的另一套 CUDA/cuDNN 混装。不要关闭 `X_ASR_ISOLATE_CUDA`，除非整个后端进程只加载一套完全一致的 GPU runtime。
 
 生产环境必须更换 `SECRET_KEY`，并按客户端地址设置 `ALLOWED_ORIGINS`。LLM/TTS Token 不应提交到仓库。
 

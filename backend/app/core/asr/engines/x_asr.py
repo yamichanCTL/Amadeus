@@ -3,20 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-import io
+import contextlib
 import ctypes
+import importlib.metadata
+import io
+import multiprocessing
 import os
 import re
 import threading
+import traceback
+import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
-
-_SYSTEM_LIBSTDCPP = Path("/usr/lib/x86_64-linux-gnu/libstdc++.so.6")
-if _SYSTEM_LIBSTDCPP.is_file():
-    # The project venv uses the Miniconda Python executable. Its bundled
-    # libstdc++ is older than the official sherpa CUDA wheel, so load the
-    # newer system ABI before numpy/onnxruntime can bind the old SONAME.
-    ctypes.CDLL(str(_SYSTEM_LIBSTDCPP), mode=ctypes.RTLD_GLOBAL)
+from typing import Any
 
 import numpy as np
 import soundfile as sf
@@ -37,6 +36,7 @@ _CJK_PUNCT = re.escape("，。！？；：、（）《》〈〉【】「」『�
 _ASCII_PUNCT = re.escape(",.!?;:%)]}")
 X_ASR_VARIANTS = (160, 480, 960, 1920)
 X_ASR_MODEL_NAMES = tuple(f"chunk-{chunk_ms}ms-model" for chunk_ms in X_ASR_VARIANTS)
+_SPAWN_ENV_LOCK = threading.RLock()
 
 
 class XASREngine(BaseASREngine):
@@ -66,6 +66,7 @@ class XASREngine(BaseASREngine):
         self._num_threads = num_threads or settings.x_asr_num_threads
         self._text_format = text_format or settings.x_asr_text_format
         self._recognizer: Any = None
+        self._worker: _XASRWorkerClient | None = None
         self._decode_lock = threading.RLock()
 
     @property
@@ -77,10 +78,26 @@ class XASREngine(BaseASREngine):
         return True
 
     async def load(self) -> None:
-        if self._recognizer is not None:
+        if self.is_loaded:
             return
         paths = self._model_paths()
         self._validate_model_paths(paths)
+        if self._provider == "cuda" and settings.x_asr_isolate_cuda:
+            worker = _XASRWorkerClient(
+                paths=paths,
+                num_threads=self._num_threads,
+                chunk_ms=self._chunk_ms(),
+                cuda_roots=settings.x_asr_cuda_library_roots(),
+                libstdcpp_path=settings.x_asr_libstdcpp_path,
+                timeout_sec=settings.x_asr_worker_timeout_sec,
+            )
+            try:
+                await asyncio.to_thread(worker.start)
+            except Exception as exc:
+                worker.close()
+                raise classify_model_error(exc, self.ENGINE_NAME) from exc
+            self._worker = worker
+            return
         try:
             import sherpa_onnx  # type: ignore[import-not-found]
         except ImportError as exc:
@@ -95,7 +112,10 @@ class XASREngine(BaseASREngine):
                 "CPU fallback is disabled so the UI cannot report a false CUDA load."
             )
         if self._provider == "cuda":
-            _preload_cuda_libraries(settings.x_asr_cuda_library_path)
+            _preload_cuda_libraries(
+                settings.x_asr_cuda_library_roots(),
+                settings.x_asr_libstdcpp_path,
+            )
 
         def build() -> Any:
             recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
@@ -132,11 +152,14 @@ class XASREngine(BaseASREngine):
         self._recognizer = recognizer
 
     async def unload(self) -> None:
+        worker, self._worker = self._worker, None
+        if worker is not None:
+            await asyncio.to_thread(worker.close)
         self._recognizer = None
 
     @property
     def is_loaded(self) -> bool:
-        return self._recognizer is not None
+        return self._worker is not None or self._recognizer is not None
 
     async def create_streaming_session(
         self,
@@ -147,6 +170,15 @@ class XASREngine(BaseASREngine):
             raise ValueError(f"X-ASR expects {_SAMPLE_RATE} Hz PCM, got {sample_rate} Hz")
         if not self.is_loaded:
             await self.load()
+        if self._worker is not None:
+            stream_id = await asyncio.to_thread(self._worker.create_stream)
+            return _XASRWorkerStreamingSession(
+                worker=self._worker,
+                stream_id=stream_id,
+                text_format=self._text_format,
+                language=(options.language if options else None),
+                on_runtime_failure=self._mark_runtime_failed,
+            )
         assert self._recognizer is not None
         return _XASRStreamingSession(
             recognizer=self._recognizer,
@@ -195,9 +227,11 @@ class XASREngine(BaseASREngine):
                     for path in paths.values()
                 ),
                 "runtime": "sherpa-onnx",
-                "runtime_version": _sherpa_version(),
-                "cuda_runtime": "+cuda" in _sherpa_version(),
+                "runtime_version": self._runtime_version(),
+                "cuda_runtime": "+cuda" in self._runtime_version(),
                 "cuda_library_path": settings.x_asr_cuda_library_path,
+                "cuda_isolated": self._provider == "cuda" and settings.x_asr_isolate_cuda,
+                "worker_pid": self._worker.pid if self._worker is not None else None,
             }
         )
         return base
@@ -249,6 +283,302 @@ class XASREngine(BaseASREngine):
         # Do not keep reporting a poisoned native recognizer as loaded. The
         # manager will retry load/warm-up on the next explicit request.
         self._recognizer = None
+        worker, self._worker = self._worker, None
+        if worker is not None:
+            worker.close()
+
+    def _runtime_version(self) -> str:
+        if self._worker is not None:
+            return self._worker.runtime_version
+        return _sherpa_version(import_runtime=not settings.x_asr_isolate_cuda)
+
+
+class _XASRWorkerClient:
+    """Own a clean spawned process for the CUDA 12 sherpa runtime."""
+
+    def __init__(
+        self,
+        paths: dict[str, Path],
+        num_threads: int,
+        chunk_ms: int,
+        cuda_roots: tuple[Path, ...],
+        libstdcpp_path: Path | None,
+        timeout_sec: int,
+    ) -> None:
+        self._config = {
+            "paths": {name: str(path) for name, path in paths.items()},
+            "num_threads": num_threads,
+            "chunk_ms": chunk_ms,
+            "cuda_roots": [str(path) for path in cuda_roots],
+            "libstdcpp_path": str(libstdcpp_path) if libstdcpp_path else None,
+        }
+        self._timeout_sec = max(5, timeout_sec)
+        self._lock = threading.RLock()
+        self._connection: Any = None
+        self._process: Any = None
+        self.runtime_version = "not-started"
+
+    @property
+    def pid(self) -> int | None:
+        return self._process.pid if self._process is not None else None
+
+    def start(self) -> None:
+        if self._process is not None and self._process.is_alive():
+            return
+        context = multiprocessing.get_context("spawn")
+        parent, child = context.Pipe()
+        process = context.Process(
+            target=_x_asr_worker_main,
+            args=(child, self._config),
+            name="x-asr-cuda-worker",
+            daemon=True,
+        )
+        # multiprocessing's spawn mode execs the current Python interpreter.
+        # Supply ABI/runtime paths before that exec: loading libstdc++ later via
+        # ctypes cannot replace Miniconda's older copy once it is already bound.
+        with _SPAWN_ENV_LOCK:
+            original_preload = os.environ.get("LD_PRELOAD")
+            original_library_path = os.environ.get("LD_LIBRARY_PATH")
+            try:
+                if self._config["libstdcpp_path"]:
+                    os.environ["LD_PRELOAD"] = os.pathsep.join(
+                        item
+                        for item in (self._config["libstdcpp_path"], original_preload)
+                        if item
+                    )
+                cuda_dirs = _cuda_library_directories(
+                    tuple(Path(item) for item in self._config["cuda_roots"])
+                )
+                if cuda_dirs:
+                    library_paths = [str(path) for path in cuda_dirs]
+                    if original_library_path:
+                        library_paths.append(original_library_path)
+                    os.environ["LD_LIBRARY_PATH"] = os.pathsep.join(
+                        library_paths
+                    )
+                process.start()
+            finally:
+                if original_preload is None:
+                    os.environ.pop("LD_PRELOAD", None)
+                else:
+                    os.environ["LD_PRELOAD"] = original_preload
+                if original_library_path is None:
+                    os.environ.pop("LD_LIBRARY_PATH", None)
+                else:
+                    os.environ["LD_LIBRARY_PATH"] = original_library_path
+        child.close()
+        self._connection = parent
+        self._process = process
+        response = self._receive("启动", self._timeout_sec)
+        if response.get("status") != "ready":
+            error = response.get("error", "X-ASR CUDA worker failed to start")
+            self.close(force=True)
+            raise RuntimeError(error)
+        self.runtime_version = str(response.get("runtime_version", "unknown"))
+
+    def create_stream(self) -> str:
+        return str(self._request("create_stream")["stream_id"])
+
+    def accept_pcm(self, stream_id: str, pcm_bytes: bytes) -> str:
+        return str(self._request("accept", stream_id=stream_id, pcm=pcm_bytes).get("text", ""))
+
+    def finish(self, stream_id: str) -> str:
+        return str(self._request("finish", stream_id=stream_id).get("text", ""))
+
+    def close(self, force: bool = False) -> None:
+        with self._lock:
+            connection, process = self._connection, self._process
+            self._connection = None
+            self._process = None
+            if connection is not None and process is not None and process.is_alive() and not force:
+                try:
+                    connection.send({"command": "shutdown"})
+                    if connection.poll(2):
+                        connection.recv()
+                except (BrokenPipeError, EOFError, OSError):
+                    pass
+            if connection is not None:
+                connection.close()
+            if process is not None:
+                process.join(timeout=2)
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=2)
+
+    def _request(self, command: str, **payload: Any) -> dict[str, Any]:
+        with self._lock:
+            if self._connection is None or self._process is None or not self._process.is_alive():
+                raise RuntimeError("X-ASR CUDA worker is not running")
+            try:
+                self._connection.send({"command": command, **payload})
+            except (BrokenPipeError, EOFError, OSError) as exc:
+                raise RuntimeError("X-ASR CUDA worker connection was lost") from exc
+            response = self._receive(command, self._timeout_sec)
+            if response.get("status") != "ok":
+                raise RuntimeError(str(response.get("error", f"X-ASR worker {command} failed")))
+            return response
+
+    def _receive(self, operation: str, timeout_sec: int) -> dict[str, Any]:
+        if self._connection is None or self._process is None:
+            raise RuntimeError("X-ASR CUDA worker is not initialized")
+        if not self._connection.poll(timeout_sec):
+            if not self._process.is_alive():
+                raise RuntimeError(
+                    "X-ASR CUDA worker exited during "
+                    f"{operation} (exit code {self._process.exitcode})"
+                )
+            raise TimeoutError(f"X-ASR CUDA worker {operation} timed out after {timeout_sec}s")
+        try:
+            return dict(self._connection.recv())
+        except EOFError as exc:
+            raise RuntimeError("X-ASR CUDA worker closed its connection") from exc
+
+
+def _x_asr_worker_main(connection: Any, config: dict[str, Any]) -> None:
+    """Load CUDA/sherpa only after the spawned interpreter has a clean ABI."""
+
+    streams: dict[str, Any] = {}
+    try:
+        _preload_cuda_libraries(
+            tuple(Path(item) for item in config["cuda_roots"]),
+            Path(config["libstdcpp_path"]) if config.get("libstdcpp_path") else None,
+        )
+        import sherpa_onnx  # type: ignore[import-not-found]
+
+        runtime_version = str(getattr(sherpa_onnx, "__version__", "unknown"))
+        if "+cuda" not in runtime_version:
+            raise RuntimeError(
+                f"Installed sherpa-onnx {runtime_version} is CPU-only; "
+                "an official +cuda wheel is required"
+            )
+        paths = config["paths"]
+        recognizer = sherpa_onnx.OnlineRecognizer.from_transducer(
+            tokens=paths["tokens"],
+            encoder=paths["encoder"],
+            decoder=paths["decoder"],
+            joiner=paths["joiner"],
+            num_threads=int(config["num_threads"]),
+            sample_rate=_SAMPLE_RATE,
+            feature_dim=80,
+            decoding_method="greedy_search",
+            provider="cuda",
+            model_type="zipformer2",
+            enable_endpoint_detection=False,
+        )
+        _warm_up_recognizer(recognizer, int(config["chunk_ms"]))
+        connection.send(
+            {
+                "status": "ready",
+                "runtime_version": runtime_version,
+                "pid": os.getpid(),
+            }
+        )
+
+        while True:
+            request = connection.recv()
+            command = request.get("command")
+            try:
+                if command == "shutdown":
+                    connection.send({"status": "ok"})
+                    return
+                if command == "create_stream":
+                    stream_id = uuid.uuid4().hex
+                    streams[stream_id] = recognizer.create_stream()
+                    connection.send({"status": "ok", "stream_id": stream_id})
+                    continue
+
+                stream_id = str(request.get("stream_id", ""))
+                stream = streams.get(stream_id)
+                if stream is None:
+                    raise RuntimeError(f"Unknown X-ASR stream: {stream_id}")
+                if command == "accept":
+                    pcm_bytes = bytes(request.get("pcm", b""))
+                    samples = np.frombuffer(pcm_bytes, dtype="<i2").astype(np.float32) / 32768.0
+                    stream.accept_waveform(_SAMPLE_RATE, samples)
+                    _drain_ready_stream(recognizer, stream)
+                    connection.send({"status": "ok", "text": recognizer.get_result(stream)})
+                    continue
+                if command == "finish":
+                    stream.input_finished()
+                    _drain_ready_stream(recognizer, stream)
+                    text = recognizer.get_result(stream)
+                    streams.pop(stream_id, None)
+                    connection.send({"status": "ok", "text": text})
+                    continue
+                raise RuntimeError(f"Unsupported X-ASR worker command: {command}")
+            except Exception as exc:
+                connection.send({"status": "error", "error": f"{type(exc).__name__}: {exc}"})
+    except EOFError:
+        return
+    except Exception as exc:
+        with contextlib.suppress(BrokenPipeError, EOFError, OSError):
+            connection.send(
+                {
+                    "status": "error",
+                    "error": f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}",
+                }
+            )
+    finally:
+        connection.close()
+
+
+class _XASRWorkerStreamingSession(BaseStreamingASRSession):
+    def __init__(
+        self,
+        worker: _XASRWorkerClient,
+        stream_id: str,
+        text_format: str,
+        language: str | None,
+        on_runtime_failure: Callable[[], None],
+    ) -> None:
+        self._worker = worker
+        self._stream_id = stream_id
+        self._text_format = text_format
+        self._language = language if language not in {None, "auto"} else None
+        self._on_runtime_failure = on_runtime_failure
+        self._last_text = ""
+        self._samples = 0
+        self._finished = False
+
+    async def accept_pcm(self, pcm_bytes: bytes) -> ASRResult | None:
+        if self._finished:
+            raise RuntimeError("X-ASR streaming session is already finished")
+        if len(pcm_bytes) % 2:
+            pcm_bytes = pcm_bytes[:-1]
+        if not pcm_bytes:
+            return None
+        self._samples += len(pcm_bytes) // 2
+        try:
+            text = await asyncio.to_thread(self._worker.accept_pcm, self._stream_id, pcm_bytes)
+        except Exception as exc:
+            self._on_runtime_failure()
+            raise classify_model_error(exc, "x-asr") from exc
+        text = _format_text(text, self._text_format)
+        if text == self._last_text:
+            return None
+        self._last_text = text
+        return self._result(text, is_final=False)
+
+    async def finish(self) -> ASRResult:
+        if not self._finished:
+            self._finished = True
+            try:
+                text = await asyncio.to_thread(self._worker.finish, self._stream_id)
+            except Exception as exc:
+                self._on_runtime_failure()
+                raise classify_model_error(exc, "x-asr") from exc
+            self._last_text = _format_text(text, self._text_format)
+        return self._result(self._last_text, is_final=True)
+
+    def _result(self, text: str, is_final: bool) -> ASRResult:
+        duration = self._samples / _SAMPLE_RATE
+        return ASRResult(
+            full_text=text,
+            segments=[Segment(start=0.0, end=duration, text=text)] if text else [],
+            language=self._language,
+            engine_name="x-asr",
+            raw={"is_final": is_final, "duration_sec": duration, "streaming": True},
+        )
 
 
 class _XASRStreamingSession(BaseStreamingASRSession):
@@ -359,9 +689,15 @@ def _is_lfs_pointer(path: Path) -> bool:
     return path.read_bytes().startswith(b"version https://git-lfs.github.com/spec/v1")
 
 
-def _sherpa_version() -> str:
+def _sherpa_version(import_runtime: bool = True) -> str:
+    if not import_runtime:
+        try:
+            return importlib.metadata.version("sherpa-onnx")
+        except importlib.metadata.PackageNotFoundError:
+            return "not-installed"
     try:
         import sherpa_onnx  # type: ignore[import-not-found]
+
         return str(getattr(sherpa_onnx, "__version__", "unknown"))
     except ImportError:
         return "not-installed"
@@ -387,14 +723,19 @@ def _drain_ready_stream(recognizer: Any, stream: Any) -> None:
     raise RuntimeError("X-ASR warm-up decoder did not become idle")
 
 
-def _preload_cuda_libraries(configured_root: str) -> None:
-    roots: list[Path] = []
-    if configured_root.strip():
-        roots.extend(Path(item).expanduser() for item in configured_root.split(os.pathsep) if item.strip())
-    roots.extend([
-        Path(os.sys.prefix) / f"lib/python{os.sys.version_info.major}.{os.sys.version_info.minor}/site-packages/nvidia",
-        Path("/usr/local/cuda/lib64"),
-    ])
+def _preload_cuda_libraries(
+    configured_roots: tuple[Path, ...],
+    libstdcpp_path: Path | None,
+) -> None:
+    if libstdcpp_path is not None:
+        if not libstdcpp_path.is_file():
+            raise RuntimeError(f"X-ASR libstdc++ does not exist: {libstdcpp_path}")
+        ctypes.CDLL(str(libstdcpp_path), mode=ctypes.RTLD_GLOBAL)
+    if not configured_roots:
+        raise RuntimeError(
+            "X-ASR CUDA runtime path is not configured. Set X_ASR_CUDA_LIBRARY_PATH "
+            "to the NVIDIA runtime package root used by the sherpa CUDA wheel."
+        )
     required = (
         "libcudart.so.12",
         "libcublasLt.so.12",
@@ -405,7 +746,7 @@ def _preload_cuda_libraries(configured_root: str) -> None:
     )
     loaded: set[str] = set()
     for soname in required:
-        for root in roots:
+        for root in configured_roots:
             if not root.exists():
                 continue
             matches = list(root.rglob(soname)) if root.is_dir() else []
@@ -422,5 +763,17 @@ def _preload_cuda_libraries(configured_root: str) -> None:
         raise RuntimeError(
             "X-ASR CUDA runtime libraries are missing: "
             + ", ".join(missing)
-            + ". Set X_ASR_CUDA_LIBRARY_PATH to the directory containing NVIDIA runtime libraries."
+            + ". Set X_ASR_CUDA_LIBRARY_PATH to the matching CUDA 12 NVIDIA runtime root."
         )
+
+
+def _cuda_library_directories(configured_roots: tuple[Path, ...]) -> tuple[Path, ...]:
+    directories: list[Path] = []
+    for root in configured_roots:
+        if not root.is_dir():
+            continue
+        for library in root.rglob("*.so*"):
+            parent = library.parent
+            if parent not in directories:
+                directories.append(parent)
+    return tuple(directories)

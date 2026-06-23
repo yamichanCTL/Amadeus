@@ -380,6 +380,7 @@ export type HotwordConfig = {
 
 export type TranscribeOptions = {
   engine: string
+  timeout_sec?: number
   language?: string
   whisper_model?: string
   whisper_task?: 'transcribe' | 'translate'

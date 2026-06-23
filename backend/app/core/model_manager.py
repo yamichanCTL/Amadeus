@@ -268,7 +268,7 @@ def get_model_manager() -> ModelManager:
             "sensevoice",
             model_dir=str(settings.sensevoice_model_dir),
             device=settings.default_sensevoice_device,
-            src_path=str(settings.sensevoice_src_path),
+            src_path=str(settings.sensevoice_src_path) if settings.sensevoice_src_path else None,
             batch_size_s=settings.sensevoice_batch_size_s,
         )
         _manager.configure(

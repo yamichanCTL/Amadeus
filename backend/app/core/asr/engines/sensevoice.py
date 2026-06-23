@@ -46,7 +46,8 @@ class SenseVoiceEngine(BaseASREngine):
     ) -> None:
         self._model_dir = Path(model_dir or settings.sensevoice_model_path())
         self._device = device or settings.default_sensevoice_device
-        self._src_path = Path(src_path or settings.sensevoice_src_path)
+        configured_src = src_path or settings.sensevoice_src_path
+        self._src_path = Path(configured_src) if configured_src else None
         self._batch_size_s = batch_size_s or settings.sensevoice_batch_size_s
         self._extra = extra
         self._model: Any = None
@@ -195,6 +196,8 @@ class SenseVoiceEngine(BaseASREngine):
         return self._runtime_device
 
     def _ensure_src_path(self) -> None:
+        if self._src_path is None:
+            raise RuntimeError("SENSEVOICE_SRC_PATH is not configured in backend/.env")
         src = str(self._src_path)
         if src not in sys.path:
             sys.path.insert(0, src)
@@ -204,6 +207,8 @@ class SenseVoiceEngine(BaseASREngine):
             raise RuntimeError(f"SenseVoice model directory not found: {self._model_dir}")
         if not (self._model_dir / "model.pt").exists():
             raise RuntimeError(f"SenseVoice model.pt not found in {self._model_dir}")
+        if self._src_path is None:
+            raise RuntimeError("SENSEVOICE_SRC_PATH is not configured in backend/.env")
         if not (self._src_path / "model.py").exists():
             raise RuntimeError(f"SenseVoice reference model.py not found: {self._src_path}")
 
@@ -227,7 +232,7 @@ def _decode_audio(audio_bytes: bytes) -> tuple[int, np.ndarray]:
 
 
 def _decode_audio_ffmpeg(audio_bytes: bytes) -> tuple[int, np.ndarray]:
-    ffmpeg = shutil.which("ffmpeg") or ("/usr/bin/ffmpeg" if Path("/usr/bin/ffmpeg").exists() else None)
+    ffmpeg = shutil.which("ffmpeg")
     if ffmpeg is None:
         raise RuntimeError(
             "ffmpeg is required to decode this audio format for SenseVoice, but it was not found."

@@ -38,6 +38,12 @@ class TranscribeOptions(BaseModel):
         description="Offline ASR engine name.",
         examples=["fireredasr2", "sensevoice"],
     )
+    timeout_sec: int = Field(
+        default=20,
+        ge=0,
+        le=3600,
+        description="ASR execution timeout in seconds; 0 disables the limit.",
+    )
     language: str | None = Field(
         None,
         description="BCP-47 language code, e.g. 'zh', 'en'. None = auto-detect.",

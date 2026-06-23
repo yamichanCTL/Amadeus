@@ -12,18 +12,17 @@ import asyncio
 import logging
 import os
 import subprocess
-import tempfile
-import time
 from pathlib import Path
 from typing import Any
 
 import httpx
 
+from app.config import get_settings
+
 logger = logging.getLogger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-TTS_DIR = PROJECT_ROOT / "tts"
-GPT_SOVITS_DIR = Path("/home/yami/AI/GPT-SoVITS")
+settings = get_settings()
+TTS_DIR = settings.tts_data_dir
 PRETRAINED_DIR = TTS_DIR / "pretrained_models"
 MODELS_DIR = TTS_DIR / "models"
 
@@ -51,7 +50,7 @@ class GPTSoVITSServer:
         gpt_sovits_path: Path | None = None,
     ):
         self.server_url = server_url.rstrip("/")
-        self.gpt_sovits_path = gpt_sovits_path or GPT_SOVITS_DIR
+        self.gpt_sovits_path = gpt_sovits_path or settings.gpt_sovits_dir
         self._process: subprocess.Popen | None = None
 
     @property
@@ -73,6 +72,9 @@ class GPTSoVITSServer:
             logger.info("GPT-SoVITS server already running at %s", self.server_url)
             return True
 
+        if self.gpt_sovits_path is None:
+            logger.error("GPT_SOVITS_DIR is not configured")
+            return False
         api_path = self.gpt_sovits_path / "api_v2.py"
         if not api_path.exists():
             logger.error("GPT-SoVITS api_v2.py not found at %s", api_path)

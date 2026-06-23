@@ -28,19 +28,22 @@
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `file` | File | 音频/视频文件 |
-| `options` | JSON string | 引擎、语言、标点、热词和归档配置 |
+| `options` | JSON string | 引擎、语言、超时、标点、热词和归档配置 |
 
 `options` 示例：
 
 ```json
 {
   "engine": "sensevoice",
+  "timeout_sec": 20,
   "language": "zh",
   "enable_punctuation": false,
   "enable_hotwords": true,
   "allow_server_data_collection": false
 }
 ```
+
+`timeout_sec` 默认取后端 `TRANSCRIBE_TIMEOUT_SEC=20`；同步请求与 Celery 异步任务都会限制模型加载加 ASR 推理时长。传 `0` 可关闭该限制，超时的同步请求返回 HTTP 504。
 
 `WS /v1/stream` 和 `WS /v1/tts/higgs/stream` 的致命模型错误返回稳定结构：
 

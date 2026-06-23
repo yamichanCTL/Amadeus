@@ -7,6 +7,7 @@ Uses the async_client fixture (no real models, in-memory DB).
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import httpx
@@ -15,8 +16,11 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.tests.conftest import make_wav_bytes
+from app.api.v1.transcribe import _run_with_timeout
+from app.config import get_settings
 from app.db.crud import create_task
 from app.db.models import ASRTask
+from app.schemas.transcribe import TranscribeOptions
 
 
 class _FakeLLMResponse:
@@ -132,6 +136,20 @@ async def test_transcribe_short_audio_sync(async_client: AsyncClient) -> None:
     assert data["full_text"] == "测试识别结果"
     assert data["engine_used"] == "mock"
     assert data["task_id"]
+
+
+def test_transcribe_timeout_defaults_to_twenty_seconds() -> None:
+    assert get_settings().transcribe_timeout_sec == 20
+    assert TranscribeOptions(engine="mock").timeout_sec == 20
+
+
+@pytest.mark.asyncio
+async def test_transcribe_timeout_guard() -> None:
+    async def slow_operation() -> None:
+        await asyncio.sleep(1)
+
+    with pytest.raises(TimeoutError, match="ASR execution exceeded 0.01 seconds"):
+        await _run_with_timeout(slow_operation, 0.01)
 
 
 @pytest.mark.asyncio

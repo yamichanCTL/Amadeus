@@ -70,6 +70,12 @@ export default function App() {
   useEffect(() => {
     let alive = true
     const check = async () => {
+      const serverUrl = useASRStore.getState().settings.serverUrl
+      // 用户未配置后端地址时不尝试连接，避免自动连接外网被拦截
+      if (!serverUrl) {
+        if (alive) setServerStatus('disconnected')
+        return
+      }
       if (useASRStore.getState().serverStatus !== 'connected') setServerStatus('checking')
       try {
         await api.health()
@@ -130,13 +136,18 @@ export default function App() {
       audioRelayMixer.stop()
       return
     }
+    if (settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__') {
+      audioRelayMixer.stop()
+      updateSettings({ audioRelayEnabled: false })
+      return
+    }
     void audioRelayMixer.start({
       inputDeviceId: settings.audioInputDeviceId || undefined,
       outputDeviceId: settings.audioOutputDeviceId || undefined,
     }).catch((relayError: unknown) => {
       setError(relayError instanceof Error ? `音频中转启动失败：${relayError.message}` : '音频中转启动失败')
     })
-  }, [setError, settings.audioInputDeviceId, settings.audioOutputDeviceId, settings.audioRelayEnabled])
+  }, [setError, settings.audioInputDeviceId, settings.audioOutputDeviceId, settings.audioRelayEnabled, settings.inputSource, updateSettings])
 
   useEffect(() => {
     if (isE2EMode) return
@@ -144,8 +155,13 @@ export default function App() {
       speechRecorder.cancel()
       return
     }
+    // 扬声器模式下不需要预热麦克风
+    if (settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__') {
+      speechRecorder.cancel()
+      return
+    }
     void speechRecorder.prepare(settings.audioInputDeviceId || undefined).catch(() => undefined)
-  }, [settings.audioInputDeviceId, settings.audioRelayEnabled])
+  }, [settings.audioInputDeviceId, settings.audioRelayEnabled, settings.inputSource])
 
   useEffect(() => () => {
     audioRelayMixer.stop()

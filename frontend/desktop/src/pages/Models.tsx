@@ -547,6 +547,7 @@ export function ModelsPage() {
 
   const referenceTranscribeOptions = (): TranscribeOptions => ({
     engine: settings.offlineEngine,
+    timeout_sec: settings.timeoutSec,
     language: settings.defaultLanguage === 'auto' ? undefined : settings.defaultLanguage,
     whisper_model: settings.whisperModel,
     enable_punctuation: settings.enablePunctuation,

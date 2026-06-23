@@ -4,7 +4,7 @@ import { AudioPlayer } from '@/components/AudioPlayer'
 import { DropZone, type LocalAudioFile } from '@/components/DropZone'
 import { RecordButton } from '@/components/RecordButton'
 import { ASRApi, isAsyncResponse, type LLMOperation, type TranscribeOptions, type TranscribeResponse } from '@/services/api'
-import { audioRelayMixer, blobToBase64, speechRecorder } from '@/services/audio'
+import { audioRelayMixer, blobToBase64, captureSpeakerAudio, speechRecorder } from '@/services/audio'
 import { liveCaptionService } from '@/services/liveCaption'
 import { finishTelemetryTrace, recordTelemetryStage, startTelemetryTrace } from '@/services/telemetry'
 import { useASRStore, type UtteranceEntry } from '@/store/useASRStore'
@@ -67,7 +67,7 @@ export function TranscribePage() {
       requestControllerRef.current?.abort()
       // NOTE: do NOT stop liveCaptionService here — it survives page navigation (Req 4b)
       const latest = useASRStore.getState().settings
-      if (!latest.audioRelayEnabled && !liveCaptionService.isActive) {
+      if (!latest.audioRelayEnabled && !liveCaptionService.isActive && latest.inputSource !== 'speaker' && latest.audioInputDeviceId !== '__speaker_loopback__') {
         void recorderRef.current.prepare(latest.audioInputDeviceId || undefined).catch(() => undefined)
       }
     }
@@ -83,6 +83,8 @@ export function TranscribePage() {
   const prepareRecorder = () => {
     const latest = useASRStore.getState().settings
     if (latest.audioRelayEnabled || audioRelayMixer.isActive()) return
+    // 扬声器模式下不需要预热麦克风
+    if (latest.inputSource === 'speaker' || latest.audioInputDeviceId === '__speaker_loopback__') return
     void recorderRef.current.prepare(latest.audioInputDeviceId || undefined).catch(() => undefined)
   }
 
@@ -102,6 +104,7 @@ export function TranscribePage() {
   const buildOptions = (): TranscribeOptions => {
     const options: TranscribeOptions = {
       engine: settings.offlineEngine,
+      timeout_sec: settings.timeoutSec,
       language: settings.defaultLanguage === 'auto' ? undefined : settings.defaultLanguage,
       whisper_model: settings.whisperModel,
       enable_punctuation: settings.enablePunctuation,
@@ -198,16 +201,29 @@ export function TranscribePage() {
       archived_json
     })
 
-    if (settings.injectMode === 'copy' || !autoInject) await window.electronAPI?.textToClipboard(result.full_text)
-    if (settings.injectMode === 'inject' && autoInject) {
+    if (autoInject && settings.injectMode === 'inject') {
+      // Quick trigger recognition: try to inject at cursor
       try {
         const injected = await window.electronAPI?.injectText(result.full_text)
-        if (injected === false) setError('当前平台仅支持复制；识别文本已保存到剪贴板')
+        if (injected === false) {
+          // Platform doesn't support injection — show result overlay
+          await window.electronAPI?.showStatusOverlay('result', 0, result.full_text)
+        } else {
+          // Injection succeeded — hide the status overlay
+          await window.electronAPI?.hideStatusOverlay()
+        }
       } catch (injectError) {
-        await window.electronAPI?.textToClipboard(result.full_text)
-        setError(injectError instanceof Error ? injectError.message : '自动输入失败，文本已复制到剪贴板')
+        // Focus detection or injection failed — let the user choose copy or close.
+        await window.electronAPI?.showStatusOverlay('result', 0, result.full_text)
       }
+    } else if (autoInject && settings.injectMode === 'copy') {
+      await window.electronAPI?.textToClipboard(result.full_text)
+      await window.electronAPI?.showStatusOverlay('result', 0, result.full_text)
+    } else if (!autoInject) {
+      await window.electronAPI?.textToClipboard(result.full_text)
+      await window.electronAPI?.hideStatusOverlay()
     }
+    // For file upload (not autoInject), keep existing behavior in the page
   }
 
   const runTranscription = async (blob: Blob, filename: string, autoInject: boolean) => {
@@ -267,10 +283,11 @@ export function TranscribePage() {
         setError(transcribeError instanceof Error ? transcribeError.message : '转写失败')
         finishTelemetryTrace(trace, transcribeError instanceof Error ? transcribeError.message : '识别失败', 'error')
       }
+      // 出错或取消时隐藏状态覆盖层
+      await window.electronAPI?.hideStatusOverlay()
     } finally {
       if (requestControllerRef.current === controller) requestControllerRef.current = null
       setActiveTaskId(null)
-      await window.electronAPI?.hideStatusOverlay()
     }
   }
 
@@ -307,17 +324,30 @@ export function TranscribePage() {
     try {
       await window.electronAPI?.showStatusOverlay('recording', 0)
       const relayInput = audioRelayMixer.isActive() ? audioRelayMixer.createInputStream() : undefined
-      await recorderRef.current.start(settings.audioInputDeviceId || undefined, relayInput, (level) => {
-        const now = performance.now()
-        if (now - levelUpdateAtRef.current < 70) return
-        levelUpdateAtRef.current = now
-        void window.electronAPI?.showStatusOverlay('recording', level)
-      })
+
+      // 根据 inputSource 或设备选择音频来源：麦克风或扬声器（系统音频输出）
+      const useSpeaker = settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__'
+      let inputStream: MediaStream | undefined = relayInput
+      if (!inputStream && useSpeaker) {
+        inputStream = await captureSpeakerAudio()
+      }
+
+      await recorderRef.current.start(
+        useSpeaker ? undefined : (settings.audioInputDeviceId || undefined),
+        inputStream,
+        (level) => {
+          const now = performance.now()
+          if (now - levelUpdateAtRef.current < 70) return
+          levelUpdateAtRef.current = now
+          void window.electronAPI?.showStatusOverlay('recording', level)
+        }
+      )
       setRecordStatus('recording')
     } catch (recordError) {
       recorderRef.current.cancel()
       setRecordStatus('idle')
-      setError(recordError instanceof Error ? recordError.message : '无法启动麦克风录音')
+      const sourceLabel = (settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__') ? '扬声器' : '麦克风'
+      setError(recordError instanceof Error ? recordError.message : `无法启动${sourceLabel}录音`)
       await window.electronAPI?.hideStatusOverlay()
     }
   }

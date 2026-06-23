@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AssistantFigure } from '@/components/AssistantFigure'
 import { ASRApi, isAsyncResponse, type LLMChatContent, type LLMChatRole, type SkillDefinition, type TranscribeOptions } from '@/services/api'
-import { StreamingASRClient, audioRelayMixer, speechRecorder } from '@/services/audio'
+import { StreamingASRClient, audioRelayMixer, captureSpeakerAudio, speechRecorder } from '@/services/audio'
 import { useASRStore, type AgentTask, type AgentVoiceMode, type AppPage } from '@/store/useASRStore'
 
 type AgentStatus = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'responding' | 'speaking' | 'error'
@@ -326,13 +326,15 @@ export function RealtimeAgentPage() {
       window.speechSynthesis?.cancel()
       recorderRef.current.cancel()
       const latest = useASRStore.getState().settings
-      if (!latest.audioRelayEnabled) void recorderRef.current.prepare(latest.audioInputDeviceId || undefined).catch(() => undefined)
+      const useSpeaker = latest.inputSource === 'speaker' || latest.audioInputDeviceId === '__speaker_loopback__'
+      if (!latest.audioRelayEnabled && !useSpeaker) void recorderRef.current.prepare(latest.audioInputDeviceId || undefined).catch(() => undefined)
     }
   }, [])
 
   const buildOptions = (): TranscribeOptions => {
     return {
       engine: settings.offlineEngine,
+      timeout_sec: settings.timeoutSec,
       language: settings.defaultLanguage === 'auto' ? undefined : settings.defaultLanguage,
       whisper_model: settings.whisperModel,
       enable_punctuation: true,
@@ -1062,7 +1064,8 @@ export function RealtimeAgentPage() {
       setError(voiceError instanceof Error ? voiceError.message : '语音识别失败')
       setStatus('error')
     } finally {
-      if (!audioRelayMixer.isActive()) void recorderRef.current.prepare(settings.audioInputDeviceId || undefined).catch(() => undefined)
+      const useSpeaker = settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__'
+      if (!audioRelayMixer.isActive() && !useSpeaker) void recorderRef.current.prepare(settings.audioInputDeviceId || undefined).catch(() => undefined)
     }
   }
 
@@ -1072,7 +1075,8 @@ export function RealtimeAgentPage() {
       handsFreeStreamerRef.current = null
       updateSettings({ agentHandsFree: false })
       setHandsFreeStatus('idle')
-      if (!audioRelayMixer.isActive()) void recorderRef.current.prepare(settings.audioInputDeviceId || undefined).catch(() => undefined)
+      const useSpeaker = settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__'
+      if (!audioRelayMixer.isActive() && !useSpeaker) void recorderRef.current.prepare(settings.audioInputDeviceId || undefined).catch(() => undefined)
       return
     }
     if (status !== 'idle') return
@@ -1103,17 +1107,21 @@ export function RealtimeAgentPage() {
           handsFreeStreamerRef.current = null
           updateSettings({ agentHandsFree: false })
           setHandsFreeStatus('idle')
-          if (!audioRelayMixer.isActive()) void recorderRef.current.prepare(settings.audioInputDeviceId || undefined).catch(() => undefined)
+          const useSpeaker = settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__'
+          if (!audioRelayMixer.isActive() && !useSpeaker) void recorderRef.current.prepare(settings.audioInputDeviceId || undefined).catch(() => undefined)
         }
       })
       handsFreeStreamerRef.current = streamer
+      const useSpeaker = settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__'
       await streamer.start({
         engine: settings.streamingEngine,
         language: settings.defaultLanguage === 'auto' ? undefined : settings.defaultLanguage,
-        deviceId: settings.audioInputDeviceId || undefined,
-        inputStream: audioRelayMixer.isActive()
-          ? audioRelayMixer.createInputStream()
-          : recorderRef.current.takePreparedStream(settings.audioInputDeviceId || undefined),
+        deviceId: useSpeaker ? undefined : (settings.audioInputDeviceId || undefined),
+        inputStream: useSpeaker
+          ? await captureSpeakerAudio()
+          : audioRelayMixer.isActive()
+            ? audioRelayMixer.createInputStream()
+            : recorderRef.current.takePreparedStream(settings.audioInputDeviceId || undefined),
         userId: settings.userId || undefined
       })
       updateSettings({ agentHandsFree: true })
@@ -1139,9 +1147,12 @@ export function RealtimeAgentPage() {
       setHandsFreeStatus('idle')
     }
     interruptActiveTurn()
+    const useSpeaker = settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__'
     await recorderRef.current.start(
-      settings.audioInputDeviceId || undefined,
-      audioRelayMixer.isActive() ? audioRelayMixer.createInputStream() : undefined,
+      useSpeaker ? undefined : (settings.audioInputDeviceId || undefined),
+      useSpeaker
+        ? await captureSpeakerAudio()
+        : audioRelayMixer.isActive() ? audioRelayMixer.createInputStream() : undefined,
     )
     setStatus('listening')
     setError('')

@@ -17,13 +17,16 @@ multipart file upload.  All option fields are optional.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import logging
 import subprocess
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import TypeVar
 
 import soundfile as sf  # type: ignore[import]
 from fastapi import APIRouter, Depends, Form, HTTPException, status
@@ -59,6 +62,16 @@ from app.schemas.transcribe import (
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/transcribe", tags=["transcription"])
 settings = get_settings()
+T = TypeVar("T")
+
+
+async def _run_with_timeout(operation: Callable[[], Awaitable[T]], timeout_sec: float) -> T:
+    if timeout_sec <= 0:
+        return await operation()
+    try:
+        return await asyncio.wait_for(operation(), timeout=timeout_sec)
+    except TimeoutError as exc:
+        raise TimeoutError(f"ASR execution exceeded {timeout_sec:g} seconds") from exc
 
 
 # ── Helper: parse options from multipart form ──────────────────────────────────
@@ -66,9 +79,13 @@ settings = get_settings()
 def _parse_options(options_json: str | None) -> TranscribeOptions:
     """Parse the JSON `options` form field; fall back to defaults on error."""
     if not options_json:
-        return TranscribeOptions(engine=settings.default_engine)
+        return TranscribeOptions(
+            engine=settings.default_engine,
+            timeout_sec=settings.transcribe_timeout_sec,
+        )
     try:
         data = json.loads(options_json)
+        data.setdefault("timeout_sec", settings.transcribe_timeout_sec)
         return TranscribeOptions.model_validate(data)
     except Exception as exc:
         raise HTTPException(
@@ -243,6 +260,7 @@ async def transcribe(
         engine_options={
             "language": opts.language,
             "task": opts.whisper_task,
+            "timeout_sec": opts.timeout_sec,
             "enable_hotwords": opts.enable_hotwords,
             "allow_server_data_collection": opts.allow_server_data_collection,
             "archive_category": opts.archive_category,
@@ -297,12 +315,16 @@ async def transcribe(
             extra={"model_size": opts.whisper_model} if opts.whisper_model else {},
         )
 
-        model_started = time.perf_counter()
-        engine = await manager.get_engine(opts.engine)
-        timing["model_ready_sec"] = round(time.perf_counter() - model_started, 6)
-        asr_started = time.perf_counter()
-        result = await engine.transcribe(audio_bytes, engine_options)
-        timing["asr_sec"] = round(time.perf_counter() - asr_started, 6)
+        async def load_and_transcribe():
+            model_started = time.perf_counter()
+            engine = await manager.get_engine(opts.engine)
+            timing["model_ready_sec"] = round(time.perf_counter() - model_started, 6)
+            asr_started = time.perf_counter()
+            result = await engine.transcribe(audio_bytes, engine_options)
+            timing["asr_sec"] = round(time.perf_counter() - asr_started, 6)
+            return result
+
+        result = await _run_with_timeout(load_and_transcribe, opts.timeout_sec)
 
         # Post-pipeline
         if punc_on:
@@ -407,7 +429,16 @@ async def transcribe(
             db, task.id, TaskStatus.FAILED, error_message=str(exc)
         )
         await db.commit()
+        timed_out = isinstance(exc, TimeoutError)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Transcription failed: {exc}",
+            status_code=(
+                status.HTTP_504_GATEWAY_TIMEOUT
+                if timed_out
+                else status.HTTP_500_INTERNAL_SERVER_ERROR
+            ),
+            detail=(
+                f"Transcription timed out: {exc}"
+                if timed_out
+                else f"Transcription failed: {exc}"
+            ),
         ) from exc

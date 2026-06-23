@@ -117,4 +117,5 @@ docker-compose up --build
 ```
 API 文档访问：http://localhost:8000/docs
 # 打包
-cd frontend/desktop && npm run build:win
+cd frontend/desktop
+npm run build:win
