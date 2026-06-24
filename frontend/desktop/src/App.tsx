@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo } from 'react'
 import { ASRApi } from '@/services/api'
 import { registerTrigger } from '@/services/hotkey'
+import { recordingService } from '@/services/recordingService'
 import { useASRStore } from '@/store/useASRStore'
 import { TitleBar } from '@/components/TitleBar'
 import { Sidebar } from '@/components/Sidebar'
@@ -65,7 +66,6 @@ export default function App() {
   const updateSettings = useASRStore((state) => state.updateSettings)
   const setError = useASRStore((state) => state.setError)
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
-  const pendingHotkeyRef = useRef(false)
 
   useEffect(() => {
     let alive = true
@@ -177,20 +177,19 @@ export default function App() {
     }
   }, [settings.triggerType, settings.triggerKey])
 
+  // Global hotkey: toggle recording directly via the singleton service so it
+  // works regardless of which page is active. The old approach dispatched a
+  // custom event consumed by the Transcribe page, which broke when the user
+  // navigated away — recording got interrupted and the overlay stuck on
+  // "thinking" (问题 4). Now recording survives page navigation.
   useEffect(() => window.electronAPI?.onHotkeyTriggered(() => {
-    if (useASRStore.getState().page !== 'transcribe') {
-      pendingHotkeyRef.current = true
-      setPage('transcribe')
-      return
-    }
-    window.dispatchEvent(new CustomEvent('amadeus:toggle-recording'))
-  }), [setPage])
-
-  useEffect(() => {
-    if (page !== 'transcribe' || !pendingHotkeyRef.current) return
-    pendingHotkeyRef.current = false
-    window.queueMicrotask(() => window.dispatchEvent(new CustomEvent('amadeus:toggle-recording')))
-  }, [page])
+    const state = useASRStore.getState()
+    const processing = state.recordStatus === 'processing'
+      || ['uploading', 'processing', 'polling'].includes(state.transcribeStatus)
+      || state.liveCaptionStatus !== 'idle'
+    if (processing) void recordingService.forceStop()
+    else void recordingService.toggle(true)
+  }), [])
 
   useEffect(() => {
     const offClosed = window.electronAPI?.onCaptionOverlayClosed(() => {

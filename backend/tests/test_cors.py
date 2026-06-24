@@ -14,10 +14,10 @@ async def test_public_ipv4_frontend_origin_is_allowed() -> None:
         resp = await client.options(
             "/v1/tts/higgs/reference-asr",
             headers={
-                "Origin": "http://112.124.13.120:5173",
+                "Origin": "http://192.0.2.1:5173",
                 "Access-Control-Request-Method": "POST",
             },
         )
 
     assert resp.status_code == 200
-    assert resp.headers["access-control-allow-origin"] == "http://112.124.13.120:5173"
+    assert resp.headers["access-control-allow-origin"] == "http://192.0.2.1:5173"

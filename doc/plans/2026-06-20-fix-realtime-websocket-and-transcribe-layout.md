@@ -5,7 +5,7 @@
 
 ## 任务目标
 
-- 修复实时识别连接 `ws://112.124.13.120:18000/v1/stream` 失败后直接终止的问题。
+- 修复实时识别连接 `ws://your-server-ip:18000/v1/stream` 失败后直接终止的问题。
 - 恢复当前无响应的 ASR 后端，并验证 `/v1/health` 与 `/v1/stream`。
 - 参考本次 ImageGen 生成的布局，将“识别预览”从右侧栏移动到“语音识别”上传区下方，页面改为从上到下的宽卡片布局。
 
@@ -25,7 +25,7 @@
 
 ## 已确认根因
 
-- 当前公网 `112.124.13.120:18000` 和本机 `127.0.0.1:8000` 的 HTTP/WS 都超时，不是只有浏览器 WebSocket 被防火墙拦截。
+- 当前公网 `your-server-ip:18000` 和本机 `127.0.0.1:8000` 的 HTTP/WS 都超时，不是只有浏览器 WebSocket 被防火墙拦截。
 - Uvicorn 仍占用 `0.0.0.0:8000`，但工作子进程已成为 zombie，只剩 reload 监听父进程，连接进入 backlog 后无人处理。
 - 前端 `StreamingASRClient` 只尝试显式公网地址，且错误文案固定归因于后端/防火墙；它没有复用实时 TTS 已有的同源代理候选策略。
 
@@ -51,7 +51,7 @@
 - 清理失效进程并以无 reload 模式启动后，`GET /v1/health` 返回 200。
 - session 初始化移出事件循环后，本机 `ws://127.0.0.1:8000/v1/stream` 在 0.014 秒完成握手并收到 `ready`。
 - Vite 同源代理 `ws://127.0.0.1:5173/v1/stream` 在 0.016 秒完成握手并收到 `ready`。
-- 公网 `ws://112.124.13.120:18000/v1/stream` 在 0.119 秒完成握手并收到 `ready`，公网 health 返回 200。
+- 公网 `ws://your-server-ip:18000/v1/stream` 在 0.119 秒完成握手并收到 `ready`，公网 health 返回 200。
 - `node node_modules/typescript/bin/tsc --noEmit`：通过。
 - `node node_modules/typescript/bin/tsc -p tsconfig.node.json --noEmit`：通过。
 - `node node_modules/vite/bin/vite.js build`：通过，75 modules transformed。

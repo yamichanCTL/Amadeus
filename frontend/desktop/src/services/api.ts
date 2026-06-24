@@ -415,14 +415,24 @@ export type LLMProcessRequest = {
 const DEFAULT_SERVER = 'http://localhost:8000'
 
 function normalizeServerUrl(url: string) {
-  // empty / '' / '/' → same-origin (works with Vite proxy, or standalone backend on same port)
+  // empty / '' / '/' → empty string. We intentionally do NOT fall back to
+  // localhost:8000 anymore: the user must explicitly set and confirm a
+  // backend address before any communication happens (Req: 未设置不通信).
+  // In dev, same-origin requests are proxied by Vite, so '' is valid there.
   const trimmed = (url || '').trim()
   if (!trimmed || trimmed === '/') {
-    const protocol = typeof window !== 'undefined' ? window.location.protocol : ''
-    return protocol === 'file:' || protocol === 'app:' ? DEFAULT_SERVER : ''
+    // No backend configured. Return '' so callers can guard and refuse to
+    // communicate. (In dev, '' resolves to same-origin via the Vite proxy.)
+    return ''
   }
   const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`
   return withScheme.replace(/\/+$/, '')
+}
+
+/** Whether a backend address has been configured and confirmed by the user. */
+export function hasConfiguredServer(url: string): boolean {
+  const normalized = normalizeServerUrl(url)
+  return Boolean(normalized)
 }
 
 async function parseResponse<T>(response: Response): Promise<T> {

@@ -12,13 +12,13 @@ ASR 后端: http://localhost:8000
 Higgs TTS: http://localhost:8002
 ```
 
-桌面端后端地址支持填写完整 URL 或 `host:port`。例如公网测试可填写 `112.124.13.120:18000`，前端会规范化为 `http://112.124.13.120:18000`，WebSocket 会对应使用 `ws://112.124.13.120:18000`。
+桌面端后端地址支持填写完整 URL 或 `host:port`。例如公网测试可填写 `your-server-ip:18000`，前端会规范化为 `http://your-server-ip:18000`，WebSocket 会对应使用 `ws://your-server-ip:18000`。
 
 开发模式下后端地址为空时，浏览器会通过 Vite 同源代理访问 `/v1/*`；Electron 打包或 `file:` / `app:` 页面下没有 Vite 代理，空后端地址会回落到 `http://localhost:8000`。公网 IP 前端来源也会被后端 CORS 放行，避免参考音频 ASR 这类跨端口请求被浏览器拦截成 `Failed to fetch`。
 
 如果浏览器提示 `WebSocket 连接失败`，先区分三类情况：
 
-- `curl http://112.124.13.120:18000/v1/health` 不通：后端进程、端口或安全组未开放。
+- `curl http://your-server-ip:18000/v1/health` 不通：后端进程、端口或安全组未开放。
 - HTTP 通但 WebSocket 不通：公网反向代理需要转发 `Upgrade` / `Connection` 头。
 - 命令行 WebSocket 能收到 `ready`，但浏览器失败：检查前端是否是 HTTPS 页面连接 `ws://` 明文地址、是否运行了旧缓存构建，或是否被浏览器/系统代理拦截。
 

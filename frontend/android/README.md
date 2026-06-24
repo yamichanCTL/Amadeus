@@ -25,7 +25,7 @@ Open `frontend/android` in Android Studio, or run:
 gradle :app:assembleDebug
 ```
 
-The app allows cleartext HTTP because the existing backend defaults to `http://112.124.13.120:18000`.
+The app allows cleartext HTTP because the existing backend defaults to `http://your-server-ip:18000`.
 
 # vscode extension
 Kotlin

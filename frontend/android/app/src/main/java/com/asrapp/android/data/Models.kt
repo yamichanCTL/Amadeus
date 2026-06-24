@@ -4,7 +4,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
 
-const val DEFAULT_SERVER_URL = "http://112.124.13.120:18000"
+const val DEFAULT_SERVER_URL = "http://your-server-ip:18000"
 
 @Serializable
 data class AppSettings(

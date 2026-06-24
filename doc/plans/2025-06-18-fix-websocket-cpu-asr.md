@@ -24,7 +24,7 @@
 - 所有默认值在 `config.py` 中硬编码为 GPU
 
 ### 问题4：前端持久化 URL 指向旧地址
-- 用户 localStorage 中 `serverUrl` = `http://112.124.13.120:18000`
+- 用户 localStorage 中 `serverUrl` = `http://your-server-ip:18000`
 - 前端一直往不存在的远程地址连 WebSocket
 
 ### 问题5：WSL2 localhost 转发不兼容 WebSocket
@@ -43,7 +43,7 @@
 - 前端 `serverUrl` 默认值改为空字符串（same-origin，经 Vite proxy 转发）
 - WebSocket/REST 客户端支持空 serverUrl（使用当前页面 origin）
 - 增强错误消息（显示实际 URL）+ 5s 连接超时
-- 自动迁移已知过期 URL（`112.124.13.120:18000` 等）
+- 自动迁移已知过期 URL（`your-server-ip:18000` 等）
 - Dev 模式下自动将 `http://localhost:8000` 迁移到空字符串
 
 ## Architecture: Vite Proxy (WSL2 解决方案)

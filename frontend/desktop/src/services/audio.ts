@@ -135,13 +135,19 @@ export class AudioRecorder {
       }
       const rms = Math.sqrt(squareSum / samples.length)
       onLevel(Math.min(1, Math.max(peak * .7, rms * 4)))
-      this.levelFrame = requestAnimationFrame(update)
     }
+    // Use setInterval instead of requestAnimationFrame. RAF is throttled or
+    // suspended entirely when the renderer window is minimized, in the
+    // background, or when the page is unmounted — which froze the status
+    // overlay waveform mid-recording ("波形卡死不动"). setInterval keeps
+    // sampling regardless of window visibility, so the overlay keeps
+    // animating even when the main UI is closed or focus is elsewhere.
     update()
+    this.levelFrame = window.setInterval(update, 60) as unknown as number
   }
 
   private stopLevelMonitor() {
-    if (this.levelFrame) cancelAnimationFrame(this.levelFrame)
+    if (this.levelFrame) window.clearInterval(this.levelFrame)
     this.levelFrame = 0
     this.levelSource?.disconnect()
     this.levelSource = null
@@ -668,13 +674,15 @@ export function base64ToBlob(base64: string, mimeType: string) {
 
 function buildWsUrl(serverUrl: string, path: string): string {
   const trimmed = (serverUrl || '').trim()
-  // Empty → same-origin (e.g. through Vite proxy).
-  // In Electron (file:// / app://) window.location.host is empty;
-  // fall back to localhost:8000 matching normalizeServerUrl() in api.ts.
+  // Empty → same-origin only in a browser (http/https) served via the Vite
+  // proxy. In Electron (file:// / app://) there is no origin to fall back
+  // to, so we return '' — callers must refuse to connect when no backend
+  // address has been configured and confirmed (Req: 未设置不通信). We no
+  // longer fall back to ws://localhost:8000.
   if (!trimmed || trimmed === '/') {
     const protocol = window.location.protocol
     if (protocol === 'file:' || protocol === 'app:') {
-      return `ws://localhost:8000${path}`
+      return ''
     }
     const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:'
     return `${wsProtocol}//${window.location.host}${path}`
@@ -689,6 +697,8 @@ function buildWsUrlCandidates(serverUrl: string, path: string): string[] {
     if (value && !candidates.includes(value)) candidates.push(value)
   }
   add(buildWsUrl(serverUrl, path))
+  // Only add same-origin as a fallback candidate in browser dev (where the
+  // Vite proxy can forward WS). In Electron there is no host to use.
   if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     add(`${wsProtocol}//${window.location.host}${path}`)
@@ -928,6 +938,17 @@ export class StreamingASRClient {
     this.sessionTrace = startTelemetryTrace('websocket', '实时 ASR 会话', config.engine || 'x-asr')
     this.firstPartialSeen = false
     const attempted: string[] = []
+
+    // Req: 未设置后端地址时不进行任何通信。在 Electron 环境下若用户尚未确认
+    // 后端地址，候选列表为空，这里直接报错而不是连本机回退。
+    if (this.urls.length === 0) {
+      this.releasePendingInput()
+      this.onEvent({
+        type: 'error',
+        message: '未配置后端地址。请在「设置 → 后端地址」填写并点击「确认」后再开始实时识别。',
+      })
+      return
+    }
 
     const handleMessage = (event: MessageEvent) => {
       try {
@@ -1205,6 +1226,14 @@ export class VoiceTTSStreamingClient {
     this.stoppedByUser = false
     this.sessionTrace = startTelemetryTrace('websocket', '实时变声会话', config.engine || 'x-asr')
     const attempted: string[] = []
+    // Req: 未设置后端地址时不进行任何通信。
+    if (this.urls.length === 0) {
+      this.onEvent({
+        type: 'error',
+        message: '未配置后端地址。请在「设置 → 后端地址」填写并点击「确认」后再开始。',
+      })
+      return
+    }
     let captureStarted = false
     const startPcmCapture = () => {
       if (captureStarted) return

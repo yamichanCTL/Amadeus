@@ -45,7 +45,7 @@ partial 带 `true_streaming=true`。final 带同一 `engine=x-asr`，没有 `par
 
 桌面客户端的候选顺序为：
 
-1. 设置中的显式后端地址，例如 `ws://112.124.13.120:18000/v1/stream`；
+1. 设置中的显式后端地址，例如 `ws://your-server-ip:18000/v1/stream`；
 2. 当前 HTTP/HTTPS 页面同源的 `/v1/stream`，开发环境由 Vite `ws: true` 代理到 8000。
 
 候选连接只在握手前失败时切换；已经连接后的协议错误不会静默换服务器。错误消息会列出全部尝试地址，便于区分后端无响应、反向代理未转发 Upgrade 和 HTTPS mixed content。

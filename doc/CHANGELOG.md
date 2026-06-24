@@ -4,6 +4,14 @@
 > **子文档**:
 > - [桌面端文档](desktop/README.md)
 
+## [2026-06-24] 修复自动注入/后端地址通信/浮窗拖动波形/录音页面切换卡死
+
+- **类型**: fix / refactor
+- **描述**: 5 项桌面端 bug 修复。①自动注入放宽焦点检测：`IsKeyboardFocusable` 不再作为硬性早退条件，Electron/QQ/VSCode 等富文本编辑器不再被误判为"不可编辑"；新增 stderr 诊断日志。②后端地址通信：移除 `normalizeServerUrl` 和 `buildWsUrl` 中 Electron 环境自动回退 `localhost:8000` 的逻辑；Settings 后端地址改为「草稿+确认」交互，未确认不进行任何通信；WebSocket 客户端空地址时拒绝连接并提示配置。③浮窗拖动+波形：status overlay 改为 `movable: true`，录音/thinking 阶段用 `setIgnoreMouseEvents(true, {forward:true})`+拖动手柄实现可拖动；拖动位置跨 phase 保留；`startLevelMonitor` 从 `requestAnimationFrame` 改为 `setInterval` 避免后台窗口节流导致波形冻结。④录音与页面解耦：新增 `recordingService` 单例（参照 `liveCaptionService` 模式），Transcribe 页面卸载不再中断进行中的录音/识别；`stop()` 异常时 catch 兜底 `hideStatusOverlay` 不卡 thinking；全局热键直接调用 `recordingService.toggle()` 跨页面可用。
+- **影响范围**: `electron/main.ts`、`electron/status-overlay-preload.ts`、`src/services/api.ts`、`src/services/audio.ts`、`src/services/liveCaption.ts`、`src/services/recordingService.ts`（新增）、`src/pages/Transcribe.tsx`、`src/pages/Settings.tsx`、`src/App.tsx`、`src/vite-env.d.ts`
+- **验证**: TypeScript renderer+node 零错误；后端 pytest 185 passed。
+- **Plan**: [链接](plans/2026-06-24-fix-inject-backend-overlay-recording.md)
+
 ## [2026-06-24] 修复跨应用注入、可迁移路径与 X-ASR CUDA 冲突
 
 - **类型**: fix / refactor / deployment
@@ -268,7 +276,7 @@
 ## [2026-06-19] 修复公网 TTS WebSocket 诊断并对齐 Higgs 流式 PCM
 
 - **类型**: fix
-- **描述**: 对比 staged/unstaged 后确认公网后端 `112.124.13.120:18000` 的 HTTP 与 `/v1/tts/higgs/stream` WebSocket 均可连通；前端 TTS WebSocket 失败提示不再固定误导为后端监听或防火墙问题，改为列出实际尝试 URL，并提示 HTTPS 页面连接 `ws://` 的 mixed content 或代理 Upgrade 问题。后端 Higgs 流式代理按 `higgs-audio/webui.py` 对齐 `stream=true`、`response_format=pcm`、32768 chunk、`x-sample-rate`、`x-channels`、`x-bit-depth` 与 16-bit 对齐。
+- **描述**: 对比 staged/unstaged 后确认公网后端 `your-server-ip:18000` 的 HTTP 与 `/v1/tts/higgs/stream` WebSocket 均可连通；前端 TTS WebSocket 失败提示不再固定误导为后端监听或防火墙问题，改为列出实际尝试 URL，并提示 HTTPS 页面连接 `ws://` 的 mixed content 或代理 Upgrade 问题。后端 Higgs 流式代理按 `higgs-audio/webui.py` 对齐 `stream=true`、`response_format=pcm`、32768 chunk、`x-sample-rate`、`x-channels`、`x-bit-depth` 与 16-bit 对齐。
 - **影响范围**: `backend/app/api/v1/tts_api.py`、`frontend/desktop/src/services/audio.ts`、`backend/tests/test_higgs_tts_api.py`、`doc/desktop/TTS_VOICE.md`
 - **Plan**: [链接到 plan 文件](plans/2026-06-19-fix-public-websocket-higgs-stream.md)
 
@@ -324,7 +332,7 @@
 ## [2026-06-18] 优化 TTS 与 ASR 模型管理
 
 - **类型**: feat / fix
-- **描述**: 重构桌面端 TTS 模型设置，将当前音色、句首控制标签和生成参数移出弹窗，弹窗聚焦上传/保存音色；音色改为保存到 `data/tts/voices/<id>/` 并支持参考音频播放和当前 ASR 自动生成参考文本；修复语音转 TTS 停止录音时过早关闭 WebSocket 导致收不到 TTS 的问题；实时 ASR+TTS 改用更小 PCM 块和二进制 WebSocket 帧降低前端传输延迟，并保留输出设备选择；变声器/TTS 增加本次使用音色选择；前后端移除 Vosk、Sherpa、Stream 入口；ASR 模型管理支持展开子模型配置启动设备和参数；后端地址支持 `112.124.13.120:18000` 这类无协议公网地址；前端移除事件检测入口。
+- **描述**: 重构桌面端 TTS 模型设置，将当前音色、句首控制标签和生成参数移出弹窗，弹窗聚焦上传/保存音色；音色改为保存到 `data/tts/voices/<id>/` 并支持参考音频播放和当前 ASR 自动生成参考文本；修复语音转 TTS 停止录音时过早关闭 WebSocket 导致收不到 TTS 的问题；实时 ASR+TTS 改用更小 PCM 块和二进制 WebSocket 帧降低前端传输延迟，并保留输出设备选择；变声器/TTS 增加本次使用音色选择；前后端移除 Vosk、Sherpa、Stream 入口；ASR 模型管理支持展开子模型配置启动设备和参数；后端地址支持 `your-server-ip:18000` 这类无协议公网地址；前端移除事件检测入口。
 - **影响范围**: `backend/app/api/v1/tts_api.py`、`backend/app/api/v1/models.py`、`backend/app/core/asr/registry.py`、`backend/app/core/model_manager.py`、`backend/app/config.py`、`frontend/desktop/src/pages/Models.tsx`、`frontend/desktop/src/pages/VoiceChanger.tsx`、`frontend/desktop/src/services/api.ts`、`frontend/desktop/src/services/audio.ts`、`frontend/desktop/src/store/useASRStore.ts`、`frontend/desktop/src/App.tsx`、`frontend/desktop/src/components/Sidebar.tsx`、`frontend/desktop/src/components/Toolbar.tsx`、`frontend/desktop/src/styles/global.css`、`backend/tests/test_higgs_tts_api.py`、`backend/tests/test_engines.py`
 - **Plan**: [链接到 plan 文件](plans/2026-06-18-tts-asr-model-management-optimization.md)
 

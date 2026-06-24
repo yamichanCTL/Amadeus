@@ -22,6 +22,12 @@ export type ArchiveTranscriptionArgs = {
 declare global {
   interface Window {
     __amadeusE2EAudio?: () => Promise<unknown>
+    // Exposed inside the status overlay window (status-overlay-preload.ts).
+    statusOverlay?: {
+      copyResult: (text: string) => void
+      closeResult: () => void
+      setMouseCapture: (capture: boolean) => void
+    }
     electronAPI?: {
       minimize: () => void
       maximize: () => void

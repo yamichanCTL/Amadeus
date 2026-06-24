@@ -69,6 +69,13 @@ const e2eUserData = process.argv.find((arg) => arg.startsWith('--amadeus-e2e-use
 let mainWindow: BrowserWindow | null = null
 let statusOverlay: BrowserWindow | null = null
 let captionOverlay: BrowserWindow | null = null
+// User-dragged position of the status overlay, kept across phase transitions
+// within a session so recording→thinking→result don't snap back to center.
+let statusOverlayPos: { x: number; y: number } | null = null
+// Current status overlay phase, so the mouse-capture IPC handler knows
+// whether the overlay must stay fully interactive (result) or can toggle
+// click-through for the drag handle.
+let currentStatusPhase = 'recording'
 let tray: Tray | null = null
 let forceQuit = false
 let mouseHook: ChildProcessWithoutNullStreams | null = null
@@ -307,7 +314,12 @@ function createOverlayWindow(kind: 'status' | 'caption', bounds: Electron.Rectan
     frame: false,
     transparent: true,
     resizable: kind === 'caption',
-    movable: kind === 'caption',
+    // Both overlays are movable so the user can drag them out of the way.
+    // The status overlay uses a click-through + drag-handle pattern (see
+    // showStatusOverlay / statusOverlayHtml) so it stays click-through
+    // everywhere except the handle, where Electron handles the drag natively
+    // via -webkit-app-region: drag.
+    movable: true,
     alwaysOnTop: true,
     skipTaskbar: true,
     focusable: kind === 'caption',
@@ -358,8 +370,16 @@ function statusOverlayHtml() {
       .result-actions .btn-copy:hover { background: rgba(90,124,255,.55); }
       .result .wave, .result .copy { display: none; }
       @keyframes think-wave { 0%, 100% { height: 3px; opacity: .5; } 50% { height: 19px; opacity: 1; } }
+      /* Drag handle: a thin grab strip along the top edge of the box. The
+         window is click-through everywhere (forward:true), but when the
+         cursor enters this handle we tell the main process to take over the
+         mouse (setIgnoreMouseEvents false) so -webkit-app-region: drag can
+         move the frameless window. On leave we hand the mouse back. */
+      .drag-handle { position: absolute; left: 0; right: 0; top: 0; height: 8px; cursor: grab; pointer-events: auto; -webkit-app-region: drag; border-top-left-radius: 9px; border-top-right-radius: 9px; }
+      .box.result .drag-handle { border-top-left-radius: 12px; border-top-right-radius: 12px; }
     </style>
     <div class="box" id="box">
+      <div class="drag-handle" id="dragHandle" title="拖动以移动位置"></div>
       <div class="wave" id="wave">${Array.from({ length: 28 }, () => '<i></i>').join('')}</div>
       <div class="copy" id="copyBlock"><strong id="title">语音输入中</strong><small id="detail" style="display:none"></small></div>
       <div class="result-text" id="resultText" style="display:none"></div>
@@ -406,6 +426,23 @@ function statusOverlayHtml() {
         btnClose.addEventListener('click', () => {
           window.statusOverlay?.closeResult();
         });
+
+        // Drag handle: take over the mouse while hovering so Electron's
+        // native -webkit-app-region: drag can move the frameless window.
+        // The window is otherwise click-through (forward:true); on enter we
+        // disable ignore-mouse-events, on leave we re-enable forwarding.
+        const dragHandle = document.getElementById('dragHandle');
+        if (dragHandle) {
+          dragHandle.addEventListener('mouseenter', () => window.statusOverlay?.setMouseCapture(true));
+          dragHandle.addEventListener('mouseleave', () => window.statusOverlay?.setMouseCapture(false));
+          // While actually dragging, mouseleave can fire spuriously; release
+          // on the next mouseup anywhere to be safe.
+          document.addEventListener('mouseup', () => {
+            if (window.statusOverlay && !dragHandle.matches(':hover')) {
+              window.statusOverlay.setMouseCapture(false);
+            }
+          });
+        }
 
         window.amadeusStatus = {
           onCopy: null,
@@ -454,27 +491,54 @@ async function showStatusOverlay(status: string, level = 0, message = '') {
   const workArea = screen.getPrimaryDisplay().workArea
   const width = status === 'result' ? 360 : 200
   const height = status === 'result' ? 64 : 32
+  // Default centered position; if the user dragged the overlay previously,
+  // reuse their position (clamped to the work area) so it doesn't jump back.
+  const defaultX = Math.round(workArea.x + (workArea.width - width) / 2)
+  const defaultY = Math.round(workArea.y + workArea.height * .72 - height / 2)
+  const desiredX = statusOverlayPos
+    ? Math.round(clamp(statusOverlayPos.x, workArea.x, workArea.x + workArea.width - width))
+    : defaultX
+  const desiredY = statusOverlayPos
+    ? Math.round(clamp(statusOverlayPos.y, workArea.y, workArea.y + workArea.height - height))
+    : defaultY
   if (!statusOverlay || statusOverlay.isDestroyed()) {
     statusOverlay = createOverlayWindow('status', {
-      x: Math.round(workArea.x + (workArea.width - width) / 2),
-      y: Math.round(workArea.y + workArea.height * .72 - height / 2),
+      x: desiredX,
+      y: desiredY,
       width,
       height
     })
     await statusOverlay.loadURL(overlayHtml(statusOverlayHtml()))
+    // Remember the position when the user drags the frameless window.
+    statusOverlay.on('move', () => {
+      if (!statusOverlay || statusOverlay.isDestroyed()) return
+      const b = statusOverlay.getBounds()
+      statusOverlayPos = { x: b.x, y: b.y }
+    })
   } else {
-    // Resize if needed when switching between phases
+    // Resize if needed when switching between phases, keeping position.
     statusOverlay.setBounds({
-      x: Math.round(workArea.x + (workArea.width - width) / 2),
-      y: Math.round(workArea.y + workArea.height * .72 - height / 2),
+      x: desiredX,
+      y: desiredY,
       width,
       height
     })
   }
   const phase = status === 'recording' ? 'recording' : status === 'error' ? 'error' : status === 'result' ? 'result' : 'thinking'
+  currentStatusPhase = phase
   const interactive = phase === 'result'
   statusOverlay.setFocusable(interactive)
-  statusOverlay.setIgnoreMouseEvents(!interactive)
+  // Click-through but FORWARD mouse events so the renderer can detect when the
+  // cursor hovers the drag handle and temporarily take over the mouse for
+  // native dragging. Only the result phase fully captures the mouse (for the
+  // copy/close buttons). This makes the recording/thinking overlay draggable
+  // via the handle while otherwise letting clicks pass through to the app
+  // behind it.
+  if (interactive) {
+    statusOverlay.setIgnoreMouseEvents(false)
+  } else {
+    statusOverlay.setIgnoreMouseEvents(true, { forward: true })
+  }
   await statusOverlay.webContents.executeJavaScript(
     `window.amadeusStatus?.update(${JSON.stringify(phase)}, ${Number(level) || 0}, ${JSON.stringify(message)})`
   )
@@ -700,6 +764,13 @@ async function archiveTranscription(args: ArchiveArgs) {
 async function injectText(text: string) {
   if (!isWindows) return false
 
+  // Guard: empty text can't be injected and would only clear the clipboard,
+  // leaking the previous ASR result when the script fails (Bug 1).
+  if (!text || !text.trim()) {
+    console.warn('[text:inject] skipping empty text injection')
+    return false
+  }
+
   // Encode the text as base64 so it survives PowerShell string interpolation
   // without injection risk (backticks, quotes, dollar signs are all safe).
   const textB64 = Buffer.from(text, 'utf8').toString('base64')
@@ -722,109 +793,92 @@ Add-Type -AssemblyName System.Windows.Forms
 
 $text = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${textB64}'))
 
-# === Phase 1: Focus detection (same logic as before) ===
+# Always write to clipboard first — even if we can't auto-paste, the user
+# can still Ctrl+V manually. This also ensures the clipboard is primed
+# before any of the paste methods run.
+[System.Windows.Forms.Clipboard]::SetText($text)
+Start-Sleep -Milliseconds 60
 
 try {
+  # ── Phase 1: Focus guard ─────────────────────────────────────────────────
+  # Strategy: inject (exit 0) for anything that COULD be a text recipient;
+  # show the result overlay (exit 3) only when focus is clearly on a
+  # non-text UI control (button, menu, list, tree, tab, scrollbar…).
+  #
+  # The old approach used a whitelist (IsKeyboardFocusable + ValuePattern +
+  # naming heuristics) that produced false negatives for QQ / WeChat / VS
+  # Code / browser contenteditable.  The fix in the previous round went too
+  # far the other way (always inject, never show overlay), losing the result
+  # UI when the cursor genuinely wasn't in an input field.
+  #
+  # The current approach uses a BLOCKLIST: we refuse to inject only when the
+  # control type is clearly a non-text interactive element.  Everything else
+  # (Edit, Document, Pane, Group, Custom, Window, Text, etc.) gets a paste
+  # attempt.  A false positive is harmless — Ctrl+V is silently ignored on
+  # a non-text control, and the text stays on clipboard for manual paste.
+
   $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
-  if ($null -eq $focused -or -not $focused.Current.IsEnabled -or -not $focused.Current.IsKeyboardFocusable) {
+  if ($null -eq $focused -or -not $focused.Current.IsEnabled) {
+    [Console]::Error.WriteLine("no-focus: focused is null or disabled")
     exit 3
   }
 
-  $editable = $false
+  # Read-only ValuePattern → genuinely can't paste.
   $valuePattern = $null
-
   if ($focused.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern)) {
-    if (-not $valuePattern.Current.IsReadOnly) {
-      $editable = $true
-    } else {
+    if ($valuePattern.Current.IsReadOnly) {
+      [Console]::Error.WriteLine(("readonly-value: name={0} class={1}" -f $focused.Current.Name, $focused.Current.ClassName))
       exit 3
     }
   }
 
-  if (-not $editable) {
-    if ($focused.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit) {
-      $editable = $true
-    }
+  # Blocklist: control types that are clearly NOT text inputs.
+  # Focus on any of these → show the result overlay so the user can copy.
+  $ctrlType = $focused.Current.ControlType
+  $nonTextTypes = @(
+    [System.Windows.Automation.ControlType]::Button,
+    [System.Windows.Automation.ControlType]::CheckBox,
+    [System.Windows.Automation.ControlType]::RadioButton,
+    [System.Windows.Automation.ControlType]::SplitButton,
+    [System.Windows.Automation.ControlType]::List,
+    [System.Windows.Automation.ControlType]::ListItem,
+    [System.Windows.Automation.ControlType]::Menu,
+    [System.Windows.Automation.ControlType]::MenuBar,
+    [System.Windows.Automation.ControlType]::MenuItem,
+    [System.Windows.Automation.ControlType]::Tab,
+    [System.Windows.Automation.ControlType]::TabItem,
+    [System.Windows.Automation.ControlType]::Tree,
+    [System.Windows.Automation.ControlType]::TreeItem,
+    [System.Windows.Automation.ControlType]::ScrollBar,
+    [System.Windows.Automation.ControlType]::Thumb,
+    [System.Windows.Automation.ControlType]::ProgressBar,
+    [System.Windows.Automation.ControlType]::Slider,
+    [System.Windows.Automation.ControlType]::Spinner,
+    [System.Windows.Automation.ControlType]::Separator,
+    [System.Windows.Automation.ControlType]::Hyperlink,
+    [System.Windows.Automation.ControlType]::Calendar
+  )
+  if ($ctrlType -in $nonTextTypes) {
+    [Console]::Error.WriteLine(("non-text-ctrl: ctrlType={0} name={1} class={2}" -f $ctrlType.ProgrammaticName, $focused.Current.Name, $focused.Current.ClassName))
+    exit 3
   }
 
-  # Electron/Chromium custom editors and native RichEdit controls commonly
-  # expose a focusable Document, Pane, Group or Custom control type without
-  # ValuePattern. Instead of a fragile process-name whitelist (which breaks
-  # every time the user switches chat apps), use control-type heuristics that
-  # work across ALL applications.
-  #
-  # These control types are the standard building blocks of rich text editors
-  # in: Electron apps (QQ, VS Code, Discord, Slack, DingTalk, Feishu, etc.),
-  # native Win32 RichEdit, Qt editors, and browser contenteditable surfaces.
-  if (-not $editable) {
-    $ctrlType = $focused.Current.ControlType
-    $isTextHost = ($ctrlType -eq [System.Windows.Automation.ControlType]::Document) -or
-                  ($ctrlType -eq [System.Windows.Automation.ControlType]::Pane) -or
-                  ($ctrlType -eq [System.Windows.Automation.ControlType]::Group) -or
-                  ($ctrlType -eq [System.Windows.Automation.ControlType]::Custom)
+  # Diagnostic: log what we're about to paste into so failures are debuggable.
+  [Console]::Error.WriteLine(("inject-target: ctrlType={0} name={1} class={2} autoId={3} kbFocusable={4}" -f $ctrlType.ProgrammaticName, $focused.Current.Name, $focused.Current.ClassName, $focused.Current.AutomationId, $focused.Current.IsKeyboardFocusable))
 
-    if ($isTextHost) {
-      # Additional signal: TextPattern indicates rich text editing capability
-      $textPattern = $null
-      $hasTextPattern = $focused.TryGetCurrentPattern(
-        [System.Windows.Automation.TextPattern]::Pattern, [ref]$textPattern
-      )
-
-      # Element naming hints (case-insensitive substring match)
-      $name = $focused.Current.Name
-      $className = $focused.Current.ClassName
-      $autoId = $focused.Current.AutomationId
-      $looksLikeEditor = $hasTextPattern -or
-        $name -match '编辑|输入|内容|text|edit|input|chat|message|content|rich|compose|editor|document|body|draft|reply|comment|note|code' -or
-        $className -match 'edit|input|rich|text|chat|content|webview|render|document|scintilla|richtext' -or
-        $autoId -match 'edit|input|text|chat|message|content|rich|compose'
-
-      # Control type alone is a strong signal: a keyboard-focused Document/Pane
-      # without ValuePattern is almost always a rich text editor. The naming
-      # hints and TextPattern just add confidence. We treat it as editable
-      # even without those extra signals — a false positive (paste into a
-      # non-text Pane) is harmless (Ctrl+V silently ignored), while a false
-      # negative breaks the entire auto-inject feature for that app.
-      $editable = $true
-    }
-  }
-
-  if (-not $editable) { exit 3 }
-
-  # === Phase 2: Inject text at cursor ===
-  #
-  # We do NOT use ValuePattern.SetValue — it replaces ALL content instead of
-  # inserting at the cursor position (regression: overwrites existing text in
-  # VSCode, browser forms, etc.). Clipboard-based paste inserts at cursor.
-
-  # Walk up the UI Automation tree to find a window with a real HWND.
-  # WM_PASTE needs a target window handle; this also bypasses keyboard hooks
-  # and IME/TSF interception that can block SendInput in apps like QQ.
-  $targetHwnd = [IntPtr]::Zero
-  $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
-  $current = $focused
-  while ($current -ne $null -and $targetHwnd -eq [IntPtr]::Zero) {
-    $hwnd = $current.Current.NativeWindowHandle
-    if ($hwnd -ne 0) { $targetHwnd = [IntPtr]$hwnd }
-    try { $current = $walker.GetParent($current) } catch { break }
-  }
-
-  # Write text to clipboard (always — both methods need it)
-  [System.Windows.Forms.Clipboard]::SetText($text)
-  Start-Sleep -Milliseconds 80
+  # ── Phase 2: Inject via virtual-key Ctrl+V ──────────────────────────────
 
   $pasteCode = @'
 using System;
 using System.Runtime.InteropServices;
 using System.Threading;
 public static class AmadeusPaste {
-  [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
-  [DllImport("user32.dll")] static extern uint MapVirtualKey(uint uCode, uint uMapType);
+  [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
   [StructLayout(LayoutKind.Sequential)]
-  struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
-  [StructLayout(LayoutKind.Sequential)]
   struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+  [StructLayout(LayoutKind.Sequential)]
+  struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
   [StructLayout(LayoutKind.Sequential)]
   struct HARDWAREINPUT { public uint uMsg; public ushort wParamL; public ushort wParamH; }
   [StructLayout(LayoutKind.Explicit)]
@@ -832,54 +886,51 @@ public static class AmadeusPaste {
   [StructLayout(LayoutKind.Sequential)]
   struct INPUT { public uint type; public INPUT_UNION u; }
 
-  [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-
   const uint INPUT_KEYBOARD = 1;
   const uint KEYEVENTF_KEYUP = 0x0002;
-  const uint KEYEVENTF_SCANCODE = 0x0008;
-  const uint WM_PASTE = 0x0302;
 
-  // Method 1: WM_PASTE directly to the target window.
-  // Bypasses keyboard hooks, IME/TSF interception, and UIPI restrictions.
-  // Works for: native Win32 controls, Chromium/Electron render windows.
-  public static void TryWmPaste(IntPtr hwnd) {
-    if (hwnd == IntPtr.Zero) return;
-    SendMessage(hwnd, WM_PASTE, IntPtr.Zero, IntPtr.Zero);
-  }
+  // Single paste method: virtual-key SendInput Ctrl+V.
+  //
+  // We deliberately use ONLY ONE method to avoid double-paste (the old
+  // WM_PASTE + SendInput belt-and-suspenders approach caused the ASR result
+  // to be inserted twice when the target app happened to process both).
+  //
+  // Plain virtual-key codes WITHOUT scan codes look like a software keyboard
+  // or accessibility tool to anti-cheat systems in QQ / WeChat / DingTalk,
+  // passing through where scan-code simulation gets flagged as "synthesized".
+  // WM_PASTE is dropped because Chromium/Electron (QQ, VS Code, etc.)
+  // ignores it, and for native Win32 it's redundant — Ctrl+V works too.
 
-  // Method 2: SendInput with scan codes.
-  // SendInput places keystrokes in the system input queue; they are dispatched
-  // to the foreground window's thread. Including scan codes (MapVirtualKey)
-  // makes the simulated input indistinguishable from real keyboard input,
-  // improving compatibility with apps that validate scan codes.
   static void Key(ushort vk, bool up) {
     var input = new INPUT { type = INPUT_KEYBOARD };
     input.u.ki.wVk = vk;
-    input.u.ki.wScan = (ushort)MapVirtualKey(vk, 0);
-    if (up) input.u.ki.dwFlags = KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP;
-    else input.u.ki.dwFlags = KEYEVENTF_SCANCODE;
+    input.u.ki.wScan = 0;
+    input.u.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
     SendInput(1, new INPUT[] { input }, Marshal.SizeOf(typeof(INPUT)));
   }
 
   public static void SendCtrlV() {
-    Thread.Sleep(50);
-    Key(0x11, false); Thread.Sleep(50);   // Ctrl down
-    Key(0x56, false); Thread.Sleep(50);   // V down
-    Key(0x56, true);  Thread.Sleep(30);   // V up
+    // Shorter delays reduce the focus-loss window. Standard Windows key
+    // event processing handles 15–20ms gaps reliably; the old 50ms sleeps
+    // added ~180ms of dead time where focus could drift (Bug 3).
+    Thread.Sleep(20);
+    Key(0x11, false); Thread.Sleep(20);   // Ctrl down
+    Key(0x56, false); Thread.Sleep(20);   // V down
+    Key(0x56, true);  Thread.Sleep(15);   // V up
     Key(0x11, true);                       // Ctrl up
   }
 }
 '@
   Add-Type -TypeDefinition $pasteCode -ReferencedAssemblies "System.Windows.Forms"
 
-  # Two-pronged paste: WM_PASTE for apps that block simulated keyboard input
-  # (QQ etc.), SendInput for apps that only process paste via keyboard events.
-  # Both operate on the same clipboard content; the app will only accept one.
-  if ($targetHwnd -ne [IntPtr]::Zero) {
-    [AmadeusPaste]::TryWmPaste($targetHwnd)
-    Start-Sleep -Milliseconds 60
+  # Try SendInput first (works for most apps, respects UIPI).
+  # Fall back to SendWait which uses the older keybd_event API and
+  # sometimes succeeds where SendInput is blocked by anti-cheat (Bug 3).
+  try {
+    [AmadeusPaste]::SendCtrlV()
+  } catch {
+    try { [System.Windows.Forms.SendKeys]::SendWait('^v') } catch {}
   }
-  [AmadeusPaste]::SendCtrlV()
   exit 0
 
 } catch {
@@ -894,12 +945,26 @@ public static class AmadeusPaste {
   //             anything else = error.
   return await new Promise<boolean>((resolve, reject) => {
     const child = spawn('powershell.exe', ['-STA', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true })
+    const stderrChunks: string[] = []
+    child.stderr.on('data', (data: Buffer) => {
+      const text = data.toString()
+      stderrChunks.push(text)
+      console.error(`[text:inject stderr] ${text.trimEnd()}`)
+    })
+    child.stdout.on('data', (data: Buffer) => console.log(`[text:inject stdout] ${data.toString().trimEnd()}`))
     const timer = setTimeout(() => { child.kill(); reject(new Error('文本注入超时，文本已保留在剪贴板')) }, 4000)
     child.on('error', (error) => { clearTimeout(timer); reject(error) })
     child.on('exit', (code) => {
       clearTimeout(timer)
       if (code === 0) resolve(true)
-      else if (code === 3) resolve(false)
+      else if (code === 3) {
+        // Not an editable field — surface what the focus detector saw so
+        // users can understand why the result overlay appeared instead of
+        // auto-paste. stderr carries the diagnostic from the script.
+        const diag = stderrChunks.join('').trim()
+        console.warn(`[text:inject] focus not editable (exit 3). ${diag}`)
+        resolve(false)
+      }
       else reject(new Error(`文本注入失败 (${code ?? 'unknown'})，文本已保留在剪贴板`))
     })
   })
@@ -985,6 +1050,18 @@ function registerIpc() {
   ipcMain.on('statusOverlay:closeResult', () => {
     statusOverlay?.hide()
     mainWindow?.webContents.send('statusOverlay:resultClosed')
+  })
+  // Toggle click-through so the drag handle can take over the mouse for
+  // native frameless dragging, then hand it back when the cursor leaves.
+  ipcMain.on('statusOverlay:setMouseCapture', (_event, capture: boolean) => {
+    if (!statusOverlay || statusOverlay.isDestroyed()) return
+    // result phase always needs full mouse interaction (buttons)
+    if (currentStatusPhase === 'result') return
+    if (capture) {
+      statusOverlay.setIgnoreMouseEvents(false)
+    } else {
+      statusOverlay.setIgnoreMouseEvents(true, { forward: true })
+    }
   })
   ipcMain.handle('captionOverlay:show', (_event, text: string, options: CaptionOverlayOptions) => showCaptionOverlay(text, options))
   ipcMain.handle('captionOverlay:hide', () => {

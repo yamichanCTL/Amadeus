@@ -37,8 +37,8 @@ class AppPrefs(context: Context, private val json: Json) {
 
     private fun migrateSettings(settings: AppSettings, raw: String): AppSettings {
         val oldDefaultServers = setOf(
-            "http://10.154.39.91:8001",
-            "http://10.154.39.93:8001",
+            "http://192.0.2.1:8001",
+            "http://192.0.2.2:8001",
         )
         val legacy = runCatching { json.parseToJsonElement(raw) as? JsonObject }.getOrNull()
         var next = settings

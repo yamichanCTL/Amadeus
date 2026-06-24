@@ -2,7 +2,7 @@
 
 ## 任务目标
 
-- 对比 staged 与未暂存改动，确认公网 `ws://112.124.13.120:18000/v1/tts/higgs/stream` 连接失败的来源。
+- 对比 staged 与未暂存改动，确认公网 `ws://your-server-ip:18000/v1/tts/higgs/stream` 连接失败的来源。
 - 参考 `/home/yami/AI/audio/TTS/higgs-audio/webui.py`，让后端 Higgs 流式代理严格按上游 webui 的 PCM chunk 方式转发。
 - 优化前端 WebSocket 连接失败处理，保留 staged 中可用路径，不把连接层问题误导成 TTS 流式能力问题。
 

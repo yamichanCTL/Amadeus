@@ -20,6 +20,24 @@ export function SettingsPage() {
   const rafRef = useRef(0)
   const levelTimerRef = useRef(0)
   const monitorActiveRef = useRef(false)  // source of truth for toggle gate
+  // 后端地址采用「草稿 + 确认」交互：输入只改草稿，点「确认」才写入
+  // settings.serverUrl 并触发通信。未确认时通信层拿到的是旧（或空）地址，
+  // 满足「未设置不通信」。草稿随已确认地址初始化。
+  const [draftServerUrl, setDraftServerUrl] = useState(settings.serverUrl)
+  const [serverUrlStatus, setServerUrlStatus] = useState('')
+
+  // 当已确认的后端地址在外部变化时（如迁移清空），同步草稿。
+  useEffect(() => { setDraftServerUrl(settings.serverUrl) }, [settings.serverUrl])
+
+  const confirmServerUrl = async () => {
+    const trimmed = draftServerUrl.trim()
+    if (trimmed && trimmed !== '/' && !/^https?:\/\//i.test(trimmed) && !/^\S+:\d+$/.test(trimmed)) {
+      setServerUrlStatus('地址格式无效，请填写形如 http://host:port 的地址')
+      return
+    }
+    updateSettings({ serverUrl: trimmed })
+    setServerUrlStatus(trimmed ? `已确认后端地址：${trimmed.replace(/\/+$/, '')}` : '已清空后端地址，未设置不进行通信')
+  }
 
   useEffect(() => {
     void Promise.all([
@@ -201,18 +219,6 @@ export function SettingsPage() {
     })
   }
 
-  const changeInputSource = (inputSource: typeof settings.inputSource) => {
-    const useSpeaker = inputSource === 'speaker'
-    if (useSpeaker && audioRelayMixer.isActive()) audioRelayMixer.stop()
-    updateSettings({
-      inputSource,
-      audioInputDeviceId: useSpeaker
-        ? '__speaker_loopback__'
-        : settings.audioInputDeviceId === '__speaker_loopback__' ? '' : settings.audioInputDeviceId,
-      ...(useSpeaker ? { audioRelayEnabled: false } : {}),
-    })
-  }
-
   return (
     <div className="page settings-page">
       <section className="panel settings-grid">
@@ -227,8 +233,17 @@ export function SettingsPage() {
         </label>
         <label>
           后端地址
-          <input value={settings.serverUrl} onChange={(event) => updateSettings({ serverUrl: event.target.value })} placeholder="http://112.124.13.120:18000" />
-          <small>浏览器直连的公网后端。实时 ASR+TTS 的 WebSocket 也连向此地址的 /v1/tts/higgs/stream 路由，由后端内部转发给 TTS。</small>
+          <div className="inline-control">
+            <input
+              value={draftServerUrl}
+              onChange={(event) => setDraftServerUrl(event.target.value)}
+              onKeyDown={(event) => { if (event.key === 'Enter') void confirmServerUrl() }}
+              placeholder="http://your-server-ip:18000"
+            />
+            <button type="button" onClick={() => void confirmServerUrl()}>确认</button>
+          </div>
+          <small>{serverUrlStatus || '填写后点击「确认」才保存并开始通信；未确认前不会连接任何后端。实时 ASR+TTS 的 WebSocket 也连向此地址的 /v1/tts/higgs/stream 路由。'}</small>
+          {settings.serverUrl && <small className="soft-badge">已确认：{settings.serverUrl}</small>}
         </label>
         <label>
           Higgs TTS 地址
@@ -271,6 +286,7 @@ export function SettingsPage() {
             </button>
           </div>
           {microphoneTest && <small>{microphoneTest}</small>}
+          <small>同时影响实时字幕和快捷识别（{settings.triggerKey === 'AltRight' ? '右 Alt' : settings.triggerKey}）的音频来源。选择扬声器可录制系统播放的声音。</small>
         </label>
         <label className="wide">
           虚拟麦克风输出 / TTS 叠加
@@ -364,14 +380,6 @@ export function SettingsPage() {
             <HotkeyCapture value={settings.triggerKey} onChange={(value) => updateSettings({ triggerKey: value })} />
           )}
           {settings.triggerType === 'keyboard' && settings.triggerKey === 'AltRight' && <small>默认：右 Alt；Windows 支持全局触发，其他平台需保持应用获得键盘事件。</small>}
-        </label>
-        <label>
-          音频输入来源
-          <select value={settings.inputSource} onChange={(event) => changeInputSource(event.target.value as typeof settings.inputSource)}>
-            <option value="file">麦克风</option>
-            <option value="speaker">扬声器（系统音频输出）</option>
-          </select>
-          <small>同时影响实时字幕和快捷识别（右 Alt）的音频来源。选择扬声器可录制系统播放的声音。</small>
         </label>
         <label>
           切片秒数
