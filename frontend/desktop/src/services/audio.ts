@@ -80,7 +80,11 @@ export class AudioRecorder {
     this.recorder.ondataavailable = (event) => {
       if (event.data.size > 0) this.chunks.push(event.data)
     }
-    this.recorder.start(100)
+    this.recorder.onerror = (event) => {
+      console.error('[AudioRecorder] MediaRecorder 错误:', event)
+    }
+    // timeslice 250ms 比 100ms 更稳定，减少 Opus 编码碎片化导致的卡顿
+    this.recorder.start(250)
     if (onLevel) await this.startLevelMonitor(this.stream, onLevel)
   }
 
@@ -293,6 +297,63 @@ export async function playAudioBlob(blob: Blob, outputDeviceId?: string) {
     return { audio, url, sinkApplied: Boolean(outputDeviceId && audio.setSinkId) }
   } catch (error) {
     URL.revokeObjectURL(url)
+    throw error
+  }
+}
+
+/**
+ * 使用 Web Audio API 将音频路由到指定输出设备。
+ * AudioContext.setSinkId 比 HTMLAudioElement.setSinkId 对虚拟设备支持更好。
+ * 注意：本函数创建独立 AudioContext，请勿在音频中转（relay）激活时调用，
+ * 以免新 context 的 setSinkId 干扰 relay 的音频路由。
+ */
+export async function playAudioBlobToDevice(blob: Blob, outputDeviceId?: string) {
+  const context = new AudioContext()
+  let sinkApplied = false
+  try {
+    const sinkContext = context as AudioContext & { setSinkId?: (sinkId: string) => Promise<void> }
+    if (outputDeviceId && sinkContext.setSinkId) {
+      try {
+        await sinkContext.setSinkId(outputDeviceId)
+        sinkApplied = true
+        console.log('[playAudioBlobToDevice] setSinkId 成功: %s', outputDeviceId)
+      } catch (sinkError) {
+        console.warn('[playAudioBlobToDevice] setSinkId 失败，降级到系统默认输出设备:', sinkError instanceof Error ? sinkError.message : sinkError)
+      }
+    } else if (outputDeviceId) {
+      console.warn('[playAudioBlobToDevice] setSinkId API 不可用，将使用系统默认输出')
+    }
+    await context.resume()
+    console.log('[playAudioBlobToDevice] AudioContext.state=%s sampleRate=%d blobSize=%d blobType=%s',
+      context.state, context.sampleRate, blob.size, blob.type)
+    const encoded = await blob.arrayBuffer()
+    const decoded = await context.decodeAudioData(encoded)
+    console.log('[playAudioBlobToDevice] decodeAudioData 完成: duration=%.3fs channels=%d length=%d sampleRate=%d',
+      decoded.duration, decoded.numberOfChannels, decoded.length, decoded.sampleRate)
+    if (decoded.length === 0 || decoded.duration === 0) {
+      throw new Error('解码后的音频缓冲区为空')
+    }
+    const source = context.createBufferSource()
+    source.buffer = decoded
+    source.connect(context.destination)
+    source.onended = () => {
+      console.log('[playAudioBlobToDevice] 播放结束，关闭 AudioContext')
+      context.close().catch(() => undefined)
+    }
+    source.start(context.currentTime + 0.01)
+    console.log('[playAudioBlobToDevice] 开始播放: scheduledAt=%.3fs context.state=%s',
+      context.currentTime, context.state)
+    return {
+      stop: () => {
+        try { source.stop() } catch { /* 已停止 */ }
+        context.close().catch(() => undefined)
+      },
+      sinkApplied,
+      sampleRate: context.sampleRate,
+    }
+  } catch (error) {
+    console.error('[playAudioBlobToDevice] 播放异常:', error instanceof Error ? error.message : error)
+    context.close().catch(() => undefined)
     throw error
   }
 }

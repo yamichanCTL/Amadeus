@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ASRApi, HiggsAudioResult, HiggsTTSRequest, type HiggsVoicePreset } from '@/services/api'
-import { AudioRecorder, AudioRelayMixer, Pcm16ChunkPlayer, VoiceTTSStreamingClient, listAudioOutputDevices, playAudioBlob, testAudioOutputDevice } from '@/services/audio'
+import { AudioRecorder, AudioRelayMixer, Pcm16ChunkPlayer, VoiceTTSStreamingClient, listAudioOutputDevices, playAudioBlob, playAudioBlobToDevice, testAudioOutputDevice } from '@/services/audio'
 import { finishTelemetryTrace, recordTelemetryStage, startTelemetryTrace, type TelemetryTrace } from '@/services/telemetry'
 import { useASRStore } from '@/store/useASRStore'
 
@@ -38,6 +38,7 @@ export function VoiceChangerPage() {
   const playbackUrlRef = useRef('')
   const inputAudioUrlRef = useRef('')
   const outputAudioUrlRef = useRef('')
+  const outputBlobRef = useRef<Blob | null>(null)
   const relayMixerRef = useRef(new AudioRelayMixer())
   const realtimePcmPlayerRef = useRef<Pcm16ChunkPlayer | null>(null)
   const realtimeChunkJobsRef = useRef<Set<string>>(new Set())
@@ -122,6 +123,7 @@ export function VoiceChangerPage() {
 
   const setOutputBlob = useCallback((blob: Blob) => {
     const url = URL.createObjectURL(blob)
+    outputBlobRef.current = blob
     setOutputAudioUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev)
       return url
@@ -134,29 +136,55 @@ export function VoiceChangerPage() {
   }, [setOutputBlob])
 
   const playResult = useCallback(async (blob?: Blob, trace?: TelemetryTrace) => {
-    const targetBlob = blob || (outputAudioUrl ? await fetch(outputAudioUrl).then((res) => res.blob()) : null)
-    if (!targetBlob) return
-    if (relayMixerRef.current.isActive()) {
-      if (trace) recordTelemetryStage(trace, '播放提交', { detail: '共享麦克风混音总线' })
-      await relayMixerRef.current.playBlob(targetBlob)
-      if (trace) recordTelemetryStage(trace, '已注入中转混音')
+    const fromArg = Boolean(blob)
+    const fromRef = Boolean(!blob && outputBlobRef.current)
+    const targetBlob = blob || outputBlobRef.current || (outputAudioUrl ? await fetch(outputAudioUrl).then((res) => res.blob()).catch(() => null) : null)
+    console.log('[playResult] source=%s blobSize=%d blobType=%s relayActive=%s outputDevice=%s',
+      fromArg ? 'arg' : fromRef ? 'ref' : targetBlob ? 'fetch' : 'none',
+      targetBlob?.size ?? 0, targetBlob?.type ?? 'null',
+      relayMixerRef.current.isActive(),
+      settings.audioOutputDeviceId || '系统默认')
+    if (!targetBlob) {
+      if (outputAudioUrl) {
+        setError('无法读取输出音频数据，请重新生成 TTS')
+      }
       return
     }
-    if (playbackUrlRef.current) URL.revokeObjectURL(playbackUrlRef.current)
-    playbackRef.current?.pause()
-    if (trace) recordTelemetryStage(trace, '播放提交', { detail: settings.audioOutputDeviceId || '系统默认' })
-    const playback = await playAudioBlob(targetBlob, settings.audioOutputDeviceId || undefined)
-    if (trace) recordTelemetryStage(trace, '开始播放')
-    playbackRef.current = playback.audio
-    playbackUrlRef.current = playback.url
-    playback.audio.onended = () => {
-      URL.revokeObjectURL(playback.url)
-      if (playbackUrlRef.current === playback.url) playbackUrlRef.current = ''
+    try {
+      if (relayMixerRef.current.isActive()) {
+        if (trace) recordTelemetryStage(trace, '播放提交', { detail: '共享麦克风混音总线' })
+        await relayMixerRef.current.playBlob(targetBlob)
+        if (trace) recordTelemetryStage(trace, '已注入中转混音')
+        console.log('[playResult] relay mixer playBlob 完成')
+        return
+      }
+      if (playbackUrlRef.current) URL.revokeObjectURL(playbackUrlRef.current)
+      playbackRef.current?.pause()
+      if (trace) recordTelemetryStage(trace, '播放提交', { detail: settings.audioOutputDeviceId || '系统默认' })
+      const playback = await playAudioBlob(targetBlob, settings.audioOutputDeviceId || undefined)
+      if (trace) recordTelemetryStage(trace, '开始播放')
+      console.log('[playResult] playAudioBlob 返回: sinkApplied=%s', playback.sinkApplied)
+      playbackRef.current = playback.audio
+      playbackUrlRef.current = playback.url
+      playback.audio.onended = () => {
+        URL.revokeObjectURL(playback.url)
+        if (playbackUrlRef.current === playback.url) playbackUrlRef.current = ''
+      }
+    } catch (playError) {
+      const msg = playError instanceof Error ? playError.message : '播放失败'
+      console.error('[playResult] 播放异常:', msg, playError)
+      setError(msg)
+      if (trace) recordTelemetryStage(trace, '播放出错', { detail: msg })
+      else console.error('playResult 失败:', msg)
     }
   }, [outputAudioUrl, settings.audioOutputDeviceId])
 
   const playSoundEffect = useCallback(async (item: SoundEffectItem) => {
     try {
+      console.log('[playSoundEffect] file=%s size=%d type=%s relayActive=%s outputDevice=%s',
+        item.name, item.file.size, item.file.type,
+        relayMixerRef.current.isActive(),
+        settings.audioOutputDeviceId || '系统默认')
       if (relayMixerRef.current.isActive()) {
         await relayMixerRef.current.playBlob(item.file)
         setStatusText(`已注入音效：${item.name}`)
@@ -338,6 +366,8 @@ export function VoiceChangerPage() {
     setStatus('processing')
     setStatusText('Higgs TTS 合成中')
     setError('')
+    // 覆盖 Electron 状态浮窗为 thinking 动画，清理之前录音残留的「语音输入中」
+    void window.electronAPI?.showStatusOverlay('thinking', 0, 'Higgs TTS 合成中')
     const trace = startTelemetryTrace('tts', '文字 TTS', activeVoice || settings.higgsTtsVoice)
     try {
       recordTelemetryStage(trace, 'TTS 请求发送')
@@ -348,12 +378,14 @@ export function VoiceChangerPage() {
       finishTelemetryTrace(trace, `${result.audio.size} bytes`)
       setStatus('done')
       setStatusText(`${modeLabels[source]} 完成`)
+      // 成功时不隐藏浮窗，避免快速连续操作时 hide→show 竞态导致偶发不显示
       return result
     } catch (err) {
       finishTelemetryTrace(trace, err instanceof Error ? err.message : 'TTS 合成失败', 'error')
       setError(err instanceof Error ? err.message : 'TTS 合成失败')
       setStatus('error')
       setStatusText('合成失败')
+      void window.electronAPI?.hideStatusOverlay()
       return null
     }
   }, [activeVoice, api, applyResult, commonPayload, playResult, settings.higgsTtsVoice, ttsText])
@@ -363,6 +395,8 @@ export function VoiceChangerPage() {
     setStatusText('ASR 识别后合成 TTS')
     setError('')
     setTranscript('')
+    // 覆盖 Electron 状态浮窗为 thinking 动画
+    void window.electronAPI?.showStatusOverlay('thinking', 0, 'ASR 识别后合成 TTS')
     const trace = startTelemetryTrace('tts', '语音 ASR→TTS', settings.offlineEngine)
     try {
       recordTelemetryStage(trace, '语音上传发送', { detail: `${blob.size} bytes` })
@@ -378,11 +412,13 @@ export function VoiceChangerPage() {
       finishTelemetryTrace(trace, `${result.audio.size} bytes`)
       setStatus('done')
       setStatusText('语音转 TTS 完成')
+      // 成功时不隐藏浮窗，避免快速连续操作时 hide→show 竞态导致偶发不显示
     } catch (err) {
       finishTelemetryTrace(trace, err instanceof Error ? err.message : '语音转 TTS 失败', 'error')
       setError(err instanceof Error ? err.message : '语音转 TTS 失败')
       setStatus('error')
       setStatusText('处理失败')
+      void window.electronAPI?.hideStatusOverlay()
     }
   }, [api, applyResult, commonPayload, playResult, settings.offlineEngine, settings.defaultLanguage])
 
@@ -497,8 +533,17 @@ export function VoiceChangerPage() {
     const recorder = new AudioRecorder()
     recorderRef.current = recorder
     try {
-      const relayInput = relayMixerRef.current.isActive() ? relayMixerRef.current.createInputStream() : undefined
-      await recorder.start(settings.audioInputDeviceId || undefined, relayInput)
+      // 中转激活时麦克风已由 AudioRelayMixer 打开，不要再开第二路，避免音频冲突
+      const relayActive = relayMixerRef.current.isActive()
+      if (!relayActive) {
+        await recorder.prepare(settings.audioInputDeviceId || undefined)
+      }
+      const relayInput = relayActive ? relayMixerRef.current.createInputStream() : undefined
+      // 传入 onLevel 回调以启动 AudioContext 锚定录音流。WSL2 音频桥接
+      // 下，如果只有 MediaRecorder 而没有 AudioContext 消费同一个流，音频
+      // 子系统可能进入节能/节流模式，导致 MediaRecorder 收到底层交付不稳定
+      // 的音频数据而卡顿。与 ASR 录音（speechRecorder）保持一致。
+      await recorder.start(settings.audioInputDeviceId || undefined, relayInput, () => {})
     } catch (err) {
       recorder.cancel()
       recorderRef.current = null
@@ -834,7 +879,23 @@ export function VoiceChangerPage() {
               <h2>输出</h2>
               <p>{settings.audioOutputDeviceId ? '播放按钮会输出到已选设备' : '播放按钮使用系统默认输出'}</p>
             </div>
-            <button type="button" disabled={!outputAudioUrl} onClick={() => void playResult()}>播放到输出设备</button>
+            <button
+              type="button"
+              disabled={!outputBlobRef.current}
+              onClick={() => {
+                const blob = outputBlobRef.current
+                if (!blob) return
+                if (relayMixerRef.current.isActive()) {
+                  // 中转激活时：注入 relay 混音总线，不影响麦克风透传
+                  void relayMixerRef.current.playBlob(blob).catch((err) => setError(err instanceof Error ? err.message : '中转播放失败'))
+                } else {
+                  // 中转未激活：用独立 AudioContext 路由到指定设备，播放结束自动关闭
+                  void playAudioBlobToDevice(blob, settings.audioOutputDeviceId || undefined).catch((err) => {
+                    setError(err instanceof Error ? err.message : '播放到输出设备失败')
+                  })
+                }
+              }}
+            >播放到输出设备</button>
           </div>
           {outputAudioUrl ? <audio controls src={outputAudioUrl} /> : <div className="empty voice-empty">生成的 TTS 音频会显示在这里。</div>}
           {transcript && (

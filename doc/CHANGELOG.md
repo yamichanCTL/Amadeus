@@ -4,6 +4,18 @@
 > **子文档**:
 > - [桌面端文档](desktop/README.md)
 
+## [2026-06-24] 修复变声器播放按钮 + 录音卡顿 + 状态浮窗
+
+- **类型**: fix
+- **描述**: 三项修复：
+  1. **「播放到输出设备」按钮**：按钮使用独立 `playAudioBlobToDevice`（`AudioContext.setSinkId`），只在中转关闭时创建独立 AudioContext，不影响 relay 透传；`playAudioBlob` 保持原 HTML5 Audio 实现。
+  2. **录音卡顿**：根因是中转激活时 `prepare()` 打开了第二路麦克风（16kHz+AEC），与 relay 的麦克风流冲突导致 WSL2 音频异常。修复为仅在 relay 关闭时 `prepare()`，对齐 `recordingService` 的行为。同时 `MediaRecorder` 添加 `onerror` 处理器，timeslice 100→250ms 减少 Opus 碎片化。
+  3. **状态浮窗**：TTS 处理时调用 `showStatusOverlay('thinking')` 覆盖之前的「语音输入中」残留，完成/失败后 `hideStatusOverlay()`。
+- **影响范围**: `frontend/desktop/src/services/audio.ts`、`frontend/desktop/src/pages/VoiceChanger.tsx`
+- **验证**: TypeScript 编译零错误。
+
+## [2026-06-24] 修复自动注入/后端地址通信/浮窗拖动波形/录音页面切换卡死
+
 ## [2026-06-24] 修复自动注入/后端地址通信/浮窗拖动波形/录音页面切换卡死
 
 - **类型**: fix / refactor
