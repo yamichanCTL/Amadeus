@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onHotkeyTriggered: (callback: () => void) => on('hotkey:triggered', callback),
   registerMouseButton: (button: string) => ipcRenderer.invoke('mouse:register', button),
   unregisterMouseButton: () => ipcRenderer.invoke('mouse:unregister'),
+  captureTextTarget: () => ipcRenderer.invoke('text:captureTarget'),
   injectText: (text: string) => ipcRenderer.invoke('text:inject', text),
   textToClipboard: (text: string) => ipcRenderer.invoke('text:toClipboard', text),
   showStatusOverlay: (status: string, level = 0, message = '') => ipcRenderer.invoke('statusOverlay:show', status, level, message),

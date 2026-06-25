@@ -28,6 +28,6 @@ async def list_skills(category: str | None = Query(None, description="Filter by 
 async def execute_skill(request: SkillExecuteRequest) -> SkillExecuteResult:
     registry = get_skill_registry()
     result = await registry.execute(request.skill, request.parameters)
-    if not result.success and result.error and "Unknown skill" in result.error:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=result.error)
+    # Return 200 with success=false for unknown skills (instead of 404)
+    # so clients can distinguish "endpoint not found" from "skill not registered"
     return result

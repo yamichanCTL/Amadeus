@@ -80,6 +80,17 @@ let tray: Tray | null = null
 let forceQuit = false
 let mouseHook: ChildProcessWithoutNullStreams | null = null
 let keyboardHook: ChildProcessWithoutNullStreams | null = null
+let textInjectHelper: ChildProcessWithoutNullStreams | null = null
+let textInjectPending: {
+  resolve: (value: boolean) => void
+  reject: (error: Error) => void
+  timer: ReturnType<typeof setTimeout>
+  stderr: string[]
+} | null = null
+let textInjectQueue: Promise<boolean> = Promise.resolve(true)
+let lastTextTargetHwnd = '0'
+let lastTextTargetProcess = ''
+let lastTextTargetCapturedAt = 0
 let registeredHotkey = ''
 let lastTriggerAt = 0
 let captionCloseRequestCount = 0
@@ -761,79 +772,92 @@ async function archiveTranscription(args: ArchiveArgs) {
   return paths
 }
 
-async function injectText(text: string) {
-  if (!isWindows) return false
-
-  // Guard: empty text can't be injected and would only clear the clipboard,
-  // leaking the previous ASR result when the script fails (Bug 1).
-  if (!text || !text.trim()) {
-    console.warn('[text:inject] skipping empty text injection')
-    return false
-  }
-
-  // Encode the text as base64 so it survives PowerShell string interpolation
-  // without injection risk (backticks, quotes, dollar signs are all safe).
-  const textB64 = Buffer.from(text, 'utf8').toString('base64')
-
-  // Combined focus detection AND text injection in a single PowerShell process.
-  // Running two separate spawns (one to check focus, another to send keys)
-  // created a timing gap where focus could shift between them. A single process
-  // eliminates that gap.
-  //
-  // Two injection methods are used in sequence (belt-and-suspenders):
-  // 1. WM_PASTE  — sent directly to the target HWND, bypasses keyboard hooks
-  //                and IME interception (critical for QQ and similar apps).
-  // 2. SendInput — standard Ctrl+V simulation with scan codes, covering
-  //                Electron/Chromium apps that ignore WM_PASTE.
-  // Both operate on the same clipboard; the app only processes one.
-  const combinedScript = `
+function textInjectHelperScript() {
+  return `
+$ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Windows.Forms
 
-$text = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String('${textB64}'))
+$pasteCode = @'
+using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+public static class AmadeusPaste {
+  [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+  [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
 
-# Always write to clipboard first — even if we can't auto-paste, the user
-# can still Ctrl+V manually. This also ensures the clipboard is primed
-# before any of the paste methods run.
-[System.Windows.Forms.Clipboard]::SetText($text)
-Start-Sleep -Milliseconds 60
+  [StructLayout(LayoutKind.Sequential)]
+  struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+  [StructLayout(LayoutKind.Sequential)]
+  struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
+  [StructLayout(LayoutKind.Sequential)]
+  struct HARDWAREINPUT { public uint uMsg; public ushort wParamL; public ushort wParamH; }
+  [StructLayout(LayoutKind.Explicit)]
+  struct INPUT_UNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; [FieldOffset(0)] public HARDWAREINPUT hi; }
+  [StructLayout(LayoutKind.Sequential)]
+  struct INPUT { public uint type; public INPUT_UNION u; }
 
-try {
-  # ── Phase 1: Focus guard ─────────────────────────────────────────────────
-  # Strategy: inject (exit 0) for anything that COULD be a text recipient;
-  # show the result overlay (exit 3) only when focus is clearly on a
-  # non-text UI control (button, menu, list, tree, tab, scrollbar…).
-  #
-  # The old approach used a whitelist (IsKeyboardFocusable + ValuePattern +
-  # naming heuristics) that produced false negatives for QQ / WeChat / VS
-  # Code / browser contenteditable.  The fix in the previous round went too
-  # far the other way (always inject, never show overlay), losing the result
-  # UI when the cursor genuinely wasn't in an input field.
-  #
-  # The current approach uses a BLOCKLIST: we refuse to inject only when the
-  # control type is clearly a non-text interactive element.  Everything else
-  # (Edit, Document, Pane, Group, Custom, Window, Text, etc.) gets a paste
-  # attempt.  A false positive is harmless — Ctrl+V is silently ignored on
-  # a non-text control, and the text stays on clipboard for manual paste.
+  const uint INPUT_KEYBOARD = 1;
+  const uint KEYEVENTF_KEYUP = 0x0002;
 
-  $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
-  if ($null -eq $focused -or -not $focused.Current.IsEnabled) {
-    [Console]::Error.WriteLine("no-focus: focused is null or disabled")
-    exit 3
+  static void Key(ushort vk, bool up) {
+    var input = new INPUT { type = INPUT_KEYBOARD };
+    input.u.ki.wVk = vk;
+    input.u.ki.wScan = 0;
+    input.u.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
+    SendInput(1, new INPUT[] { input }, Marshal.SizeOf(typeof(INPUT)));
   }
 
-  # Read-only ValuePattern → genuinely can't paste.
+  public static void SendCtrlV() {
+    Key(0x12, true);  // Alt up: right-Alt hotkey can leave Alt logically down in some apps.
+    Key(0x11, true);  // Ctrl up
+    Key(0x10, true);  // Shift up
+    Thread.Sleep(6);
+    Key(0x11, false); Thread.Sleep(6);
+    Key(0x56, false); Thread.Sleep(6);
+    Key(0x56, true);  Thread.Sleep(4);
+    Key(0x11, true);
+  }
+
+  public static bool RestoreTarget(string hwndText) {
+    long hwndValue;
+    if (!long.TryParse(hwndText, out hwndValue)) return false;
+    var hwnd = new IntPtr(hwndValue);
+    if (hwnd == IntPtr.Zero || !IsWindow(hwnd)) return false;
+    if (IsIconic(hwnd)) ShowWindow(hwnd, 9);
+    return SetForegroundWindow(hwnd);
+  }
+}
+'@
+Add-Type -TypeDefinition $pasteCode -ReferencedAssemblies "System.Windows.Forms"
+
+function Write-Result($ok, $editable, $message) {
+  [Console]::Out.WriteLine((@{ ok = $ok; editable = $editable; message = $message } | ConvertTo-Json -Compress))
+  [Console]::Out.Flush()
+}
+
+function Test-FocusedEditable {
+  $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+  if ($null -eq $focused -or -not $focused.Current.IsEnabled) {
+    return @{ ok = $false; message = 'no-focus: focused is null or disabled' }
+  }
+  $processName = ''
+  try {
+    $processName = (Get-Process -Id $focused.Current.ProcessId -ErrorAction Stop).ProcessName
+  } catch {}
+  $compatTarget = $processName -match '^(QQ|TIM|WeChat|Weixin|WXWork)$'
+
   $valuePattern = $null
   if ($focused.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern)) {
     if ($valuePattern.Current.IsReadOnly) {
-      [Console]::Error.WriteLine(("readonly-value: name={0} class={1}" -f $focused.Current.Name, $focused.Current.ClassName))
-      exit 3
+      return @{ ok = $false; message = ('readonly-value: name={0} class={1}' -f $focused.Current.Name, $focused.Current.ClassName) }
     }
   }
 
-  # Blocklist: control types that are clearly NOT text inputs.
-  # Focus on any of these → show the result overlay so the user can copy.
   $ctrlType = $focused.Current.ControlType
   $nonTextTypes = @(
     [System.Windows.Automation.ControlType]::Button,
@@ -859,115 +883,227 @@ try {
     [System.Windows.Automation.ControlType]::Calendar
   )
   if ($ctrlType -in $nonTextTypes) {
-    [Console]::Error.WriteLine(("non-text-ctrl: ctrlType={0} name={1} class={2}" -f $ctrlType.ProgrammaticName, $focused.Current.Name, $focused.Current.ClassName))
-    exit 3
+    if ($compatTarget) {
+      return @{ ok = $true; compat = $true; process = $processName; message = ('compat-target: process={0} ctrlType={1} name={2} class={3}' -f $processName, $ctrlType.ProgrammaticName, $focused.Current.Name, $focused.Current.ClassName) }
+    }
+    return @{ ok = $false; message = ('non-text-ctrl: ctrlType={0} name={1} class={2}' -f $ctrlType.ProgrammaticName, $focused.Current.Name, $focused.Current.ClassName) }
   }
 
-  # Diagnostic: log what we're about to paste into so failures are debuggable.
-  [Console]::Error.WriteLine(("inject-target: ctrlType={0} name={1} class={2} autoId={3} kbFocusable={4}" -f $ctrlType.ProgrammaticName, $focused.Current.Name, $focused.Current.ClassName, $focused.Current.AutomationId, $focused.Current.IsKeyboardFocusable))
-
-  # ── Phase 2: Inject via virtual-key Ctrl+V ──────────────────────────────
-
-  $pasteCode = @'
-using System;
-using System.Runtime.InteropServices;
-using System.Threading;
-public static class AmadeusPaste {
-  [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-
-  [StructLayout(LayoutKind.Sequential)]
-  struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
-  [StructLayout(LayoutKind.Sequential)]
-  struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
-  [StructLayout(LayoutKind.Sequential)]
-  struct HARDWAREINPUT { public uint uMsg; public ushort wParamL; public ushort wParamH; }
-  [StructLayout(LayoutKind.Explicit)]
-  struct INPUT_UNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; [FieldOffset(0)] public HARDWAREINPUT hi; }
-  [StructLayout(LayoutKind.Sequential)]
-  struct INPUT { public uint type; public INPUT_UNION u; }
-
-  const uint INPUT_KEYBOARD = 1;
-  const uint KEYEVENTF_KEYUP = 0x0002;
-
-  // Single paste method: virtual-key SendInput Ctrl+V.
-  //
-  // We deliberately use ONLY ONE method to avoid double-paste (the old
-  // WM_PASTE + SendInput belt-and-suspenders approach caused the ASR result
-  // to be inserted twice when the target app happened to process both).
-  //
-  // Plain virtual-key codes WITHOUT scan codes look like a software keyboard
-  // or accessibility tool to anti-cheat systems in QQ / WeChat / DingTalk,
-  // passing through where scan-code simulation gets flagged as "synthesized".
-  // WM_PASTE is dropped because Chromium/Electron (QQ, VS Code, etc.)
-  // ignores it, and for native Win32 it's redundant — Ctrl+V works too.
-
-  static void Key(ushort vk, bool up) {
-    var input = new INPUT { type = INPUT_KEYBOARD };
-    input.u.ki.wVk = vk;
-    input.u.ki.wScan = 0;
-    input.u.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
-    SendInput(1, new INPUT[] { input }, Marshal.SizeOf(typeof(INPUT)));
-  }
-
-  public static void SendCtrlV() {
-    // Shorter delays reduce the focus-loss window. Standard Windows key
-    // event processing handles 15–20ms gaps reliably; the old 50ms sleeps
-    // added ~180ms of dead time where focus could drift (Bug 3).
-    Thread.Sleep(20);
-    Key(0x11, false); Thread.Sleep(20);   // Ctrl down
-    Key(0x56, false); Thread.Sleep(20);   // V down
-    Key(0x56, true);  Thread.Sleep(15);   // V up
-    Key(0x11, true);                       // Ctrl up
-  }
+  return @{ ok = $true; compat = $compatTarget; process = $processName; message = ('inject-target: process={0} ctrlType={1} name={2} class={3} autoId={4}' -f $processName, $ctrlType.ProgrammaticName, $focused.Current.Name, $focused.Current.ClassName, $focused.Current.AutomationId) }
 }
-'@
-  Add-Type -TypeDefinition $pasteCode -ReferencedAssemblies "System.Windows.Forms"
 
-  # Try SendInput first (works for most apps, respects UIPI).
-  # Fall back to SendWait which uses the older keybd_event API and
-  # sometimes succeeds where SendInput is blocked by anti-cheat (Bug 3).
+[Console]::Out.WriteLine('{"ready":true}')
+[Console]::Out.Flush()
+
+while (($line = [Console]::In.ReadLine()) -ne $null) {
+  if ([string]::IsNullOrWhiteSpace($line)) { continue }
   try {
-    [AmadeusPaste]::SendCtrlV()
+    $targetHwnd = '0'
+    $targetProcess = ''
+    $textB64 = $line.Trim()
+    if ($textB64.Contains("\`t")) {
+      $parts = $textB64.Split("\`t")
+      $targetHwnd = $parts[0].Trim()
+      if ($parts.Length -ge 3) {
+        $targetProcess = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($parts[1].Trim()))
+        $textB64 = $parts[2].Trim()
+      } else {
+        $textB64 = $parts[1].Trim()
+      }
+    }
+    $text = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($textB64))
+    [System.Windows.Forms.Clipboard]::SetText($text)
+    if (-not [string]::IsNullOrWhiteSpace($targetHwnd) -and $targetHwnd -ne '0') {
+      [void][AmadeusPaste]::RestoreTarget($targetHwnd)
+      Start-Sleep -Milliseconds 35
+    }
+    if ($targetProcess -match '^(QQ|TIM|WeChat|Weixin|WXWork)$') {
+      [System.Windows.Forms.SendKeys]::SendWait('^v')
+      Write-Result $true $true ('compat-captured-target: process={0}' -f $targetProcess)
+      continue
+    }
+    $editable = Test-FocusedEditable
+    if (-not $editable.ok) {
+      Write-Result $false $false $editable.message
+      continue
+    }
+    if ($editable.compat) {
+      [System.Windows.Forms.SendKeys]::SendWait('^v')
+    } else {
+      [AmadeusPaste]::SendCtrlV()
+    }
+    Write-Result $true $true $editable.message
   } catch {
-    try { [System.Windows.Forms.SendKeys]::SendWait('^v') } catch {}
+    Write-Result $false $true ("inject-error: " + $_.Exception.Message)
   }
-  exit 0
-
-} catch {
-  Write-Error $_
-  exit 4
 }
 `
-  const encoded = Buffer.from(combinedScript, 'utf16le').toString('base64')
+}
 
-  // Single spawn: detect focus AND inject text in one shot.
-  // Exit codes: 0 = injected successfully, 3 = not an editable field,
-  //             anything else = error.
-  return await new Promise<boolean>((resolve, reject) => {
-    const child = spawn('powershell.exe', ['-STA', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true })
-    const stderrChunks: string[] = []
-    child.stderr.on('data', (data: Buffer) => {
-      const text = data.toString()
-      stderrChunks.push(text)
-      console.error(`[text:inject stderr] ${text.trimEnd()}`)
-    })
-    child.stdout.on('data', (data: Buffer) => console.log(`[text:inject stdout] ${data.toString().trimEnd()}`))
-    const timer = setTimeout(() => { child.kill(); reject(new Error('文本注入超时，文本已保留在剪贴板')) }, 4000)
-    child.on('error', (error) => { clearTimeout(timer); reject(error) })
-    child.on('exit', (code) => {
-      clearTimeout(timer)
-      if (code === 0) resolve(true)
-      else if (code === 3) {
-        // Not an editable field — surface what the focus detector saw so
-        // users can understand why the result overlay appeared instead of
-        // auto-paste. stderr carries the diagnostic from the script.
-        const diag = stderrChunks.join('').trim()
-        console.warn(`[text:inject] focus not editable (exit 3). ${diag}`)
-        resolve(false)
+function stopTextInjectHelper() {
+  if (textInjectPending) {
+    clearTimeout(textInjectPending.timer)
+    textInjectPending.reject(new Error('文本注入 helper 已停止'))
+    textInjectPending = null
+  }
+  textInjectHelper?.kill()
+  textInjectHelper = null
+}
+
+function ensureTextInjectHelper() {
+  if (!isWindows || textInjectHelper) return
+  const encoded = Buffer.from(textInjectHelperScript(), 'utf16le').toString('base64')
+  const helper = spawn('powershell.exe', ['-STA', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true })
+  textInjectHelper = helper
+  let readySeen = false
+
+  helper.stdout.on('data', (data: Buffer) => {
+    for (const rawLine of data.toString().split(/\r?\n/)) {
+      const line = rawLine.trim()
+      if (!line) continue
+      if (!readySeen && line.includes('"ready"')) {
+        readySeen = true
+        console.log('[text:inject] helper ready')
+        continue
       }
-      else reject(new Error(`文本注入失败 (${code ?? 'unknown'})，文本已保留在剪贴板`))
+      const pending = textInjectPending
+      if (!pending) continue
+      clearTimeout(pending.timer)
+      textInjectPending = null
+      try {
+        const parsed = JSON.parse(line) as { ok?: boolean; editable?: boolean; message?: string }
+        if (parsed.ok) {
+          if (parsed.message) console.log(`[text:inject] ${parsed.message}`)
+          pending.resolve(true)
+        } else if (parsed.editable === false) {
+          console.warn(`[text:inject] focus not editable. ${parsed.message || ''}`)
+          pending.resolve(false)
+        } else {
+          pending.reject(new Error(parsed.message || '文本注入失败，文本已保留在剪贴板'))
+        }
+      } catch {
+        pending.reject(new Error(`文本注入 helper 返回异常: ${line}`))
+      }
+    }
+  })
+  helper.stderr.on('data', (data: Buffer) => {
+    const text = data.toString().trimEnd()
+    if (!text) return
+    textInjectPending?.stderr.push(text)
+    console.error(`[text:inject helper stderr] ${text}`)
+  })
+  helper.on('error', (error) => {
+    if (textInjectHelper === helper) textInjectHelper = null
+    if (textInjectPending) {
+      clearTimeout(textInjectPending.timer)
+      textInjectPending.reject(error)
+      textInjectPending = null
+    }
+  })
+  helper.on('exit', () => {
+    if (textInjectHelper === helper) textInjectHelper = null
+    if (textInjectPending) {
+      clearTimeout(textInjectPending.timer)
+      const detail = textInjectPending.stderr.join('\n').trim()
+      textInjectPending.reject(new Error(detail || '文本注入 helper 已退出'))
+      textInjectPending = null
+    }
+  })
+}
+
+async function injectTextOnce(text: string) {
+  if (!isWindows) return false
+  ensureTextInjectHelper()
+  if (!textInjectHelper?.stdin.writable) throw new Error('文本注入 helper 未就绪')
+  const textB64 = Buffer.from(text, 'utf8').toString('base64')
+  const targetHwnd = Date.now() - lastTextTargetCapturedAt < 120_000 ? lastTextTargetHwnd : '0'
+  const targetProcessB64 = Buffer.from(Date.now() - lastTextTargetCapturedAt < 120_000 ? lastTextTargetProcess : '', 'utf8').toString('base64')
+  return await new Promise<boolean>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const pending = textInjectPending
+      textInjectPending = null
+      stopTextInjectHelper()
+      reject(new Error(`文本注入超时，文本已保留在剪贴板${pending?.stderr.length ? `：${pending.stderr.join('\n')}` : ''}`))
+    }, 400)
+    textInjectPending = { resolve, reject, timer, stderr: [] }
+    textInjectHelper!.stdin.write(`${targetHwnd}\t${targetProcessB64}\t${textB64}\n`, (error) => {
+      if (!error) return
+      clearTimeout(timer)
+      textInjectPending = null
+      reject(error)
     })
   })
+}
+
+async function captureTextTarget() {
+  if (!isWindows) return false
+  const script = `
+$ErrorActionPreference = 'Stop'
+$code = @'
+using System;
+using System.Runtime.InteropServices;
+public static class AmadeusForeground {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+}
+'@
+Add-Type -TypeDefinition $code
+$hwnd = [AmadeusForeground]::GetForegroundWindow()
+$targetPid = [uint32]0
+[void][AmadeusForeground]::GetWindowThreadProcessId($hwnd, [ref]$targetPid)
+$processName = ''
+try { $processName = (Get-Process -Id $targetPid -ErrorAction Stop).ProcessName } catch {}
+@{ ok = ($hwnd -ne [IntPtr]::Zero); hwnd = $hwnd.ToInt64(); process = $processName } | ConvertTo-Json -Compress
+`
+  const encoded = Buffer.from(script, 'utf16le').toString('base64')
+  return await new Promise<boolean>((resolve) => {
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true })
+    let stdout = ''
+    let settled = false
+    let timer: ReturnType<typeof setTimeout>
+    const finish = (ok: boolean) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(ok)
+    }
+    timer = setTimeout(() => {
+      child.kill()
+      finish(false)
+    }, 600)
+    child.stdout.on('data', (data: Buffer) => {
+      stdout += data.toString()
+    })
+    child.on('error', () => finish(false))
+    child.on('exit', () => {
+      try {
+        const parsed = JSON.parse(stdout.trim()) as { ok?: boolean; hwnd?: number | string; process?: string }
+        const hwnd = String(parsed.hwnd || '0')
+        if (parsed.ok && hwnd !== '0') {
+          lastTextTargetHwnd = hwnd
+          lastTextTargetProcess = parsed.process || ''
+          lastTextTargetCapturedAt = Date.now()
+          console.log(`[text:inject] captured target hwnd=${hwnd} process=${parsed.process || ''}`)
+          finish(true)
+          return
+        }
+      } catch {
+        // ignore malformed capture output
+      }
+      finish(false)
+    })
+  })
+}
+
+async function injectText(text: string) {
+  if (!isWindows) return false
+  if (!text || !text.trim()) {
+    console.warn('[text:inject] skipping empty text injection')
+    return false
+  }
+  clipboard.writeText(text)
+  textInjectQueue = textInjectQueue.catch(() => false).then(() => injectTextOnce(text))
+  return await textInjectQueue
 }
 
 function registerIpc() {
@@ -993,6 +1129,7 @@ function registerIpc() {
   ipcMain.handle('app:defaultArchiveDir', defaultArchiveDir)
   ipcMain.handle('app:userId:get', readUserId)
   ipcMain.handle('app:userId:set', (_event, userId: string) => writeUserId(userId))
+  ipcMain.handle('text:captureTarget', () => captureTextTarget())
   ipcMain.handle('dialog:saveFile', async (_event, name: string) => {
     const result = await dialog.showSaveDialog(mainWindow!, { defaultPath: name })
     return result.canceled ? '' : result.filePath
@@ -1101,6 +1238,7 @@ app.on('second-instance', showMainWindow)
 app.whenReady().then(() => {
   configureDisplayMediaCapture()
   registerIpc()
+  if (isWindows && !isE2EMode) ensureTextInjectHelper()
   createWindow()
   if (!isE2EMode) createTray()
 
@@ -1153,5 +1291,6 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   stopMouseHook()
   stopKeyboardHook()
+  stopTextInjectHelper()
   tray?.destroy()
 })

@@ -20,6 +20,20 @@ import { useASRStore } from '@/store/useASRStore'
 
 const terminalStatuses = new Set(['success', 'failed', 'cancelled'])
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: number | null = null
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error(message)), timeoutMs)
+      })
+    ])
+  } finally {
+    if (timer) window.clearTimeout(timer)
+  }
+}
+
 function translationConfig() {
   const settings = useASRStore.getState().settings
   return {
@@ -66,12 +80,16 @@ export function buildTranscribeOptions(): TranscribeOptions {
 
 export { translationConfig }
 
-class RecordingService {
+export class RecordingService {
   /** Set when a transcription starts; cleared on completion. Read by the UI. */
   taskStartedAt: Date | null = null
   taskEndedAt: Date | null = null
 
   private requestController: AbortController | null = null
+  /** Monotonic ID incremented on each runTranscription call.
+   *  deliverResult checks this to avoid a stale transcription's
+   *  overlay update clobbering a newer transcription's state. */
+  private transcriptionId = 0
 
   get isBusy(): boolean {
     const s = useASRStore.getState()
@@ -141,24 +159,33 @@ class RecordingService {
     const settings = state.settings
     const setError = useASRStore.getState().setError
     setError('')
+    useASRStore.getState().setRecordStatus('recording')
     try {
+      void window.electronAPI?.captureTextTarget?.().catch(() => false)
       await window.electronAPI?.showStatusOverlay('recording', 0)
-      const relayInput = audioRelayMixer.isActive() ? audioRelayMixer.createInputStream() : undefined
 
       const useSpeaker = settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__'
-      let inputStream: MediaStream | undefined = relayInput
-      if (!inputStream && useSpeaker) {
+      let inputStream: MediaStream | undefined
+      if (useSpeaker) {
         inputStream = await captureSpeakerAudio()
+      } else if (audioRelayMixer.isActive()) {
+        inputStream = audioRelayMixer.createInputStream()
       }
+      const preparedInput = useSpeaker ? undefined : speechRecorder.takePreparedStream(settings.audioInputDeviceId || undefined)
 
-      await speechRecorder.start(
-        useSpeaker ? undefined : (settings.audioInputDeviceId || undefined),
-        inputStream,
-        (level) => {
-          void window.electronAPI?.showStatusOverlay('recording', level)
-        }
+      await withTimeout(
+        speechRecorder.start(
+          useSpeaker ? undefined : (settings.audioInputDeviceId || undefined),
+          inputStream || preparedInput,
+          (level) => {
+            if (useASRStore.getState().recordStatus === 'recording') {
+              void window.electronAPI?.showStatusOverlay('recording', level)
+            }
+          }
+        ),
+        5000,
+        '麦克风启动超时，请检查输入设备是否被其他软件独占'
       )
-      useASRStore.getState().setRecordStatus('recording')
     } catch (recordError) {
       speechRecorder.cancel()
       useASRStore.getState().setRecordStatus('idle')
@@ -199,6 +226,9 @@ class RecordingService {
     const controller = new AbortController()
     if (this.requestController) this.requestController.abort()
     this.requestController = controller
+    // Bump the ID so any in-flight deliverResult from a previous
+    // transcription becomes a no-op for overlay updates.
+    const myId = ++this.transcriptionId
     const settings = useASRStore.getState().settings
     const api = new ASRApi(settings.serverUrl)
     const trace = startTelemetryTrace('asr', `文件 ASR · ${filename}`, settings.offlineEngine)
@@ -216,6 +246,8 @@ class RecordingService {
       const s1 = useASRStore.getState()
       if (isAsyncResponse(response)) s1.setActiveTaskId(response.task_id)
       const result = isAsyncResponse(response) ? await this.pollTask(api, response.task_id, controller.signal) : response
+      useASRStore.getState().setActiveTaskId(null)
+      const deliveryPromise = this.deliverResult(result, autoInject, myId)
       if (result.timing) {
         const timingLabels: Record<string, string> = {
           upload_read_sec: '后端读取上传',
@@ -241,8 +273,9 @@ class RecordingService {
           recordTelemetryStage(trace, label, { durationMs, backendMs: durationMs, offsetMs: backendCursorMs })
         }
       }
-      useASRStore.getState().setActiveTaskId(null)
-      await this.persistResult(result, filename, blob, autoInject)
+      // Run persist and delivery in parallel — persist updates local state,
+      // delivery injects text to foreground window. They don't depend on each other.
+      await Promise.all([this.persistResult(result, filename, blob), deliveryPromise])
       recordTelemetryStage(trace, '前端归档与展示')
       finishTelemetryTrace(trace, `${result.full_text.length} 字`)
     } catch (transcribeError) {
@@ -256,8 +289,11 @@ class RecordingService {
         s.setError(transcribeError instanceof Error ? transcribeError.message : '转写失败')
         finishTelemetryTrace(trace, transcribeError instanceof Error ? transcribeError.message : '识别失败', 'error')
       }
-      // 出错或取消时隐藏状态覆盖层
-      await window.electronAPI?.hideStatusOverlay()
+      // 出错或取消时隐藏状态覆盖层 — 但仅当本转录仍是最新的才操作浮层，
+      // 避免旧转录的 catch 块覆盖新转录刚显示的浮层。
+      if (this.transcriptionId === myId) {
+        await window.electronAPI?.hideStatusOverlay()
+      }
     } finally {
       if (this.requestController === controller) this.requestController = null
       useASRStore.getState().setActiveTaskId(null)
@@ -269,10 +305,15 @@ class RecordingService {
     useASRStore.getState().setTranscribeStatus('polling')
     const startedAt = Date.now()
     const timeoutMs = settings.timeoutSec === 0 ? 30 * 60 * 1000 : settings.timeoutSec * 1000
+    let pollCount = 0
     while (Date.now() - startedAt < timeoutMs) {
       if (signal.aborted) throw new DOMException('识别已强制停止', 'AbortError')
+      // Adaptive polling: start at 200ms for first 5 polls (detect fast completions),
+      // then back off to 500ms, then 1000ms for long-running tasks
+      const interval = pollCount < 5 ? 200 : pollCount < 15 ? 500 : 1000
+      pollCount++
       await new Promise<void>((resolve, reject) => {
-        const timer = window.setTimeout(resolve, 1000)
+        const timer = window.setTimeout(resolve, interval)
         signal.addEventListener('abort', () => {
           window.clearTimeout(timer)
           reject(new DOMException('识别已强制停止', 'AbortError'))
@@ -284,7 +325,40 @@ class RecordingService {
     throw new Error('任务超时')
   }
 
-  private async persistResult(result: TranscribeResponse, filename: string, blob: Blob, autoInject: boolean) {
+  private async deliverResult(result: TranscribeResponse, autoInject: boolean, myId: number) {
+    const settings = useASRStore.getState().settings
+    const hasText = result.full_text.trim().length > 0
+
+    // If a newer transcription has started while we were waiting for
+    // injectText, don't touch the overlay — the newer transcription owns it.
+    const isStale = () => this.transcriptionId !== myId
+
+    if (autoInject && settings.injectMode === 'inject') {
+      if (!hasText) {
+        if (!isStale()) await window.electronAPI?.showStatusOverlay('result', 0, '未识别到语音内容')
+        return
+      }
+      try {
+        const injected = await window.electronAPI?.injectText(result.full_text)
+        if (isStale()) return // newer transcription already took over
+        if (injected === false) {
+          await window.electronAPI?.showStatusOverlay('result', 0, result.full_text)
+        } else {
+          await window.electronAPI?.hideStatusOverlay()
+        }
+      } catch {
+        if (!isStale()) await window.electronAPI?.showStatusOverlay('result', 0, result.full_text)
+      }
+    } else if (autoInject && settings.injectMode === 'copy') {
+      await window.electronAPI?.textToClipboard(result.full_text)
+      if (!isStale()) await window.electronAPI?.showStatusOverlay('result', 0, hasText ? result.full_text : '未识别到语音内容')
+    } else if (!autoInject) {
+      if (hasText) await window.electronAPI?.textToClipboard(result.full_text)
+      if (!isStale()) await window.electronAPI?.hideStatusOverlay()
+    }
+  }
+
+  private async persistResult(result: TranscribeResponse, filename: string, blob: Blob) {
     const settings = useASRStore.getState().settings
     const audio_url = URL.createObjectURL(blob)
     const resultWithAudio = { ...result, audio_url }
@@ -294,10 +368,21 @@ class RecordingService {
     s.setError('')
     this.taskEndedAt = new Date()
 
-    let archived_audio = ''
-    let archived_json = ''
+    useASRStore.getState().addHistory({
+      ...resultWithAudio,
+      id: result.task_id,
+      created_at: new Date().toISOString(),
+      filename,
+      archived_audio: '',
+      archived_json: ''
+    })
+
+    void this.archiveResult(result, filename, blob, settings.archiveDir || undefined)
+  }
+
+  private async archiveResult(result: TranscribeResponse, filename: string, blob: Blob, archiveDir?: string) {
     try {
-      const archiveRoot = settings.archiveDir || (await window.electronAPI?.getDefaultArchiveDir()) || ''
+      const archiveRoot = archiveDir || (await window.electronAPI?.getDefaultArchiveDir()) || ''
       const archived = await window.electronAPI?.archiveTranscription({
         archiveRoot,
         taskId: result.task_id,
@@ -316,49 +401,18 @@ class RecordingService {
           elapsed_sec: result.elapsed_sec,
           timing: result.timing,
           client_timing: result.client_timing,
-          user_id: settings.userId || undefined
+          user_id: useASRStore.getState().settings.userId || undefined
         }
       })
-      archived_audio = archived?.audio || ''
-      archived_json = archived?.json || ''
+      const archived_audio = archived?.audio || ''
+      const archived_json = archived?.json || ''
+      useASRStore.getState().updateHistoryResult(result.task_id, { archived_audio, archived_json } as Partial<TranscribeResponse>)
+      const current = useASRStore.getState().currentResult
+      if (current?.task_id === result.task_id) {
+        useASRStore.getState().setCurrentResult({ ...current, archived_audio, archived_json } as TranscribeResponse)
+      }
     } catch (archiveError) {
       console.warn(archiveError)
-    }
-
-    useASRStore.getState().addHistory({
-      ...resultWithAudio,
-      id: result.task_id,
-      created_at: new Date().toISOString(),
-      filename,
-      archived_audio,
-      archived_json
-    })
-
-    const hasText = result.full_text.trim().length > 0
-
-    if (autoInject && settings.injectMode === 'inject') {
-      // Guard: don't inject empty text — it would clear the clipboard and
-      // leak the previous ASR result if the PowerShell script fails (Bug 1).
-      if (!hasText) {
-        await window.electronAPI?.showStatusOverlay('result', 0, '未识别到语音内容')
-        return
-      }
-      try {
-        const injected = await window.electronAPI?.injectText(result.full_text)
-        if (injected === false) {
-          await window.electronAPI?.showStatusOverlay('result', 0, result.full_text)
-        } else {
-          await window.electronAPI?.hideStatusOverlay()
-        }
-      } catch {
-        await window.electronAPI?.showStatusOverlay('result', 0, result.full_text)
-      }
-    } else if (autoInject && settings.injectMode === 'copy') {
-      await window.electronAPI?.textToClipboard(result.full_text)
-      await window.electronAPI?.showStatusOverlay('result', 0, hasText ? result.full_text : '未识别到语音内容')
-    } else if (!autoInject) {
-      if (hasText) await window.electronAPI?.textToClipboard(result.full_text)
-      await window.electronAPI?.hideStatusOverlay()
     }
   }
 }

@@ -50,6 +50,7 @@ declare global {
       onHotkeyTriggered: (callback: () => void) => () => void
       registerMouseButton: (button: string) => Promise<boolean>
       unregisterMouseButton: () => Promise<boolean>
+      captureTextTarget: () => Promise<boolean>
       injectText: (text: string) => Promise<boolean>
       textToClipboard: (text: string) => Promise<boolean>
       showStatusOverlay: (status: string, level?: number, message?: string) => Promise<boolean>

@@ -46,8 +46,19 @@ def _apply_test_env(tmp_dir: str) -> None:
 def override_settings(tmp_path) -> None:
     """Re-apply env overrides for every test function and bust the settings cache."""
     _apply_test_env(str(tmp_path))
-    yield
+    # Also refresh module-level settings cached in archive.py (imported once)
     from app.config import get_settings
+    try:
+        import app.core.archive as _archive_mod
+        _archive_mod.settings = get_settings()
+    except Exception:
+        pass
+    try:
+        import app.api.records as _records_mod
+        _records_mod.settings = get_settings()
+    except Exception:
+        pass
+    yield
     get_settings.cache_clear()
 
 

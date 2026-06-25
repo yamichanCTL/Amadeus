@@ -1,5 +1,10 @@
 import { finishTelemetryTrace, recordTelemetry, recordTelemetryStage, startTelemetryTrace, type TelemetryTrace } from './telemetry'
 
+/** Tracks all AudioRecorder instances currently in 'recording' state.
+ *  Prevents two instances (e.g. VoiceChanger and recordingService hotkey)
+ *  from fighting over the microphone simultaneously. */
+const _activeRecorders = new Set<AudioRecorder>()
+
 export class AudioRecorder {
   private recorder: MediaRecorder | null = null
   private stream: MediaStream | null = null
@@ -7,11 +12,30 @@ export class AudioRecorder {
   private preparedDeviceId = ''
   private chunks: BlobPart[] = []
   private startedAt = 0
+  private stopTimer: number | null = null
   private levelContext: AudioContext | null = null
   private levelSource: MediaStreamAudioSourceNode | null = null
   private levelAnalyser: AnalyserNode | null = null
   private levelFrame = 0
   private prepareRequest = 0
+  private startRequest = 0
+  private pcmContext: AudioContext | null = null
+  private pcmSource: MediaStreamAudioSourceNode | null = null
+  private pcmWorkletNode: AudioWorkletNode | null = null
+  private pcmProcessor: ScriptProcessorNode | null = null
+  private pcmSilenceGain: GainNode | null = null
+  private pcmChunks: Int16Array[] = []
+  private pcmSampleRate = 0
+
+  private audioConstraints(deviceId?: string): MediaTrackConstraints {
+    return {
+      deviceId: deviceId ? { exact: deviceId } : undefined,
+      channelCount: { ideal: 1 },
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: false,
+    }
+  }
 
   async prepare(deviceId?: string) {
     const normalizedDeviceId = deviceId || ''
@@ -20,12 +44,7 @@ export class AudioRecorder {
     const request = ++this.prepareRequest
     this.releasePreparedStream()
     const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        deviceId: deviceId ? { exact: deviceId } : undefined,
-        sampleRate: { ideal: 16000 },
-        echoCancellation: true,
-        noiseSuppression: true,
-      },
+      audio: this.audioConstraints(deviceId),
       video: false,
     })
     if (request !== this.prepareRequest || this.recorder) {
@@ -53,6 +72,18 @@ export class AudioRecorder {
 
   async start(deviceId?: string, inputStream?: MediaStream, onLevel?: (level: number) => void) {
     if (this.recorder) throw new Error('录音已在进行中')
+    // Cross-instance guard: another AudioRecorder instance is already
+    // capturing the microphone. This prevents VoiceChanger and the
+    // global hotkey recorder from opening the mic simultaneously.
+    // First, clean up any stale entries (recorders that crashed without
+    // calling stop/cancel — their .recorder is null but they're still in the set).
+    for (const r of _activeRecorders) {
+      if (!r['recorder']) _activeRecorders.delete(r)
+    }
+    if (_activeRecorders.size > 0 && !_activeRecorders.has(this)) {
+      throw new Error('另一个录音正在进行中，请先停止当前录音')
+    }
+    const request = ++this.startRequest
     const normalizedDeviceId = deviceId || ''
     if (inputStream) {
       this.stream = inputStream
@@ -62,14 +93,14 @@ export class AudioRecorder {
       this.preparedDeviceId = ''
     } else {
       this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          deviceId: deviceId ? { exact: deviceId } : undefined,
-          sampleRate: { ideal: 16000 },
-          echoCancellation: true,
-          noiseSuppression: true,
-        },
+        audio: this.audioConstraints(deviceId),
         video: false,
       })
+    }
+    if (request !== this.startRequest) {
+      this.stream?.getTracks().forEach((track) => track.stop())
+      this.stream = null
+      throw new Error('录音启动已取消')
     }
     if (!this.stream?.active) throw new Error('麦克风音频轨道未就绪')
 
@@ -83,9 +114,11 @@ export class AudioRecorder {
     this.recorder.onerror = (event) => {
       console.error('[AudioRecorder] MediaRecorder 错误:', event)
     }
-    // timeslice 250ms 比 100ms 更稳定，减少 Opus 编码碎片化导致的卡顿
-    this.recorder.start(250)
-    if (onLevel) await this.startLevelMonitor(this.stream, onLevel)
+    // 1s chunks reduce Opus container fragmentation and driver jitter while
+    // still giving stop() partial data if a device is slow to finalize.
+    this.recorder.start(1000)
+    _activeRecorders.add(this)
+    await this.startPcmRecorder(this.stream, onLevel)
   }
 
   async stop() {
@@ -94,27 +127,123 @@ export class AudioRecorder {
     const mimeType = recorder.mimeType || 'audio/webm'
     const durationSec = (Date.now() - this.startedAt) / 1000
 
+    let finishStop: () => void = () => undefined
     const stopped = new Promise<void>((resolve) => {
-      recorder.onstop = () => resolve()
+      let done = false
+      finishStop = () => {
+        if (done) return
+        done = true
+        if (this.stopTimer) window.clearTimeout(this.stopTimer)
+        this.stopTimer = null
+        resolve()
+      }
+      recorder.onstop = finishStop
+      recorder.onerror = (event) => {
+        console.error('[AudioRecorder] MediaRecorder 停止错误:', event)
+        finishStop()
+      }
+      this.stopTimer = window.setTimeout(finishStop, 1800)
     })
-    recorder.stop()
+    if (recorder.state === 'recording') {
+      try { recorder.requestData() } catch { /* best effort */ }
+      recorder.stop()
+    } else {
+      finishStop()
+    }
     await stopped
+    _activeRecorders.delete(this)
+    const pcmBlob = this.buildPcmWavBlob()
+    this.stopPcmRecorder()
     this.stopLevelMonitor()
     this.stream?.getTracks().forEach((track) => track.stop())
     this.recorder = null
     this.stream = null
+    if (pcmBlob) return { blob: pcmBlob, durationSec, mimeType: 'audio/wav' }
     return { blob: new Blob(this.chunks, { type: mimeType }), durationSec, mimeType }
   }
 
   cancel() {
     this.prepareRequest += 1
+    this.startRequest += 1
+    if (this.stopTimer) window.clearTimeout(this.stopTimer)
+    this.stopTimer = null
     if (this.recorder?.state !== 'inactive') this.recorder?.stop()
+    _activeRecorders.delete(this)
+    this.stopPcmRecorder()
     this.stopLevelMonitor()
     this.stream?.getTracks().forEach((track) => track.stop())
     this.releasePreparedStream()
     this.recorder = null
     this.stream = null
     this.chunks = []
+    this.pcmChunks = []
+  }
+
+  private async startPcmRecorder(stream: MediaStream, onLevel?: (level: number) => void) {
+    this.stopPcmRecorder()
+    this.pcmChunks = []
+    this.pcmContext = new AudioContext()
+    this.pcmSampleRate = this.pcmContext.sampleRate
+    this.pcmSource = this.pcmContext.createMediaStreamSource(stream)
+    try {
+      if (!this.pcmContext.audioWorklet) throw new Error('AudioWorklet is not supported')
+      await this.pcmContext.audioWorklet.addModule(getPcmCaptureWorkletUrl())
+      this.pcmWorkletNode = new AudioWorkletNode(this.pcmContext, 'amadeus-pcm-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] })
+      this.pcmWorkletNode.port.onmessage = (event) => {
+        const buffer = event.data?.buffer as ArrayBuffer | undefined
+        if (!buffer) return
+        const pcm = new Int16Array(buffer)
+        this.pcmChunks.push(new Int16Array(pcm))
+        if (onLevel) onLevel(levelFromPcm16(pcm))
+      }
+      this.pcmSource.connect(this.pcmWorkletNode)
+      this.pcmSilenceGain = this.pcmContext.createGain()
+      this.pcmSilenceGain.gain.value = 0
+      this.pcmWorkletNode.connect(this.pcmSilenceGain)
+      this.pcmSilenceGain.connect(this.pcmContext.destination)
+    } catch {
+      try { this.pcmWorkletNode?.disconnect() } catch { /* ignore */ }
+      this.pcmWorkletNode = null
+      this.pcmProcessor = this.pcmContext.createScriptProcessor(2048, 1, 1)
+      this.pcmProcessor.onaudioprocess = (event) => {
+        const pcm = floatToPcm16(event.inputBuffer.getChannelData(0))
+        this.pcmChunks.push(pcm)
+        if (onLevel) onLevel(levelFromPcm16(pcm))
+      }
+      this.pcmSource.connect(this.pcmProcessor)
+      this.pcmSilenceGain = this.pcmContext.createGain()
+      this.pcmSilenceGain.gain.value = 0
+      this.pcmProcessor.connect(this.pcmSilenceGain)
+      this.pcmSilenceGain.connect(this.pcmContext.destination)
+    }
+    await this.pcmContext.resume()
+  }
+
+  private stopPcmRecorder() {
+    try { this.pcmWorkletNode?.disconnect() } catch { /* ignore */ }
+    try { this.pcmProcessor?.disconnect() } catch { /* ignore */ }
+    try { this.pcmSilenceGain?.disconnect() } catch { /* ignore */ }
+    try { this.pcmSource?.disconnect() } catch { /* ignore */ }
+    this.pcmWorkletNode?.port.close()
+    this.pcmContext?.close().catch(() => undefined)
+    this.pcmContext = null
+    this.pcmSource = null
+    this.pcmWorkletNode = null
+    this.pcmProcessor = null
+    this.pcmSilenceGain = null
+  }
+
+  private buildPcmWavBlob() {
+    const sampleRate = this.pcmSampleRate || 0
+    const totalSamples = this.pcmChunks.reduce((sum, chunk) => sum + chunk.length, 0)
+    if (!sampleRate || totalSamples < Math.floor(sampleRate * 0.08)) return null
+    const pcm = new Int16Array(totalSamples)
+    let offset = 0
+    for (const chunk of this.pcmChunks) {
+      pcm.set(chunk, offset)
+      offset += chunk.length
+    }
+    return new Blob([encodePcm16Wav(pcm, sampleRate)], { type: 'audio/wav' })
   }
 
   private async startLevelMonitor(stream: MediaStream, onLevel: (level: number) => void) {
@@ -165,6 +294,58 @@ export class AudioRecorder {
     this.preparedStream = null
     this.preparedDeviceId = ''
   }
+}
+
+function floatToPcm16(input: Float32Array) {
+  const pcm = new Int16Array(input.length)
+  for (let i = 0; i < input.length; i += 1) {
+    const sample = Math.max(-1, Math.min(1, input[i]))
+    pcm[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF
+  }
+  return pcm
+}
+
+function levelFromPcm16(pcm: Int16Array) {
+  if (!pcm.length) return 0
+  let squareSum = 0
+  let peak = 0
+  for (let i = 0; i < pcm.length; i += 1) {
+    const sample = pcm[i] / 32768
+    const abs = Math.abs(sample)
+    squareSum += sample * sample
+    if (abs > peak) peak = abs
+  }
+  const rms = Math.sqrt(squareSum / pcm.length)
+  return Math.min(1, Math.max(peak * 0.7, rms * 4))
+}
+
+function encodePcm16Wav(pcm: Int16Array, sampleRate: number) {
+  const headerBytes = 44
+  const dataBytes = pcm.length * 2
+  const buffer = new ArrayBuffer(headerBytes + dataBytes)
+  const view = new DataView(buffer)
+  const writeString = (offset: number, value: string) => {
+    for (let i = 0; i < value.length; i += 1) view.setUint8(offset + i, value.charCodeAt(i))
+  }
+  writeString(0, 'RIFF')
+  view.setUint32(4, 36 + dataBytes, true)
+  writeString(8, 'WAVE')
+  writeString(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true)
+  view.setUint16(22, 1, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * 2, true)
+  view.setUint16(32, 2, true)
+  view.setUint16(34, 16, true)
+  writeString(36, 'data')
+  view.setUint32(40, dataBytes, true)
+  let offset = headerBytes
+  for (let i = 0; i < pcm.length; i += 1) {
+    view.setInt16(offset, pcm[i], true)
+    offset += 2
+  }
+  return buffer
 }
 
 export const speechRecorder = new AudioRecorder()
@@ -818,6 +999,33 @@ async function preflightHealthCheck(wsUrl: string, timeoutMs: number = 5000): Pr
 // ── PCM Streamer for WebSocket ASR ──────────────────────────────────────────
 
 type PcmCallback = (pcm: Int16Array, sampleRate: number) => void
+const MAX_WS_AUDIO_BUFFER_BYTES = 64 * 1024
+
+const pcmCaptureWorkletSource = `
+class AmadeusPcmCaptureProcessor extends AudioWorkletProcessor {
+  process(inputs) {
+    const channel = inputs[0] && inputs[0][0]
+    if (!channel || channel.length === 0) return true
+    const pcm = new Int16Array(channel.length)
+    for (let i = 0; i < channel.length; i += 1) {
+      const sample = Math.max(-1, Math.min(1, channel[i]))
+      pcm[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF
+    }
+    this.port.postMessage({ buffer: pcm.buffer, sampleRate }, [pcm.buffer])
+    return true
+  }
+}
+registerProcessor('amadeus-pcm-capture', AmadeusPcmCaptureProcessor)
+`
+
+let pcmCaptureWorkletUrl = ''
+
+function getPcmCaptureWorkletUrl() {
+  if (!pcmCaptureWorkletUrl) {
+    pcmCaptureWorkletUrl = URL.createObjectURL(new Blob([pcmCaptureWorkletSource], { type: 'application/javascript' }))
+  }
+  return pcmCaptureWorkletUrl
+}
 
 function isLikelyLoopbackInput(label: string) {
   return /monitor|stereo\s*mix|what\s*u\s*hear|loopback|立体声混音|输出监听/i.test(label)
@@ -875,7 +1083,9 @@ export class PcmStreamer {
   private stream: MediaStream | null = null
   private audioContext: AudioContext | null = null
   private processor: ScriptProcessorNode | null = null
+  private workletNode: AudioWorkletNode | null = null
   private source: MediaStreamAudioSourceNode | null = null
+  private silenceGain: GainNode | null = null
   private readonly onPcm: PcmCallback
   private readonly rejectLoopbackInput: boolean
   private targetSampleRate = 16000
@@ -907,31 +1117,64 @@ export class PcmStreamer {
     const echoCancellation = this.stream.getAudioTracks()[0]?.getSettings().echoCancellation
     this.echoCancellationEnabled = typeof echoCancellation === 'boolean' ? echoCancellation : null
 
-    this.audioContext = new AudioContext({ sampleRate: 16000 })
+    this.audioContext = new AudioContext({ sampleRate: this.targetSampleRate })
     this.source = this.audioContext.createMediaStreamSource(this.stream)
-    // Use ScriptProcessorNode for broad compatibility; AudioWorklet would be ideal
-    this.processor = this.audioContext.createScriptProcessor(512, 1, 1)
+    await this.audioContext.resume()
+    try {
+      await this.startWorkletCapture()
+    } catch (workletError) {
+      console.warn('[PcmStreamer] AudioWorklet unavailable, falling back to ScriptProcessor:', workletError)
+      this.startScriptProcessorCapture()
+    }
+  }
+
+  private shouldDropInputFrame() {
+    return this.outputPlaybackActive && this.echoCancellationEnabled === false
+  }
+
+  private emitPcm(pcm: Int16Array, sampleRate: number) {
+    if (this.shouldDropInputFrame()) return
+    this.onPcm(pcm, sampleRate)
+  }
+
+  private async startWorkletCapture() {
+    const context = this.audioContext
+    const source = this.source
+    if (!context || !source) throw new Error('AudioContext is not ready')
+    if (!context.audioWorklet) throw new Error('AudioWorklet is not supported')
+    await context.audioWorklet.addModule(getPcmCaptureWorkletUrl())
+    this.workletNode = new AudioWorkletNode(context, 'amadeus-pcm-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] })
+    this.workletNode.port.onmessage = (event) => {
+      const buffer = event.data?.buffer as ArrayBuffer | undefined
+      if (!buffer) return
+      this.emitPcm(new Int16Array(buffer), Number(event.data?.sampleRate || context.sampleRate || this.targetSampleRate))
+    }
+    source.connect(this.workletNode)
+    this.silenceGain = context.createGain()
+    this.silenceGain.gain.value = 0
+    this.workletNode.connect(this.silenceGain)
+    this.silenceGain.connect(context.destination)
+  }
+
+  private startScriptProcessorCapture() {
+    const context = this.audioContext
+    const source = this.source
+    if (!context || !source) throw new Error('AudioContext is not ready')
+    this.processor = context.createScriptProcessor(1024, 1, 1)
     this.processor.onaudioprocess = (event) => {
-      // If the runtime explicitly reports that AEC is unavailable, use a
-      // half-duplex fallback during TTS playback. AEC-capable devices remain
-      // full duplex and the backend text guard catches residual echoes.
-      if (this.outputPlaybackActive && this.echoCancellationEnabled === false) return
       const input = event.inputBuffer.getChannelData(0)
-      // Convert Float32 [-1,1] → Int16
       const int16 = new Int16Array(input.length)
       for (let i = 0; i < input.length; i += 1) {
         const sample = Math.max(-1, Math.min(1, input[i]))
         int16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF
       }
-      this.onPcm(int16, this.audioContext?.sampleRate || 16000)
+      this.emitPcm(int16, context.sampleRate || this.targetSampleRate)
     }
-    this.source.connect(this.processor)
-    // Connect through a silent gain node — ScriptProcessorNode needs to be
-    // connected to fire onaudioprocess, but we must NOT feed mic to speakers.
-    const silenceGain = this.audioContext.createGain()
-    silenceGain.gain.value = 0
-    this.processor.connect(silenceGain)
-    silenceGain.connect(this.audioContext.destination)
+    source.connect(this.processor)
+    this.silenceGain = context.createGain()
+    this.silenceGain.gain.value = 0
+    this.processor.connect(this.silenceGain)
+    this.silenceGain.connect(context.destination)
   }
 
   setOutputPlaybackActive(active: boolean) {
@@ -940,10 +1183,15 @@ export class PcmStreamer {
 
   stop() {
     try { this.processor?.disconnect() } catch { /* ignore */ }
+    try { this.workletNode?.disconnect() } catch { /* ignore */ }
+    try { this.silenceGain?.disconnect() } catch { /* ignore */ }
     try { this.source?.disconnect() } catch { /* ignore */ }
+    this.workletNode?.port.close()
     this.audioContext?.close().catch(() => {})
     this.stream?.getTracks().forEach((track) => track.stop())
     this.processor = null
+    this.workletNode = null
+    this.silenceGain = null
     this.source = null
     this.audioContext = null
     this.stream = null
@@ -1063,7 +1311,7 @@ export class StreamingASRClient {
       if (captureStarted || this.stoppedByUser) return
       captureStarted = true
       this.pcmStreamer = new PcmStreamer((pcm) => {
-        if (this.ws?.readyState === WebSocket.OPEN) {
+        if (this.ws?.readyState === WebSocket.OPEN && this.ws.bufferedAmount < MAX_WS_AUDIO_BUFFER_BYTES) {
           this.ws.send(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength))
         }
       })
@@ -1301,7 +1549,7 @@ export class VoiceTTSStreamingClient {
       captureStarted = true
       if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null }
       this.pcmStreamer = new PcmStreamer((pcm) => {
-        if (this.ws?.readyState === WebSocket.OPEN) {
+        if (this.ws?.readyState === WebSocket.OPEN && this.ws.bufferedAmount < MAX_WS_AUDIO_BUFFER_BYTES) {
           this.ws.send(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength))
         }
       }, { rejectLoopbackInput: true })
@@ -1459,6 +1707,7 @@ export class VoiceTTSStreamingClient {
       ws.onclose = () => {
         if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null }
         this.pcmStreamer?.stop()
+        this.pcmStreamer = null
         this.onEvent({ type: 'closed', intentional: this.stoppedByUser })
       }
       ws.onerror = () => {
@@ -1514,6 +1763,7 @@ export class VoiceTTSStreamingClient {
         if (this.connectTimer) { clearTimeout(this.connectTimer); this.connectTimer = null }
         if (opened) {
           this.pcmStreamer?.stop()
+          this.pcmStreamer = null
           this.onEvent({ type: 'closed', intentional: this.stoppedByUser })
           return
         }

@@ -4,6 +4,46 @@
 > **子文档**:
 > - [桌面端文档](desktop/README.md)
 
+## [2026-06-26] 全项目分层测试与压力测试 — 发现 5 个 BUG
+
+- **类型**: test
+- **描述**: 完成三层测试验证 + 创建可复用测试脚本。(1) **259 单元/集成测试** 0 fail；(2) **47 端到端功能测试** 100% 通过；(3) **6 场景压力测试**：多用户并发 ASR (5/10/15/20u)、混合负载、30s 长会话稳定性 (2257 req, 75req/s)。**发现 5 个 BUG**: 🚨Records 端点 5 并发下 82x 退化 (0.15s→12.76s)、🚨ASR 模型串行化 (20u p95=8.6s, 6x退化)、❌无效引擎静默 fallback 应返回 422、❌不存在 skill 返回 404 应返回 200+fail、⚠️Higgs voices 跨服务 403ms。前端 TypeScript + Vite build 通过。创建 `scripts/stress_test.py` 和 `scripts/e2e_live_test.py` 可复用脚本。
+- **影响范围**: `tests/` (6 新文件 71 tests)、`backend/tests/conftest.py` (修复)、`scripts/stress_test.py` (新增)、`scripts/e2e_live_test.py` (新增)、`TEST_REPORT.md`、`doc/CHANGELOG.md`
+- **验证**: pytest 259 pass 0 fail；E2E 47/47；压力测试 6 场景完成；前端 tsc+vite build 通过
+- **Plan**: N/A（探索性任务）
+
+## [2026-06-25] 二次修复离线 ASR 立即输入与纯麦克风录音
+
+- **类型**: fix
+- **描述**: 离线 ASR 在拿到最终文本后立即启动自动输入/复制，不再等待前端状态更新、历史记录、归档或 telemetry；Windows 录音开始前捕获原前台窗口，注入时先恢复该窗口再粘贴，降低 QQ 等聊天框被状态浮窗/焦点变化影响的概率。离线快捷录音和 `语音转 TTS` 录音只采集麦克风输入；后续回归修复进一步将 relay 激活时的路径改为克隆 relay 内部输入轨道，避免二次打开麦克风。
+- **影响范围**: `frontend/desktop/electron/main.ts`、`frontend/desktop/electron/preload.ts`、`frontend/desktop/src/vite-env.d.ts`、`frontend/desktop/src/services/recordingService.ts`、`frontend/desktop/src/pages/VoiceChanger.tsx`、`doc/desktop/SPEECH_RECOGNITION.md`、`doc/desktop/INPUT_AND_OVERLAYS.md`、`doc/desktop/TTS_VOICE.md`
+- **验证**: `node node_modules/typescript/bin/tsc --noEmit`；`node node_modules/typescript/bin/tsc -p tsconfig.node.json --noEmit`；`node node_modules/vite/bin/vite.js build`；`git diff --check`
+- **Plan**: [链接到 plan 文件](plans/2026-06-25-lock-foreground-pure-mic-immediate-inject.md)
+
+## [2026-06-25] 回归修复 relay 录音与 QQ 兼容注入
+
+- **类型**: fix
+- **描述**: 修复上一轮把离线/TTS 录音强制改为再次打开麦克风带来的设备占用和卡顿风险：relay 激活时改为克隆 relay 内部输入麦克风轨道，仍不连接输出混音总线。录音前目标窗口捕获改为非阻塞，不再挡住录音浮窗与麦克风启动。Windows 注入 helper 额外传递捕获到的目标进程名，QQ/TIM/微信目标恢复后直接走兼容粘贴路径，减少 UIA 焦点识别失败导致的“不输入”。
+- **影响范围**: `frontend/desktop/electron/main.ts`、`frontend/desktop/src/services/recordingService.ts`、`frontend/desktop/src/pages/VoiceChanger.tsx`、`doc/desktop/SPEECH_RECOGNITION.md`、`doc/desktop/INPUT_AND_OVERLAYS.md`、`doc/desktop/TTS_VOICE.md`
+- **验证**: `node node_modules/typescript/bin/tsc --noEmit`；`node node_modules/typescript/bin/tsc -p tsconfig.node.json --noEmit`；`node node_modules/vite/bin/vite.js build`；`git diff --check`
+- **Plan**: [链接到 plan 文件](plans/2026-06-25-regression-fix-input-relay-qq.md)
+
+## [2026-06-25] 复查并修复 QQ 输入失败与录音卡住
+
+- **类型**: fix
+- **描述**: 修复离线 ASR 和 TTS 录音状态机：开始时立即进入 `recording`，麦克风启动/停止增加超时兜底，停止后立刻切 `thinking`，成功/失败都会关闭或切换状态浮窗。录音器优先使用 Web Audio PCM 并封装 WAV，`MediaRecorder` 仅作兜底，降低 WebM/Opus 分片卡顿导致的 ASR 误识别。Windows 自动输入 helper 增加 QQ/TIM/微信兼容分支，聊天输入区暴露为非标准控件时仍尝试粘贴。
+- **影响范围**: `frontend/desktop/electron/main.ts`、`frontend/desktop/src/services/audio.ts`、`frontend/desktop/src/services/recordingService.ts`、`frontend/desktop/src/pages/VoiceChanger.tsx`、`doc/desktop/SPEECH_RECOGNITION.md`、`doc/desktop/INPUT_AND_OVERLAYS.md`、`doc/desktop/TTS_VOICE.md`
+- **验证**: `node node_modules/typescript/bin/tsc --noEmit`；`node node_modules/typescript/bin/tsc -p tsconfig.node.json --noEmit`；`node node_modules/vite/bin/vite.js build`；`git diff --check`
+- **Plan**: [链接到 plan 文件](plans/2026-06-25-reinvestigate-input-recording-stuck.md)
+
+## [2026-06-25] 修复 ASR 低延迟输入与 TTS 收音卡顿
+
+- **类型**: fix
+- **描述**: ASR 结果投递改为先输入后后台归档，避免 `blobToBase64` 和文件写入挡在自动粘贴前；Windows 文本注入改为常驻 PowerShell STA helper，UIAutomation 与 SendInput 只初始化一次，减少每次结果返回后的冷启动延迟，并在失败时保留剪贴板和结果浮窗。实时 ASR/TTS 的 PCM 采集优先使用 `AudioWorklet`，WebSocket 发送增加 64KB 背压保护；变声器录音在空闲时预热麦克风，开始录音不再同步等待预热。
+- **影响范围**: `frontend/desktop/electron/main.ts`、`frontend/desktop/src/services/recordingService.ts`、`frontend/desktop/src/services/audio.ts`、`frontend/desktop/src/pages/VoiceChanger.tsx`、`doc/desktop/TTS_VOICE.md`
+- **验证**: `node node_modules/typescript/bin/tsc --noEmit`；`node node_modules/typescript/bin/tsc -p tsconfig.node.json --noEmit`；`node node_modules/vite/bin/vite.js build`；`git diff --check`
+- **Plan**: [链接到 plan 文件](plans/2026-06-25-fix-low-latency-inject-and-tts-input.md)
+
 ## [2026-06-24] 修复变声器播放按钮 + 录音卡顿 + 状态浮窗
 
 - **类型**: fix

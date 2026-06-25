@@ -28,6 +28,20 @@ function formatSec(value: number) {
   return value > 0 ? `${roundSec(value).toFixed(3)}s` : '-'
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: number | null = null
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = window.setTimeout(() => reject(new Error(message)), timeoutMs)
+      })
+    ])
+  } finally {
+    if (timer) window.clearTimeout(timer)
+  }
+}
+
 export function VoiceChangerPage() {
   const settings = useASRStore((s) => s.settings)
   const updateSettings = useASRStore((s) => s.updateSettings)
@@ -43,6 +57,7 @@ export function VoiceChangerPage() {
   const realtimePcmPlayerRef = useRef<Pcm16ChunkPlayer | null>(null)
   const realtimeChunkJobsRef = useRef<Set<string>>(new Set())
   const realtimeTraceRef = useRef<TelemetryTrace | null>(null)
+  const statusRef = useRef<WorkStatus>('idle')
   const fileRef = useRef<HTMLInputElement>(null)
   const soundFileRef = useRef<HTMLInputElement>(null)
 
@@ -65,6 +80,10 @@ export function VoiceChangerPage() {
   const [voicePresets, setVoicePresets] = useState<HiggsVoicePreset[]>([])
   const [outputTest, setOutputTest] = useState('')
   const [testingOutput, setTestingOutput] = useState(false)
+
+  useEffect(() => {
+    statusRef.current = status
+  }, [status])
 
   useEffect(() => {
     setActiveVoice(settings.higgsTtsVoice || 'Elysia')
@@ -356,6 +375,24 @@ export function VoiceChangerPage() {
     if (outputAudioUrlRef.current) URL.revokeObjectURL(outputAudioUrlRef.current)
   }, [])
 
+  useEffect(() => {
+    if (mode !== 'voice' || status !== 'idle' || relayMixerRef.current.isActive()) return
+    const recorder = recorderRef.current || new AudioRecorder()
+    recorderRef.current = recorder
+    void recorder.prepare(settings.audioInputDeviceId || undefined).catch(() => {
+      if (recorderRef.current === recorder && statusRef.current === 'idle') {
+        recorder.cancel()
+        recorderRef.current = null
+      }
+    })
+    return () => {
+      if (recorderRef.current === recorder && statusRef.current === 'idle') {
+        recorder.cancel()
+        recorderRef.current = null
+      }
+    }
+  }, [mode, settings.audioInputDeviceId, status])
+
   const runTextTts = useCallback(async (text = ttsText, source: VoiceMode = 'text') => {
     const clean = text.trim()
     if (!clean) {
@@ -378,7 +415,7 @@ export function VoiceChangerPage() {
       finishTelemetryTrace(trace, `${result.audio.size} bytes`)
       setStatus('done')
       setStatusText(`${modeLabels[source]} 完成`)
-      // 成功时不隐藏浮窗，避免快速连续操作时 hide→show 竞态导致偶发不显示
+      void window.electronAPI?.hideStatusOverlay()
       return result
     } catch (err) {
       finishTelemetryTrace(trace, err instanceof Error ? err.message : 'TTS 合成失败', 'error')
@@ -412,7 +449,7 @@ export function VoiceChangerPage() {
       finishTelemetryTrace(trace, `${result.audio.size} bytes`)
       setStatus('done')
       setStatusText('语音转 TTS 完成')
-      // 成功时不隐藏浮窗，避免快速连续操作时 hide→show 竞态导致偶发不显示
+      void window.electronAPI?.hideStatusOverlay()
     } catch (err) {
       finishTelemetryTrace(trace, err instanceof Error ? err.message : '语音转 TTS 失败', 'error')
       setError(err instanceof Error ? err.message : '语音转 TTS 失败')
@@ -485,9 +522,11 @@ export function VoiceChangerPage() {
 
   const handleRecord = useCallback(async () => {
     if (status === 'recording') {
+      statusRef.current = 'processing'
       setStatus('processing')
       setStatusText('录音已停止，正在上传识别并合成 TTS')
       setPartialText('')
+      void window.electronAPI?.showStatusOverlay('thinking', 0, '录音已停止，正在识别并合成 TTS')
       const recorder = recorderRef.current
       recorderRef.current = null
       if (!recorder) {
@@ -498,7 +537,7 @@ export function VoiceChangerPage() {
       }
       try {
         const { blob } = await recorder.stop()
-        if (!blob.size) throw new Error('没有录到有效音频')
+        if (!blob.size || blob.size < 800) throw new Error('没有录到有效音频')
         setInputAudioUrl((prev) => {
           if (prev) URL.revokeObjectURL(prev)
           return URL.createObjectURL(blob)
@@ -508,12 +547,11 @@ export function VoiceChangerPage() {
         setError(err instanceof Error ? err.message : '录音处理失败')
         setStatus('error')
         setStatusText('录音处理失败')
+        void window.electronAPI?.hideStatusOverlay()
       }
       return
     }
 
-    recorderRef.current?.cancel()
-    recorderRef.current = null
     if (streamClientRef.current) {
       streamClientRef.current.stop()
       streamClientRef.current = null
@@ -521,8 +559,10 @@ export function VoiceChangerPage() {
     realtimePcmPlayerRef.current?.stop()
     realtimePcmPlayerRef.current = null
     setMode('voice')
+    statusRef.current = 'recording'
     setStatus('recording')
     setStatusText('录音中，再次点击停止并处理')
+    void window.electronAPI?.showStatusOverlay('recording', 0)
     setError('')
     setTranscript('')
     setPartialText('')
@@ -530,26 +570,30 @@ export function VoiceChangerPage() {
       if (prev) URL.revokeObjectURL(prev)
       return ''
     })
-    const recorder = new AudioRecorder()
+    const recorder = recorderRef.current || new AudioRecorder()
     recorderRef.current = recorder
     try {
-      // 中转激活时麦克风已由 AudioRelayMixer 打开，不要再开第二路，避免音频冲突
-      const relayActive = relayMixerRef.current.isActive()
-      if (!relayActive) {
-        await recorder.prepare(settings.audioInputDeviceId || undefined)
-      }
-      const relayInput = relayActive ? relayMixerRef.current.createInputStream() : undefined
+      const relayInput = relayMixerRef.current.isActive() ? relayMixerRef.current.createInputStream() : undefined
+      const preparedInput = relayInput ? undefined : recorder.takePreparedStream(settings.audioInputDeviceId || undefined)
       // 传入 onLevel 回调以启动 AudioContext 锚定录音流。WSL2 音频桥接
       // 下，如果只有 MediaRecorder 而没有 AudioContext 消费同一个流，音频
       // 子系统可能进入节能/节流模式，导致 MediaRecorder 收到底层交付不稳定
       // 的音频数据而卡顿。与 ASR 录音（speechRecorder）保持一致。
-      await recorder.start(settings.audioInputDeviceId || undefined, relayInput, () => {})
+      await withTimeout(
+        recorder.start(settings.audioInputDeviceId || undefined, relayInput || preparedInput, (level) => {
+          if (statusRef.current === 'recording') void window.electronAPI?.showStatusOverlay('recording', level)
+        }),
+        5000,
+        '麦克风启动超时，请检查输入设备是否被其他软件独占'
+      )
     } catch (err) {
       recorder.cancel()
       recorderRef.current = null
+      statusRef.current = 'error'
       setError(err instanceof Error ? err.message : '无法启动麦克风录音')
       setStatus('error')
       setStatusText('录音启动失败')
+      void window.electronAPI?.hideStatusOverlay()
     }
   }, [
     runAudioPipeline,
