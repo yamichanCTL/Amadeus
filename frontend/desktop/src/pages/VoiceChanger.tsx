@@ -376,8 +376,8 @@ export function VoiceChangerPage() {
   }, [])
 
   useEffect(() => {
-    if (mode !== 'voice' || status !== 'idle' || relayMixerRef.current.isActive()) return
-    const recorder = recorderRef.current || new AudioRecorder()
+    if (mode !== 'voice' || status !== 'idle') return
+    const recorder = recorderRef.current || new AudioRecorder({ rejectLoopbackInput: true })
     recorderRef.current = recorder
     void recorder.prepare(settings.audioInputDeviceId || undefined).catch(() => {
       if (recorderRef.current === recorder && statusRef.current === 'idle') {
@@ -437,12 +437,42 @@ export function VoiceChangerPage() {
     const trace = startTelemetryTrace('tts', '语音 ASR→TTS', settings.offlineEngine)
     try {
       recordTelemetryStage(trace, '语音上传发送', { detail: `${blob.size} bytes` })
-      const result = await api.higgsAudioToSpeech(blob, {
-        ...commonPayload(),
-        engine: settings.offlineEngine,
-        language: settings.defaultLanguage
+      // Split ASR and TTS requests deliberately. The old combined endpoint only
+      // exposed the ASR text in response headers after the entire TTS body had
+      // completed, so a fast ASR result appeared frozen in the renderer.
+      const asrResult = await api.referenceAudioAsr(
+        blob,
+        settings.offlineEngine,
+        settings.defaultLanguage === 'auto' ? '' : settings.defaultLanguage,
+      )
+      const text = asrResult.text.trim()
+      if (!text) throw new Error('ASR 未识别到有效文本')
+      const asrSec = Number(asrResult.elapsed_sec || 0)
+      const fillStartedAt = performance.now()
+      setTranscript(text)
+      setTtsText(text)
+      const fillDispatchMs = performance.now() - fillStartedAt
+      recordTelemetryStage(trace, 'ASR 结果立即回填', {
+        durationMs: fillDispatchMs,
+        backendMs: asrSec * 1000,
+        detail: `${text.length} 字 · 前端调度 ${fillDispatchMs.toFixed(1)}ms`,
       })
-      recordTelemetryStage(trace, 'ASR 完成', { durationMs: result.timing.asr_sec * 1000, backendMs: result.timing.asr_sec * 1000 })
+      setStatusText('ASR 已回填，Higgs TTS 合成中')
+
+      const ttsResult = await api.higgsSpeak({ ...commonPayload(), text })
+      const result: HiggsAudioResult = {
+        ...ttsResult,
+        text,
+        asr_engine: asrResult.engine || settings.offlineEngine,
+        language: asrResult.language || undefined,
+        confidence: asrResult.confidence,
+        timing: {
+          ...ttsResult.timing,
+          asr_sec: asrSec,
+          total_sec: asrSec + ttsResult.timing.total_sec,
+          client_total_sec: asrSec + (ttsResult.timing.client_total_sec || ttsResult.timing.total_sec),
+        },
+      }
       recordTelemetryStage(trace, 'TTS 完成并接收音频', { durationMs: result.timing.tts_sec * 1000, backendMs: result.timing.tts_sec * 1000 })
       applyResult(result, 'voice')
       await playResult(result.audio, trace)
@@ -463,9 +493,6 @@ export function VoiceChangerPage() {
     engine: settings.streamingEngine,
     language: settings.defaultLanguage,
     deviceId: settings.audioInputDeviceId || undefined,
-    inputStreamFactory: relayMixerRef.current.isActive()
-      ? () => relayMixerRef.current.createInputStream()
-      : undefined,
     higgsBaseUrl: settings.higgsTtsProvider === 'boson' ? settings.higgsTtsRemoteBaseUrl : settings.higgsTtsBaseUrl,
     provider: settings.higgsTtsProvider,
     apiToken: settings.higgsTtsProvider === 'boson' ? settings.higgsTtsApiToken : '',
@@ -516,8 +543,7 @@ export function VoiceChangerPage() {
     settings.higgsTtsPitch,
     settings.higgsTtsExpressiveness,
     settings.higgsTtsInitialCodecChunkFrames,
-    settings.streamingEngine,
-    relayActive
+    settings.streamingEngine
   ])
 
   const handleRecord = useCallback(async () => {
@@ -570,17 +596,18 @@ export function VoiceChangerPage() {
       if (prev) URL.revokeObjectURL(prev)
       return ''
     })
-    const recorder = recorderRef.current || new AudioRecorder()
+    const recorder = recorderRef.current || new AudioRecorder({ rejectLoopbackInput: true })
     recorderRef.current = recorder
     try {
-      const relayInput = relayMixerRef.current.isActive() ? relayMixerRef.current.createInputStream() : undefined
-      const preparedInput = relayInput ? undefined : recorder.takePreparedStream(settings.audioInputDeviceId || undefined)
+      // Recognition owns a direct capture from the selected input device.
+      // Relay output may contain TTS/effects and must never be used as ASR input.
+      const preparedInput = recorder.takePreparedStream(settings.audioInputDeviceId || undefined)
       // 传入 onLevel 回调以启动 AudioContext 锚定录音流。WSL2 音频桥接
       // 下，如果只有 MediaRecorder 而没有 AudioContext 消费同一个流，音频
       // 子系统可能进入节能/节流模式，导致 MediaRecorder 收到底层交付不稳定
       // 的音频数据而卡顿。与 ASR 录音（speechRecorder）保持一致。
       await withTimeout(
-        recorder.start(settings.audioInputDeviceId || undefined, relayInput || preparedInput, (level) => {
+        recorder.start(settings.audioInputDeviceId || undefined, preparedInput, (level) => {
           if (statusRef.current === 'recording') void window.electronAPI?.showStatusOverlay('recording', level)
         }),
         5000,

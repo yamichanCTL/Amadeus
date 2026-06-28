@@ -64,7 +64,7 @@ export function TranscribePage() {
       const state = useASRStore.getState()
       if (state.recordStatus !== 'idle' || ['uploading', 'processing', 'polling'].includes(state.transcribeStatus)) return
       const latest = state.settings
-      if (!latest.audioRelayEnabled && !liveCaptionService.isActive && latest.inputSource !== 'speaker' && latest.audioInputDeviceId !== '__speaker_loopback__') {
+      if (!liveCaptionService.isActive && latest.inputSource !== 'speaker' && latest.audioInputDeviceId !== '__speaker_loopback__') {
         recordingService.prepare()
       }
     }

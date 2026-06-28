@@ -524,7 +524,7 @@ export function ModelsPage() {
       return
     }
 
-    const recorder = new AudioRecorder()
+    const recorder = new AudioRecorder({ rejectLoopbackInput: true })
     try {
       setError('')
       await recorder.start(settings.audioInputDeviceId || undefined)
@@ -559,8 +559,13 @@ export function ModelsPage() {
   const waitReferenceTranscribeTask = async (taskId: string) => {
     const startedAt = Date.now()
     const timeoutMs = settings.timeoutSec === 0 ? 30 * 60 * 1000 : settings.timeoutSec * 1000
+    let pollCount = 0
     while (Date.now() - startedAt < timeoutMs) {
-      await new Promise((resolve) => window.setTimeout(resolve, 1000))
+      // Query once immediately. A completed backend task must not sit behind
+      // the old unconditional 1-second renderer delay before filling the text.
+      const delayMs = pollCount === 0 ? 0 : pollCount < 10 ? 100 : pollCount < 30 ? 250 : 500
+      pollCount += 1
+      if (delayMs) await new Promise((resolve) => window.setTimeout(resolve, delayMs))
       const result = await api.task(taskId)
       if (['success', 'failed', 'cancelled'].includes(result.status)) return result
     }

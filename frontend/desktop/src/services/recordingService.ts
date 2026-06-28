@@ -13,7 +13,7 @@
  */
 
 import { ASRApi, isAsyncResponse, type LLMOperation, type TranscribeOptions, type TranscribeResponse } from './api'
-import { audioRelayMixer, blobToBase64, captureSpeakerAudio, speechRecorder } from './audio'
+import { blobToBase64, captureSpeakerAudio, speechRecorder } from './audio'
 import { liveCaptionService } from './liveCaption'
 import { finishTelemetryTrace, recordTelemetryStage, startTelemetryTrace } from './telemetry'
 import { useASRStore } from '@/store/useASRStore'
@@ -102,10 +102,9 @@ export class RecordingService {
     return useASRStore.getState().recordStatus === 'recording'
   }
 
-  /** Re-arm the microphone for the next recording (unless relay/speaker mode). */
+  /** Re-arm the selected physical microphone for the next recording. */
   prepare() {
     const latest = useASRStore.getState().settings
-    if (latest.audioRelayEnabled || audioRelayMixer.isActive()) return
     if (latest.inputSource === 'speaker' || latest.audioInputDeviceId === '__speaker_loopback__') return
     void speechRecorder.prepare(latest.audioInputDeviceId || undefined).catch(() => undefined)
   }
@@ -168,8 +167,6 @@ export class RecordingService {
       let inputStream: MediaStream | undefined
       if (useSpeaker) {
         inputStream = await captureSpeakerAudio()
-      } else if (audioRelayMixer.isActive()) {
-        inputStream = audioRelayMixer.createInputStream()
       }
       const preparedInput = useSpeaker ? undefined : speechRecorder.takePreparedStream(settings.audioInputDeviceId || undefined)
 

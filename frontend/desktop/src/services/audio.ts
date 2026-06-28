@@ -26,6 +26,11 @@ export class AudioRecorder {
   private pcmSilenceGain: GainNode | null = null
   private pcmChunks: Int16Array[] = []
   private pcmSampleRate = 0
+  private readonly rejectLoopbackInput: boolean
+
+  constructor(options: { rejectLoopbackInput?: boolean } = {}) {
+    this.rejectLoopbackInput = Boolean(options.rejectLoopbackInput)
+  }
 
   private audioConstraints(deviceId?: string): MediaTrackConstraints {
     return {
@@ -47,6 +52,7 @@ export class AudioRecorder {
       audio: this.audioConstraints(deviceId),
       video: false,
     })
+    this.assertDirectMicrophone(stream)
     if (request !== this.prepareRequest || this.recorder) {
       stream.getTracks().forEach((track) => track.stop())
       return
@@ -103,6 +109,7 @@ export class AudioRecorder {
       throw new Error('录音启动已取消')
     }
     if (!this.stream?.active) throw new Error('麦克风音频轨道未就绪')
+    if (!inputStream) this.assertDirectMicrophone(this.stream)
 
     const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg'].find((item) => MediaRecorder.isTypeSupported(item))
     this.chunks = []
@@ -294,6 +301,14 @@ export class AudioRecorder {
     this.preparedStream = null
     this.preparedDeviceId = ''
   }
+
+  private assertDirectMicrophone(stream: MediaStream) {
+    if (!this.rejectLoopbackInput) return
+    const label = stream.getAudioTracks()[0]?.label || ''
+    if (!isLikelyLoopbackInput(label)) return
+    stream.getTracks().forEach((track) => track.stop())
+    throw new Error(`录音必须使用实体麦克风，当前选择的是回环/虚拟输出设备：${label}`)
+  }
 }
 
 function floatToPcm16(input: Float32Array) {
@@ -348,7 +363,7 @@ function encodePcm16Wav(pcm: Int16Array, sampleRate: number) {
   return buffer
 }
 
-export const speechRecorder = new AudioRecorder()
+export const speechRecorder = new AudioRecorder({ rejectLoopbackInput: true })
 
 /** Capture system audio output (speaker loopback) for offline ASR.
  *  Uses getDisplayMedia with the Electron display media request handler
@@ -1028,7 +1043,7 @@ function getPcmCaptureWorkletUrl() {
 }
 
 function isLikelyLoopbackInput(label: string) {
-  return /monitor|stereo\s*mix|what\s*u\s*hear|loopback|立体声混音|输出监听/i.test(label)
+  return /monitor|stereo\s*mix|what\s*u\s*hear|loopback|立体声混音|输出监听|cable\s+output|virtual(?:\s+audio)?\s+cable.*output/i.test(label)
 }
 
 /**

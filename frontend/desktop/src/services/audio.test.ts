@@ -149,6 +149,20 @@ describe('AudioRecorder', () => {
     await expect(recorder.stop()).rejects.toThrow('录音尚未开始')
   })
 
+  it('rejects virtual cable output when physical microphone capture is required', async () => {
+    const stop = vi.fn()
+    mockGetUserMedia.mockResolvedValueOnce({
+      active: true,
+      getTracks: () => [{ stop }],
+      getAudioTracks: () => [{ label: 'CABLE Output (VB-Audio Virtual Cable)', stop }],
+    })
+    const physicalRecorder = new AudioRecorder({ rejectLoopbackInput: true })
+
+    await expect(physicalRecorder.start('virtual-output-id')).rejects.toThrow('录音必须使用实体麦克风')
+    expect(stop).toHaveBeenCalled()
+    physicalRecorder.cancel()
+  })
+
   it('guard: start→stop→start cycle works', async () => {
     let p = recorder.start()
     await vi.advanceTimersByTimeAsync(50)

@@ -4,6 +4,14 @@
 > **子文档**:
 > - [桌面端文档](desktop/README.md)
 
+## [2026-06-28] ASR 立即回填与 TTS 纯麦克风采集
+
+- **类型**: fix / test
+- **描述**: 语音转 TTS 改为 ASR 响应先回填、再请求 Higgs TTS，消除等待完整 TTS 音频造成的前端假卡死；模型管理参考文本移除固定首轮 1 秒轮询。离线 ASR、TTS 录音和实时 ASR 均改为独立采集所选实体麦克风，中转只负责输出，不再提供识别输入；回环/虚拟输出设备会被拒绝。新增 500 ms React 端到端门槛、30 轮压力测试和真实后端 warm-path 压测脚本。
+- **影响范围**: `frontend/desktop/src/pages/{VoiceChanger,Models,Transcribe}.tsx`、`frontend/desktop/src/services/{audio,recordingService}.ts`、专项测试与 `scripts/`、`doc/desktop/`
+- **验证**: 专项 5 passed；前端全量 39 passed；真实 SenseVoice warm HTTP 222.5 ms 且文本准确；TypeScript、Vite、后端定向测试通过
+- **Plan**: [链接到 plan 文件](plans/2026-06-28-fix-asr-immediate-fill-pure-mic-capture.md)
+
 ## [2026-06-26] 全项目分层测试与压力测试 — 发现 5 个 BUG
 
 - **类型**: test

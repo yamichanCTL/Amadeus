@@ -7,6 +7,7 @@
 > - [Higgs TTS 与变声器](TTS_VOICE.md)
 > - [远程 Higgs TTS 与开发调试台](REMOTE_TTS_AND_DEBUG.md)
 > - [模型管理稳定性与 CUDA](MODEL_MANAGEMENT.md)
+> - [ASR 立即回填与纯麦克风采集测试报告](../reports/2026-06-28-asr-fill-pure-mic-test-report.md)
 
 ## 范围
 
@@ -28,4 +29,5 @@
 - [远程 Higgs TTS 与开发调试台](REMOTE_TTS_AND_DEBUG.md)
 - [模型管理稳定性与 CUDA](MODEL_MANAGEMENT.md)
 - [输入、浮窗与跨应用注入](INPUT_AND_OVERLAYS.md)
+- [ASR 立即回填与纯麦克风采集测试报告](../reports/2026-06-28-asr-fill-pure-mic-test-report.md)
 - [ASRAPP Frontend 桌面端](../asrapp/frontend/DESKTOP.md)
