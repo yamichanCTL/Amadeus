@@ -8,7 +8,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 // ── Global mocks ───────────────────────────────────────────────────────────
 let lastRecorderInstance: any = null
-const mockStream = { getTracks: vi.fn(() => [{ stop: vi.fn() }]), active: true }
+const mockStream = {
+  getTracks: vi.fn(() => [{ stop: vi.fn() }]),
+  getAudioTracks: vi.fn(() => [{ label: 'Physical Microphone', getSettings: () => ({ sampleRate: 48_000 }) }]),
+  active: true,
+}
 const mockGetUserMedia = vi.fn().mockResolvedValue(mockStream)
 
 const MockMediaRecorder = vi.fn(function(this: any) {

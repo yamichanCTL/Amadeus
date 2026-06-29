@@ -63,11 +63,11 @@ describe('adaptive poll intervals', () => {
 
 // ── Timeout calculation ────────────────────────────────────────────────────
 describe('injectText timeout', () => {
-  it('new timeout 400ms is 3x faster than old 1200ms', () => {
+  it('keeps the native injection timeout inside the 500ms end-to-end budget', () => {
     const oldTimeout = 1200
-    const newTimeout = 400
+    const newTimeout = 475
     expect(newTimeout).toBeLessThan(oldTimeout)
-    expect(oldTimeout / newTimeout).toBe(3)
+    expect(newTimeout).toBeLessThan(500)
   })
 })
 

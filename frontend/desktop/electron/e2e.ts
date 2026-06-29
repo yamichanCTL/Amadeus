@@ -18,7 +18,10 @@ type Harness = {
   getStatusOverlay: () => BrowserWindow | null
   showCaptionOverlay: (text: string, options: CaptionOptions) => Promise<boolean>
   getCaptionOverlay: () => BrowserWindow | null
+  captureTextTarget: () => Promise<boolean>
   injectText: (text: string) => Promise<boolean>
+  waitTextInjectReady: () => Promise<boolean>
+  getTextInjectDebugEvents: () => string[]
   writeUserId: (userId: string) => Promise<{ userId: string; path: string }>
   readUserId: () => Promise<string>
   getCaptionRequestCounts: () => { close: number; settings: number }
@@ -68,6 +71,12 @@ export async function runAmadeusWindowsE2E(harness: Harness) {
   const tests: Record<string, TestResult> = {}
 
   try {
+    tests.textInjectWarmup = await runTest(async () => {
+      const startedAt = performance.now()
+      const ready = await harness.waitTextInjectReady()
+      return { passed: ready, ready, elapsedMs: performance.now() - startedAt }
+    })
+
     tests.brand = await runTest(async () => {
       const value = await harness.mainWindow.webContents.executeJavaScript(`({
         title: document.title,
@@ -85,7 +94,7 @@ export async function runAmadeusWindowsE2E(harness: Harness) {
     })
 
     tests.responsive = await runTest(async () => {
-      harness.mainWindow.setSize(580, 500)
+      harness.mainWindow.setSize(720, 520)
       await delay(350)
       const value = await harness.mainWindow.webContents.executeJavaScript(`({
         innerWidth,
@@ -94,10 +103,10 @@ export async function runAmadeusWindowsE2E(harness: Harness) {
         bodyScrollWidth: document.body.scrollWidth,
         shellColumns: getComputedStyle(document.querySelector('.app-shell')).gridTemplateColumns
       })`)
-      const screenshot = await capture(harness.mainWindow, path.join(outputDir, 'responsive-580x500.png'))
+      const screenshot = await capture(harness.mainWindow, path.join(outputDir, 'responsive-720x520.png'))
       harness.mainWindow.setSize(1100, 720)
       return {
-        passed: value.innerWidth === 580 && value.documentScrollWidth === 580 && value.bodyScrollWidth === 580,
+        passed: value.innerWidth === 720 && value.documentScrollWidth === 720 && value.bodyScrollWidth === 720,
         ...value,
         screenshot
       }
@@ -113,11 +122,60 @@ export async function runAmadeusWindowsE2E(harness: Harness) {
         inputWindow.webContents.focus()
         await inputWindow.webContents.executeJavaScript(`document.getElementById('target').focus(); document.getElementById('target').value = ''`)
         await delay(250)
+        const captured = await harness.captureTextTarget()
+        if (!captured) throw new Error('未能捕获隔离 textarea 窗口')
+        inputWindow.focus()
+        inputWindow.webContents.focus()
+        await inputWindow.webContents.executeJavaScript(`document.getElementById('target').focus()`)
+        await delay(100)
         const injected = await harness.injectText(marker)
         await delay(550)
         const value = await inputWindow.webContents.executeJavaScript(`document.getElementById('target').value`)
         const screenshot = await capture(inputWindow, path.join(outputDir, 'text-injection.png'))
         return { passed: injected && value === marker, injected, marker, value, screenshot }
+      } finally {
+        if (!inputWindow.isDestroyed()) inputWindow.close()
+      }
+    })
+
+    tests.consecutiveTextInjection = await runTest(async () => {
+      const first = `连续注入一-${Date.now()}`
+      const second = `连续注入二-${Date.now()}`
+      const inputWindow = new BrowserWindow({ width: 620, height: 320, show: false, title: 'Amadeus Consecutive Input E2E' })
+      try {
+        await inputWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(inputWindowHtml())}`)
+        inputWindow.show()
+        inputWindow.focus()
+        inputWindow.webContents.focus()
+        await inputWindow.webContents.executeJavaScript(`document.getElementById('target').focus(); document.getElementById('target').value = ''`)
+        await delay(250)
+        const captured = await harness.captureTextTarget()
+        if (!captured) throw new Error('未能捕获连续注入 textarea 窗口')
+        inputWindow.focus()
+        inputWindow.webContents.focus()
+        await inputWindow.webContents.executeJavaScript(`document.getElementById('target').focus()`)
+        await delay(100)
+        const firstStartedAt = performance.now()
+        const firstPromise = harness.injectText(first)
+        await delay(300)
+        const secondStartedAt = performance.now()
+        const secondPromise = harness.injectText(second)
+        const [firstResult, secondResult] = await Promise.allSettled([firstPromise, secondPromise])
+        const secondCompletedAt = performance.now()
+        await delay(100)
+        const value = await inputWindow.webContents.executeJavaScript(`document.getElementById('target').value`)
+        const secondLatencyMs = secondCompletedAt - secondStartedAt
+        const firstInjected = firstResult.status === 'fulfilled' && firstResult.value
+        const secondInjected = secondResult.status === 'fulfilled' && secondResult.value
+        return {
+          passed: secondInjected && (value === second || value === `${first}${second}`) && secondLatencyMs < 500,
+          firstInjected,
+          secondInjected,
+          value,
+          firstLatencyMs: secondCompletedAt - firstStartedAt,
+          secondLatencyMs,
+          thresholdMs: 500
+        }
       } finally {
         if (!inputWindow.isDestroyed()) inputWindow.close()
       }
@@ -244,6 +302,7 @@ export async function runAmadeusWindowsE2E(harness: Harness) {
     appVersion: app.getVersion(),
     userData: app.getPath('userData'),
     completedAt: new Date().toISOString(),
+    textInjectDebugEvents: harness.getTextInjectDebugEvents(),
     tests
   }
   const reportPath = path.join(outputDir, 'result.json')

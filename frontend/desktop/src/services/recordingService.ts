@@ -244,7 +244,10 @@ export class RecordingService {
       if (isAsyncResponse(response)) s1.setActiveTaskId(response.task_id)
       const result = isAsyncResponse(response) ? await this.pollTask(api, response.task_id, controller.signal) : response
       useASRStore.getState().setActiveTaskId(null)
-      const deliveryPromise = this.deliverResult(result, autoInject, myId)
+      recordTelemetryStage(trace, '自动回填开始')
+      const deliveryPromise = this.deliverResult(result, autoInject, myId).then(() => {
+        recordTelemetryStage(trace, '自动回填完成')
+      })
       if (result.timing) {
         const timingLabels: Record<string, string> = {
           upload_read_sec: '后端读取上传',

@@ -5,7 +5,9 @@
 
 ## 麦克风预热与开头保护
 
-Amadeus 在应用运行期间预热设置中选定的真实麦克风。预热流只负责提前完成操作系统设备打开、AEC 和降噪初始化；用户触发录音后，前端优先用 Web Audio 从已经存活的轨道采集连续 PCM 并封装为 WAV，`MediaRecorder` 仅作为兜底。若权限被拒绝或预热尚未完成，点击录音仍会直接请求麦克风并在轨道可用后立即开始录制，不额外等待固定的 1–2 秒。
+Amadeus 在应用运行期间预热设置中选定的真实麦克风。预热流只负责提前完成操作系统设备打开；离线 ASR 和 TTS 一句话录音明确关闭浏览器 AEC、降噪和自动增益，保留实体麦克风原始波形。用户触发录音后，前端优先用 Web Audio 从已经存活的轨道采集连续 PCM 并封装为 WAV，`MediaRecorder` 仅作为兜底。若权限被拒绝或预热尚未完成，点击录音仍会直接请求麦克风并在轨道可用后立即开始录制，不额外等待固定的 1–2 秒。
+
+AudioWorklet 为每个 PCM block 附带音频帧位置。renderer 会检测缺帧、重复块和重叠块：缺失区间补零以保持 WAV 的真实时间轴，重叠样本只保留一次，并输出诊断计数。该处理避免丢块后直接拼接前后波形造成时间压缩和爆音；它不会伪造已经丢失的语音，因此实体设备 E2E 仍要求 `gapSamples === 0`。
 
 离线快捷录音、TTS 一句话录音和实时 ASR+TTS 始终独立打开设置中选定的实体麦克风；即使 relay 已启用，也不会克隆中转轨道或读取输出/虚拟声卡混音总线。实时字幕和 Agent 免按键识别仍可从 `AudioRelayMixer` 克隆其原始输入轨道，以维持现有全双工链路；这些模式不在本次 TTS 录音隔离变更范围内。
 
@@ -35,6 +37,8 @@ Amadeus 在应用运行期间预热设置中选定的真实麦克风。预热流
 3. 焦点可编辑时才写入系统剪贴板，并通过常驻 STA helper 执行粘贴。普通应用使用 `SendInput` 发送标准 Ctrl+V；QQ、TIM、微信等聊天客户端如果把输入区暴露成非标准控件，会进入兼容分支并使用 `SendKeys` 粘贴。录音/Thinking 浮窗保持非聚焦，因此 VS Code/Codex 输入框、浏览器文本框等原前台控件仍是粘贴目标。
 4. 粘贴成功后直接关闭 Thinking 浮窗，不创建结果框。只有焦点不可编辑、平台不支持或注入失败时，状态浮窗才显示完整识别结果；用户可点击“复制”后关闭，也可点击“×”直接关闭。
 
+连续离线识别使用 latest-wins 注入调度：如果前一轮 UI Automation/helper 仍卡住，新结果会先取消旧注入并立即执行；尚未开始的中间项不会继续阻塞最新文本。Electron 主线程不再同步写剪贴板，避免与 STA helper 争用时冻结事件循环；helper 在应用启动时预热，ready 之前不启动单次注入计时。每个 pending 请求同时绑定其 PowerShell helper，已被替换的旧 helper 即使稍后触发 stdout、stderr 或 exit，也不能清理新请求。普通完成路径仍保持串行，避免剪贴板和 Ctrl+V 乱序。开发调试台会记录“识别响应接收”“自动回填开始”“自动回填完成”，可直接区分后端延迟和注入延迟。
+
 Windows 不允许低权限进程向管理员权限窗口注入输入；如果目标 VS Code/浏览器以管理员身份运行，Amadeus 也必须处于相同权限级别，或改用“复制到剪贴板”。
 
 ## 实时识别预览与字幕框
@@ -57,7 +61,7 @@ Windows 不允许低权限进程向管理员权限窗口注入输入；如果目
 
 ## 响应式窗口
 
-Electron 最小窗口从 800×560 调整为 560×460。页面取消 1080px/760px 固定 body 最小宽度，并在 980px、760px 和 560px 高度断点重排侧栏、设置表单、识别底栏、弹窗、Agent 面板和历史列表。580×500 Electron 实测中 `documentElement.scrollWidth === innerWidth === 580`，内容区使用内部纵向滚动，不再出现整页横向挤压。
+Electron 当前最小窗口为 720×520。页面取消 1080px/760px 固定 body 最小宽度，并在 980px、760px 和 560px 高度断点重排侧栏、设置表单、识别底栏、弹窗、Agent 面板和历史列表。720×520 Electron 实测中 `documentElement.scrollWidth === innerWidth === 720`，内容区使用内部纵向滚动，不再出现整页横向挤压。
 
 ## 用户 ID
 
@@ -80,8 +84,8 @@ powershell.exe -ExecutionPolicy Bypass -File scripts/run_amadeus_windows_e2e.ps1
 脚本会复制 `release/win-unpacked` 到 Windows `%TEMP%`，依次验证：
 
 1. Amadeus 品牌和 `archive/userid` 实际读写。
-2. 580×500 主窗口无整页横向溢出。
-3. 专用 textarea 中真实执行 Windows user32 Ctrl+V，读取输入值并截图。
+2. 720×520 最小主窗口无整页横向溢出。
+3. 专用 textarea 中真实执行 Windows user32 Ctrl+V，读取输入值并截图；随后以 300 ms 间隔执行两次连续注入，要求第二次在 500 ms 内完成且 textarea 保留最新文本。
 4. 录音波形、Thinking、识别结果和字幕浮窗截图，验证结果复制/关闭按钮与字幕设置/关闭按钮 IPC。
 5. 直接调用生产 `AudioRelayMixer`：枚举 DJI MIC MINI、CABLE Input/Output，将 DJI 轨道常态连接到 `CABLE Input`，通过真实 `pushPcm16()` 叠加 997 Hz 测试音，再从 `CABLE Output` 采样 RMS/peak 证明 Cable 回环。
 

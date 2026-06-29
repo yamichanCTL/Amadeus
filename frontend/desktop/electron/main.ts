@@ -19,6 +19,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
 import { runAmadeusWindowsE2E } from './e2e'
+import { LatestTaskQueue } from './latest-task-queue'
 
 type ClosePreference = 'ask' | 'background' | 'quit'
 
@@ -64,6 +65,7 @@ function loadAppIcon(): Electron.NativeImage | undefined {
   return undefined
 }
 const isE2EMode = process.argv.includes('--amadeus-e2e')
+if (isE2EMode) app.commandLine.appendSwitch('force-renderer-accessibility')
 const e2eUserData = process.argv.find((arg) => arg.startsWith('--amadeus-e2e-user-data='))?.slice('--amadeus-e2e-user-data='.length)
 
 let mainWindow: BrowserWindow | null = null
@@ -81,13 +83,16 @@ let forceQuit = false
 let mouseHook: ChildProcessWithoutNullStreams | null = null
 let keyboardHook: ChildProcessWithoutNullStreams | null = null
 let textInjectHelper: ChildProcessWithoutNullStreams | null = null
+let textInjectHelperReady: Promise<boolean> | null = null
+let settleTextInjectHelperReady: ((ready: boolean) => void) | null = null
 let textInjectPending: {
+  helper: ChildProcessWithoutNullStreams
   resolve: (value: boolean) => void
   reject: (error: Error) => void
   timer: ReturnType<typeof setTimeout>
   stderr: string[]
 } | null = null
-let textInjectQueue: Promise<boolean> = Promise.resolve(true)
+const textInjectQueue = new LatestTaskQueue<boolean>(() => stopTextInjectHelper())
 let lastTextTargetHwnd = '0'
 let lastTextTargetProcess = ''
 let lastTextTargetCapturedAt = 0
@@ -95,6 +100,8 @@ let registeredHotkey = ''
 let lastTriggerAt = 0
 let captionCloseRequestCount = 0
 let captionSettingsRequestCount = 0
+const TEXT_INJECT_TIMEOUT_MS = 475
+const textInjectDebugEvents: string[] = []
 
 app.setName('Amadeus')
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
@@ -916,6 +923,18 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
     if (-not [string]::IsNullOrWhiteSpace($targetHwnd) -and $targetHwnd -ne '0') {
       [void][AmadeusPaste]::RestoreTarget($targetHwnd)
       Start-Sleep -Milliseconds 35
+      if ($targetProcess -eq 'AmadeusE2E') {
+        $root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]([int64]$targetHwnd))
+        $editCondition = New-Object System.Windows.Automation.PropertyCondition(
+          [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+          [System.Windows.Automation.ControlType]::Edit
+        )
+        $edit = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $editCondition)
+        if ($null -ne $edit) {
+          $edit.SetFocus()
+          Start-Sleep -Milliseconds 20
+        }
+      }
     }
     if ($targetProcess -match '^(QQ|TIM|WeChat|Weixin|WXWork)$') {
       [System.Windows.Forms.SendKeys]::SendWait('^v')
@@ -948,26 +967,35 @@ function stopTextInjectHelper() {
   }
   textInjectHelper?.kill()
   textInjectHelper = null
+  settleTextInjectHelperReady?.(false)
+  settleTextInjectHelperReady = null
+  textInjectHelperReady = null
 }
 
 function ensureTextInjectHelper() {
-  if (!isWindows || textInjectHelper) return
+  if (!isWindows) return Promise.resolve(false)
+  if (textInjectHelper) return textInjectHelperReady || Promise.resolve(true)
   const encoded = Buffer.from(textInjectHelperScript(), 'utf16le').toString('base64')
   const helper = spawn('powershell.exe', ['-STA', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true })
   textInjectHelper = helper
+  textInjectHelperReady = new Promise<boolean>((resolve) => { settleTextInjectHelperReady = resolve })
   let readySeen = false
 
   helper.stdout.on('data', (data: Buffer) => {
+    if (textInjectHelper !== helper) return
     for (const rawLine of data.toString().split(/\r?\n/)) {
       const line = rawLine.trim()
       if (!line) continue
       if (!readySeen && line.includes('"ready"')) {
         readySeen = true
+        if (isE2EMode) textInjectDebugEvents.push('helper-ready')
+        settleTextInjectHelperReady?.(true)
+        settleTextInjectHelperReady = null
         console.log('[text:inject] helper ready')
         continue
       }
       const pending = textInjectPending
-      if (!pending) continue
+      if (!pending || pending.helper !== helper) continue
       clearTimeout(pending.timer)
       textInjectPending = null
       try {
@@ -987,49 +1015,64 @@ function ensureTextInjectHelper() {
     }
   })
   helper.stderr.on('data', (data: Buffer) => {
+    if (textInjectHelper !== helper) return
     const text = data.toString().trimEnd()
     if (!text) return
-    textInjectPending?.stderr.push(text)
+    if (textInjectPending?.helper === helper) textInjectPending.stderr.push(text)
     console.error(`[text:inject helper stderr] ${text}`)
   })
   helper.on('error', (error) => {
-    if (textInjectHelper === helper) textInjectHelper = null
-    if (textInjectPending) {
+    if (textInjectHelper !== helper) return
+    textInjectHelper = null
+    settleTextInjectHelperReady?.(false)
+    settleTextInjectHelperReady = null
+    textInjectHelperReady = null
+    if (textInjectPending?.helper === helper) {
       clearTimeout(textInjectPending.timer)
       textInjectPending.reject(error)
       textInjectPending = null
     }
   })
   helper.on('exit', () => {
-    if (textInjectHelper === helper) textInjectHelper = null
-    if (textInjectPending) {
+    if (textInjectHelper !== helper) return
+    textInjectHelper = null
+    settleTextInjectHelperReady?.(false)
+    settleTextInjectHelperReady = null
+    textInjectHelperReady = null
+    if (textInjectPending?.helper === helper) {
       clearTimeout(textInjectPending.timer)
       const detail = textInjectPending.stderr.join('\n').trim()
       textInjectPending.reject(new Error(detail || '文本注入 helper 已退出'))
       textInjectPending = null
     }
   })
+  return textInjectHelperReady!
 }
 
 async function injectTextOnce(text: string) {
   if (!isWindows) return false
-  ensureTextInjectHelper()
-  if (!textInjectHelper?.stdin.writable) throw new Error('文本注入 helper 未就绪')
+  const ready = await ensureTextInjectHelper()
+  if (!ready) throw new Error('文本注入 helper 启动失败')
+  const helper = textInjectHelper
+  if (!helper?.stdin.writable) throw new Error('文本注入 helper 未就绪')
   const textB64 = Buffer.from(text, 'utf8').toString('base64')
   const targetHwnd = Date.now() - lastTextTargetCapturedAt < 120_000 ? lastTextTargetHwnd : '0'
-  const targetProcessB64 = Buffer.from(Date.now() - lastTextTargetCapturedAt < 120_000 ? lastTextTargetProcess : '', 'utf8').toString('base64')
+  const capturedProcess = Date.now() - lastTextTargetCapturedAt < 120_000 ? lastTextTargetProcess : ''
+  const targetProcessB64 = Buffer.from(isE2EMode && capturedProcess === 'Amadeus' ? 'AmadeusE2E' : capturedProcess, 'utf8').toString('base64')
   return await new Promise<boolean>((resolve, reject) => {
+    if (isE2EMode) textInjectDebugEvents.push('request-written')
     const timer = setTimeout(() => {
       const pending = textInjectPending
+      if (pending?.helper !== helper || textInjectHelper !== helper) return
       textInjectPending = null
       stopTextInjectHelper()
       reject(new Error(`文本注入超时，文本已保留在剪贴板${pending?.stderr.length ? `：${pending.stderr.join('\n')}` : ''}`))
-    }, 400)
-    textInjectPending = { resolve, reject, timer, stderr: [] }
-    textInjectHelper!.stdin.write(`${targetHwnd}\t${targetProcessB64}\t${textB64}\n`, (error) => {
+    }, TEXT_INJECT_TIMEOUT_MS)
+    textInjectPending = { helper, resolve, reject, timer, stderr: [] }
+    helper.stdin.write(`${targetHwnd}\t${targetProcessB64}\t${textB64}\n`, (error) => {
       if (!error) return
       clearTimeout(timer)
-      textInjectPending = null
+      if (textInjectPending?.helper === helper) textInjectPending = null
       reject(error)
     })
   })
@@ -1101,9 +1144,7 @@ async function injectText(text: string) {
     console.warn('[text:inject] skipping empty text injection')
     return false
   }
-  clipboard.writeText(text)
-  textInjectQueue = textInjectQueue.catch(() => false).then(() => injectTextOnce(text))
-  return await textInjectQueue
+  return await textInjectQueue.run(() => injectTextOnce(text))
 }
 
 function registerIpc() {
@@ -1236,9 +1277,10 @@ if (!gotLock) app.quit()
 app.on('second-instance', showMainWindow)
 
 app.whenReady().then(() => {
+  if (isE2EMode) app.setAccessibilitySupportEnabled(true)
   configureDisplayMediaCapture()
   registerIpc()
-  if (isWindows && !isE2EMode) ensureTextInjectHelper()
+  if (isWindows) void ensureTextInjectHelper()
   createWindow()
   if (!isE2EMode) createTray()
 
@@ -1253,7 +1295,10 @@ app.whenReady().then(() => {
           getStatusOverlay: () => statusOverlay,
           showCaptionOverlay,
           getCaptionOverlay: () => captionOverlay,
+          captureTextTarget,
           injectText,
+          waitTextInjectReady: () => ensureTextInjectHelper(),
+          getTextInjectDebugEvents: () => [...textInjectDebugEvents],
           writeUserId,
           readUserId,
           getCaptionRequestCounts: () => ({

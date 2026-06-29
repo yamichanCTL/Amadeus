@@ -4,6 +4,22 @@
 > **子文档**:
 > - [桌面端文档](desktop/README.md)
 
+## [2026-06-29] 修复麦克风收音间断与非原始音
+
+- **类型**: fix / test
+- **描述**: 先新增端到端失败复现，确认离线/TTS 录音错误开启浏览器 AEC/降噪，且 AudioWorklet 缺失 block 会被 WAV 聚合器直接删除并压短时间轴。实体麦克风采集现统一关闭 AEC/NS/AGC；Worklet 增加音频帧位置，聚合器补齐 gap、去除 overlap 并在每轮录音重置时间轴。新增 30 秒/11,250 block 压测和 Windows 实体麦克风连续性探针。
+- **影响范围**: `frontend/desktop/src/services/audio.ts`、音频连续性专项测试、`scripts/test_microphone_capture_continuity.sh`、`doc/desktop/`、测试报告
+- **验证**: 修改前 DSP 约束和 8,192/12,288 样本缺失测试失败；修复后专项 15 passed，30 秒压力恢复完整 1,440,000 样本，前端全量 48 passed，TypeScript/Vite/Windows 目录打包通过；Windows 实体 DJI E2E 因执行额度限制待复跑
+- **Plan**: [链接到 plan 文件](plans/2026-06-29-fix-microphone-capture-dropouts.md)
+
+## [2026-06-29] 修复连续离线 ASR 第二次自动回填延迟
+
+- **类型**: fix / test
+- **描述**: 先新增连续双次离线识别端到端复现，确认后端即时返回但 Electron 主线程同步剪贴板写入与 STA helper 争用时会冻结事件循环，串行注入队列进一步积压第二轮。删除主线程重复剪贴板写入，增加 helper 启动预热/ready 握手，并改为 latest-wins 调度；pending 请求绑定具体 helper，旧进程事件不再误清理新请求。新增自动回填 telemetry、30 轮压力测试和 Windows 连续 textarea 注入验收。
+- **影响范围**: `frontend/desktop/electron/{main,e2e,latest-task-queue}.ts`、`frontend/desktop/src/services/recordingService.ts`、专项测试与 `scripts/test_consecutive_offline_asr_fill.sh`、`doc/desktop/`、测试报告
+- **验证**: 受控修改前第二轮 1190.2 ms、Windows 真机修复前约 9991.6 ms；修复后卡死场景约 13 ms，30 轮离线识别 p95 0.0 ms / max 0.1 ms，Windows textarea 第一轮 441.9 ms / 第二轮 130.2 ms且全套 E2E 通过；前端全量 44 passed，TypeScript 与 Vite build 通过
+- **Plan**: [链接到 plan 文件](plans/2026-06-29-fix-consecutive-offline-asr-fill-latency.md)
+
 ## [2026-06-28] ASR 立即回填与 TTS 纯麦克风采集
 
 - **类型**: fix / test

@@ -26,6 +26,10 @@ export class AudioRecorder {
   private pcmSilenceGain: GainNode | null = null
   private pcmChunks: Int16Array[] = []
   private pcmSampleRate = 0
+  private pcmExpectedFrameStart: number | null = null
+  private pcmGapSamples = 0
+  private pcmOverlapSamples = 0
+  private captureTrackSettings: MediaTrackSettings | null = null
   private readonly rejectLoopbackInput: boolean
 
   constructor(options: { rejectLoopbackInput?: boolean } = {}) {
@@ -36,8 +40,11 @@ export class AudioRecorder {
     return {
       deviceId: deviceId ? { exact: deviceId } : undefined,
       channelCount: { ideal: 1 },
-      echoCancellation: true,
-      noiseSuppression: true,
+      // Offline/TTS recording promises the selected physical microphone's
+      // original waveform. Browser voice DSP can gate quiet phonemes and
+      // create pumping/dropout artifacts, so keep this path unprocessed.
+      echoCancellation: false,
+      noiseSuppression: false,
       autoGainControl: false,
     }
   }
@@ -59,8 +66,8 @@ export class AudioRecorder {
     }
     this.preparedStream = stream
     this.preparedDeviceId = normalizedDeviceId
-    // Give the OS driver and browser AEC/noise suppression a short settling
-    // window before the user starts speaking. This runs while the page is idle.
+    // Give the OS driver and raw capture track a short settling window before
+    // the user starts speaking. This runs while the page is idle.
     await new Promise((resolve) => window.setTimeout(resolve, 350))
   }
 
@@ -110,6 +117,7 @@ export class AudioRecorder {
     }
     if (!this.stream?.active) throw new Error('麦克风音频轨道未就绪')
     if (!inputStream) this.assertDirectMicrophone(this.stream)
+    this.captureTrackSettings = this.stream.getAudioTracks()[0]?.getSettings() || null
 
     const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg'].find((item) => MediaRecorder.isTypeSupported(item))
     this.chunks = []
@@ -159,14 +167,25 @@ export class AudioRecorder {
     }
     await stopped
     _activeRecorders.delete(this)
+    const pcmSamples = this.pcmChunks.reduce((sum, chunk) => sum + chunk.length, 0)
+    const capture = {
+      sampleRate: this.pcmSampleRate,
+      samples: pcmSamples,
+      durationSec: this.pcmSampleRate ? pcmSamples / this.pcmSampleRate : 0,
+      gapSamples: this.pcmGapSamples,
+      overlapSamples: this.pcmOverlapSamples,
+      echoCancellation: this.captureTrackSettings?.echoCancellation ?? null,
+      noiseSuppression: this.captureTrackSettings?.noiseSuppression ?? null,
+      autoGainControl: this.captureTrackSettings?.autoGainControl ?? null,
+    }
     const pcmBlob = this.buildPcmWavBlob()
     this.stopPcmRecorder()
     this.stopLevelMonitor()
     this.stream?.getTracks().forEach((track) => track.stop())
     this.recorder = null
     this.stream = null
-    if (pcmBlob) return { blob: pcmBlob, durationSec, mimeType: 'audio/wav' }
-    return { blob: new Blob(this.chunks, { type: mimeType }), durationSec, mimeType }
+    if (pcmBlob) return { blob: pcmBlob, durationSec, mimeType: 'audio/wav', capture }
+    return { blob: new Blob(this.chunks, { type: mimeType }), durationSec, mimeType, capture }
   }
 
   cancel() {
@@ -184,11 +203,18 @@ export class AudioRecorder {
     this.stream = null
     this.chunks = []
     this.pcmChunks = []
+    this.pcmExpectedFrameStart = null
+    this.pcmGapSamples = 0
+    this.pcmOverlapSamples = 0
+    this.captureTrackSettings = null
   }
 
   private async startPcmRecorder(stream: MediaStream, onLevel?: (level: number) => void) {
     this.stopPcmRecorder()
     this.pcmChunks = []
+    this.pcmExpectedFrameStart = null
+    this.pcmGapSamples = 0
+    this.pcmOverlapSamples = 0
     this.pcmContext = new AudioContext()
     this.pcmSampleRate = this.pcmContext.sampleRate
     this.pcmSource = this.pcmContext.createMediaStreamSource(stream)
@@ -200,7 +226,7 @@ export class AudioRecorder {
         const buffer = event.data?.buffer as ArrayBuffer | undefined
         if (!buffer) return
         const pcm = new Int16Array(buffer)
-        this.pcmChunks.push(new Int16Array(pcm))
+        this.appendPcmChunk(pcm, Number(event.data?.frameStart))
         if (onLevel) onLevel(levelFromPcm16(pcm))
       }
       this.pcmSource.connect(this.pcmWorkletNode)
@@ -214,7 +240,7 @@ export class AudioRecorder {
       this.pcmProcessor = this.pcmContext.createScriptProcessor(2048, 1, 1)
       this.pcmProcessor.onaudioprocess = (event) => {
         const pcm = floatToPcm16(event.inputBuffer.getChannelData(0))
-        this.pcmChunks.push(pcm)
+        this.appendPcmChunk(pcm)
         if (onLevel) onLevel(levelFromPcm16(pcm))
       }
       this.pcmSource.connect(this.pcmProcessor)
@@ -240,6 +266,44 @@ export class AudioRecorder {
     this.pcmSilenceGain = null
   }
 
+  private appendPcmChunk(input: Int16Array, frameStart?: number) {
+    if (!input.length) return
+    const pcm = new Int16Array(input)
+    if (!Number.isFinite(frameStart)) {
+      this.pcmChunks.push(pcm)
+      return
+    }
+
+    const start = Math.max(0, Math.round(frameStart!))
+    if (this.pcmExpectedFrameStart === null) {
+      this.pcmExpectedFrameStart = start + pcm.length
+      this.pcmChunks.push(pcm)
+      return
+    }
+
+    const expected = this.pcmExpectedFrameStart
+    if (start > expected) {
+      const gap = start - expected
+      this.pcmChunks.push(new Int16Array(gap))
+      this.pcmGapSamples += gap
+      this.pcmChunks.push(pcm)
+      this.pcmExpectedFrameStart = start + pcm.length
+      return
+    }
+
+    if (start < expected) {
+      const overlap = expected - start
+      this.pcmOverlapSamples += Math.min(overlap, pcm.length)
+      if (overlap >= pcm.length) return
+      this.pcmChunks.push(pcm.slice(overlap))
+      this.pcmExpectedFrameStart = start + pcm.length
+      return
+    }
+
+    this.pcmChunks.push(pcm)
+    this.pcmExpectedFrameStart = start + pcm.length
+  }
+
   private buildPcmWavBlob() {
     const sampleRate = this.pcmSampleRate || 0
     const totalSamples = this.pcmChunks.reduce((sum, chunk) => sum + chunk.length, 0)
@@ -249,6 +313,11 @@ export class AudioRecorder {
     for (const chunk of this.pcmChunks) {
       pcm.set(chunk, offset)
       offset += chunk.length
+    }
+    if (this.pcmGapSamples > 0 || this.pcmOverlapSamples > 0) {
+      console.warn(
+        `[AudioRecorder] PCM 时间轴已修复：补齐 ${this.pcmGapSamples} 样本，忽略 ${this.pcmOverlapSamples} 重叠样本`,
+      )
     }
     return new Blob([encodePcm16Wav(pcm, sampleRate)], { type: 'audio/wav' })
   }
@@ -842,7 +911,38 @@ export async function runAudioRelayDeviceE2E() {
     const dji = inputs.find((d) => /dji\s*mic\s*mini/i.test(d.label))
     const cableInput = outputs.find((d) => /^cable\s*input\b/i.test(d.label))
     const cableOutput = inputs.find((d) => /cable\s*output/i.test(d.label))
-    return { passed: Boolean(dji && cableInput && cableOutput), dji: dji?.label || '', cableInput: cableInput?.label || '', cableOutput: cableOutput?.label || '' }
+    let microphoneCapture: Record<string, unknown> | null = null
+    if (dji) {
+      const recorder = new AudioRecorder({ rejectLoopbackInput: true })
+      try {
+        await recorder.start(dji.deviceId)
+        await new Promise((resolve) => setTimeout(resolve, 1_200))
+        const result = await recorder.stop()
+        microphoneCapture = {
+          mimeType: result.mimeType,
+          blobBytes: result.blob.size,
+          ...result.capture,
+        }
+      } finally {
+        recorder.cancel()
+      }
+    }
+    const capturePassed = Boolean(
+      microphoneCapture
+      && microphoneCapture.mimeType === 'audio/wav'
+      && Number(microphoneCapture.samples) > 0
+      && Number(microphoneCapture.gapSamples) === 0
+      && microphoneCapture.echoCancellation !== true
+      && microphoneCapture.noiseSuppression !== true
+      && microphoneCapture.autoGainControl !== true
+    )
+    return {
+      passed: Boolean(dji && cableInput && cableOutput && capturePassed),
+      dji: dji?.label || '',
+      cableInput: cableInput?.label || '',
+      cableOutput: cableOutput?.label || '',
+      microphoneCapture,
+    }
   } finally {
     bootstrap.getTracks().forEach((track) => track.stop())
   }
@@ -1018,6 +1118,11 @@ const MAX_WS_AUDIO_BUFFER_BYTES = 64 * 1024
 
 const pcmCaptureWorkletSource = `
 class AmadeusPcmCaptureProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super()
+    this.sequence = 0
+  }
+
   process(inputs) {
     const channel = inputs[0] && inputs[0][0]
     if (!channel || channel.length === 0) return true
@@ -1026,7 +1131,7 @@ class AmadeusPcmCaptureProcessor extends AudioWorkletProcessor {
       const sample = Math.max(-1, Math.min(1, channel[i]))
       pcm[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF
     }
-    this.port.postMessage({ buffer: pcm.buffer, sampleRate }, [pcm.buffer])
+    this.port.postMessage({ buffer: pcm.buffer, sampleRate, sequence: this.sequence++, frameStart: currentFrame }, [pcm.buffer])
     return true
   }
 }
