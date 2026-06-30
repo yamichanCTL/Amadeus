@@ -3,6 +3,10 @@
 > **父文档**: [← 返回桌面端](README.md)
 > **子文档**: [X-ASR 接入](../asrapp/asr/X_ASR.md) | [测试报告](../reports/2026-06-20-asr-hotwords-remote-tts-debug-test-report.md)
 
+## 统一润色/翻译设置
+
+模型管理把原“大模型设置”和“翻译模型设置”合并为“润色/翻译设置”。两种任务共用厂商、接口地址、模型和 API Token，通过 Prompt 区分纠错、改写或翻译；目标语言与风格是同一配置的补充字段。旧版独立翻译字段保留在持久化类型中用于兼容读取，但不再形成第二套 UI 和请求配置。
+
 ## `signal is aborted without reason`
 
 旧版模型列表请求固定在 8 秒后调用不带 reason 的 `AbortController.abort()`。Electron/Chromium 会把它直接格式化为 `signal is aborted without reason`。React StrictMode 的首次双 effect、切换后端地址或连续点击刷新会增加出现次数，但模型之间没有共享 signal。

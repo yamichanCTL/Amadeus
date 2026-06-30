@@ -30,11 +30,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   unregisterMouseButton: () => ipcRenderer.invoke('mouse:unregister'),
   captureTextTarget: () => ipcRenderer.invoke('text:captureTarget'),
   injectText: (text: string) => ipcRenderer.invoke('text:inject', text),
-  textToClipboard: (text: string) => ipcRenderer.invoke('text:toClipboard', text),
+  textToClipboard: (text: string) => {
+    ipcRenderer.send('text:toClipboard', text)
+    return true
+  },
   showStatusOverlay: (status: string, level = 0, message = '') => ipcRenderer.invoke('statusOverlay:show', status, level, message),
   hideStatusOverlay: () => ipcRenderer.invoke('statusOverlay:hide'),
   onStatusResultCopied: (callback: (text: string) => void) => on('statusOverlay:resultCopied', callback),
   onStatusResultClosed: (callback: () => void) => on('statusOverlay:resultClosed', callback),
+  onStatusRecognitionCancelled: (callback: () => void) => on('statusOverlay:cancelRecognition', callback),
+  onStatusRecognitionSubmitted: (callback: () => void) => on('statusOverlay:submitRecognition', callback),
   showCaptionOverlay: (text: string, options: unknown) => ipcRenderer.invoke('captionOverlay:show', text, options),
   hideCaptionOverlay: () => ipcRenderer.invoke('captionOverlay:hide'),
   onCaptionOverlayClosed: (callback: () => void) => on('captionOverlay:closedByUser', callback),

@@ -6,10 +6,10 @@ export function TitleBar() {
       </div>
       <div className="window-actions">
         <button type="button" title="最小化" onClick={() => window.electronAPI?.minimize()}>
-          _
+          <span className="window-glyph minimize-glyph" aria-hidden="true" />
         </button>
         <button type="button" title="最大化" onClick={() => window.electronAPI?.maximize()}>
-          □
+          <span className="window-glyph maximize-glyph" aria-hidden="true" />
         </button>
         <button type="button" title="关闭" className="danger" onClick={() => window.electronAPI?.close()}>
           ×

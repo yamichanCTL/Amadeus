@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AssistantFigure } from '@/components/AssistantFigure'
 import { AudioPlayer } from '@/components/AudioPlayer'
 import { DropZone, type LocalAudioFile } from '@/components/DropZone'
 import { RecordButton } from '@/components/RecordButton'
 import { ASRApi, type LLMOperation, type TranscribeResponse } from '@/services/api'
 import { liveCaptionService } from '@/services/liveCaption'
-import { recordingService, translationConfig } from '@/services/recordingService'
+import { recordingService, selectDeliveryText } from '@/services/recordingService'
 import { useASRStore } from '@/store/useASRStore'
 
 function formatTime(date: Date): string {
@@ -35,6 +34,7 @@ export function TranscribePage() {
   const taskEndedAt = recordingService.taskEndedAt
   const [llmStatus, setLlmStatus] = useState<LLMOperation | 'idle'>('idle')
   const [pendingFiles, setPendingFiles] = useState<LocalAudioFile[]>([])
+  const [copied, setCopied] = useState(false)
   const backendReady = Boolean(settings.backendConfirmed && settings.serverUrl.trim())
 
   // Derive status text from liveCaptionStatus
@@ -106,13 +106,13 @@ export function TranscribePage() {
     }
   }
 
-  const processCurrentText = async (operation: LLMOperation) => {
+  const processCurrentText = async () => {
     if (!currentResult?.full_text.trim()) return
-    const translate = translationConfig()
-    const model = operation === 'translate' ? translate.model : settings.llmModel
-    const baseUrl = operation === 'translate' ? translate.baseUrl : settings.llmBaseUrl
-    const apiToken = operation === 'translate' ? translate.apiToken : settings.llmApiToken
-    const provider = operation === 'translate' ? translate.provider : settings.llmProvider
+    const operation: LLMOperation = 'polish'
+    const model = settings.llmModel
+    const baseUrl = settings.llmBaseUrl
+    const apiToken = settings.llmApiToken
+    const provider = settings.llmProvider
     if (!model.trim() || !baseUrl.trim() || !apiToken.trim()) {
       setError('请先在模型管理中填写对应模型接口、模型和 API Token')
       return
@@ -129,7 +129,7 @@ export function TranscribePage() {
         provider,
         target_language: settings.llmTargetLanguage || 'English',
         style: settings.llmStyle || undefined,
-        prompt: operation === 'polish' ? settings.llmPolishPrompt || undefined : undefined
+        prompt: settings.llmPolishPrompt || undefined
       })
       const next: TranscribeResponse = {
         ...currentResult,
@@ -146,6 +146,14 @@ export function TranscribePage() {
     } finally {
       setLlmStatus('idle')
     }
+  }
+
+  const displayedResultText = currentResult ? selectDeliveryText(currentResult) : ''
+  const copyDisplayedResult = () => {
+    if (!displayedResultText) return
+    setCopied(true)
+    window.electronAPI?.textToClipboard(displayedResultText)
+    window.setTimeout(() => setCopied(false), 1200)
   }
 
   return (
@@ -207,10 +215,10 @@ export function TranscribePage() {
                   </time>
                   <p>{currentResult.full_text || '暂无文本'}</p>
                 </article>
-                {currentResult.llm_outputs?.polish?.text && (
+                {(currentResult.llm_outputs?.polish?.text || currentResult.llm_outputs?.translate?.text) && (
                   <article>
-                    <time>AI</time>
-                    <p>{currentResult.llm_outputs.polish.text}</p>
+                    <time>润色/翻译</time>
+                    <p>{currentResult.llm_outputs?.polish?.text || currentResult.llm_outputs?.translate?.text}</p>
                   </article>
                 )}
               </div>
@@ -219,12 +227,9 @@ export function TranscribePage() {
             )}
             <div className="preview-footer">
               <div className="preview-actions">
-                <button type="button" disabled={!currentResult} onClick={() => window.electronAPI?.textToClipboard(currentResult?.full_text || '')}>复制结果</button>
-                <button type="button" disabled={!currentResult || llmStatus !== 'idle'} onClick={() => void processCurrentText('polish')}>
-                  {llmStatus === 'polish' ? '润色中' : '润色'}
-                </button>
-                <button type="button" disabled={!currentResult || llmStatus !== 'idle'} onClick={() => void processCurrentText('translate')}>
-                  {llmStatus === 'translate' ? '翻译中' : '翻译'}
+                <button type="button" disabled={!currentResult} onClick={copyDisplayedResult}>{copied ? '已复制' : '复制结果'}</button>
+                <button type="button" disabled={!currentResult || llmStatus !== 'idle'} onClick={() => void processCurrentText()}>
+                  {llmStatus !== 'idle' ? '处理中' : '润色/翻译'}
                 </button>
               </div>
               {currentResult && <AudioPlayer item={currentResult} />}
@@ -249,36 +254,30 @@ export function TranscribePage() {
                 <strong>标点恢复</strong>
                 <small>{settings.enablePunctuation ? '已开启' : '未开启'}</small>
               </button>
-              <button type="button" className={settings.llmAutoTranslate ? 'quick-tile active' : 'quick-tile'} onClick={() => updateSettings({ llmAutoTranslate: !settings.llmAutoTranslate })}>
-                <span>文</span>
-                <strong>翻译</strong>
-                <small>{settings.llmAutoTranslate ? settings.llmTargetLanguage : '不翻译'}</small>
-              </button>
-              <button type="button" className={settings.llmAutoPolish ? 'quick-tile active' : 'quick-tile'} onClick={() => updateSettings({ llmAutoPolish: !settings.llmAutoPolish })}>
+              <button
+                type="button"
+                className={settings.llmAutoPolish || settings.llmAutoTranslate ? 'quick-tile active' : 'quick-tile'}
+                onClick={() => {
+                  const enabled = settings.llmAutoPolish || settings.llmAutoTranslate
+                  updateSettings({ llmAutoPolish: !enabled, llmAutoTranslate: false })
+                }}
+              >
                 <span>AI</span>
-                <strong>离线润色</strong>
-                <small>{settings.llmAutoPolish ? settings.llmModel || '已开启' : '点击开启'}</small>
+                <strong>润色/翻译</strong>
+                <small>{settings.llmAutoPolish || settings.llmAutoTranslate ? settings.llmModel || '已开启' : '点击开启'}</small>
               </button>
             </div>
             <label className="polish-prompt-field">
-              润色 Prompt
+              润色/翻译 Prompt
               <textarea
                 rows={4}
                 value={settings.llmPolishPrompt}
                 onChange={(event) => updateSettings({ llmPolishPrompt: event.target.value })}
-                placeholder="输入离线 ASR 润色要求"
+                placeholder="例如：修正错字，或把结果翻译成英文"
               />
-              <small>仅在离线录音/文件识别自动润色或手动点击“润色”时使用；模型、接口和 Token 来自模型管理。</small>
+              <small>同一个模型通过 Prompt 完成润色或翻译；自动增强和手动“润色/翻译”共用此配置。</small>
             </label>
           </section>
-
-          <div className="assistant-zone">
-            <div className="assistant-bubble">
-              <strong>我在这里协助你~</strong>
-              <span>有什么需要帮忙的吗？</span>
-            </div>
-            <AssistantFigure className="assistant-figure" />
-          </div>
         </aside>
       </div>
 

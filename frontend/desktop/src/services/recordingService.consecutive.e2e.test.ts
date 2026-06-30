@@ -79,16 +79,20 @@ vi.mock('./api', () => ({
       const respondedAt = performance.now()
       backend.calls.push({ filename, sentAt, respondedAt })
       const round = filename.includes('second') ? 2 : Number(filename.match(/round-(\d+)/)?.[1] || 1)
+      const polished = filename.includes('polished')
       return {
         task_id: `task-${round}`,
         status: 'success',
-        full_text: `第${round}次识别`,
+        full_text: polished ? '普通 ASR 结果' : `第${round}次识别`,
         segments: [],
         language: 'zh',
         engine_used: 'sensevoice',
         confidence: 0.99,
         duration_sec: 0.1,
         elapsed_sec: 0.001,
+        llm_outputs: polished ? {
+          polish: { text: '自动润色后的回填结果', operation: 'polish', model: 'test-model', elapsed_sec: 0.01 },
+        } : undefined,
       }
     }
   },
@@ -108,6 +112,8 @@ describe('consecutive offline ASR auto-fill latency', () => {
     store.state.currentResult = null
     store.state.history.length = 0
     store.state.error = ''
+    store.state.settings.llmAutoPolish = false
+    store.state.settings.llmAutoTranslate = false
     vi.restoreAllMocks()
     vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:e2e') })
   })
@@ -176,5 +182,27 @@ describe('consecutive offline ASR auto-fill latency', () => {
     console.info(`[offline ASR fill stress] runs=30 p95=${p95.toFixed(1)}ms max=${max.toFixed(1)}ms`)
     expect(fills).toHaveLength(30)
     expect(max).toBeLessThan(500)
+  })
+
+  it('delivers the automatic polish output instead of the raw ASR text', async () => {
+    store.state.settings.llmAutoPolish = true
+    store.state.settings.llmModel = 'test-model'
+    store.state.settings.llmBaseUrl = 'https://llm.test/v1'
+    store.state.settings.llmApiToken = 'test-token'
+    const injectText = vi.fn(async () => true)
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: {
+      injectText,
+      hideStatusOverlay: vi.fn(async () => true),
+      showStatusOverlay: vi.fn(async () => true),
+      archiveTranscription: vi.fn(async () => ({ json: '' })),
+      getDefaultArchiveDir: vi.fn(async () => ''),
+    } })
+
+    const service = new RecordingService()
+    const audio = new Blob([new Uint8Array(1_024)], { type: 'audio/wav' })
+    await service.runTranscription(audio, 'polished.wav', true)
+
+    expect(injectText).toHaveBeenCalledWith('自动润色后的回填结果')
+    expect(injectText).not.toHaveBeenCalledWith('普通 ASR 结果')
   })
 })

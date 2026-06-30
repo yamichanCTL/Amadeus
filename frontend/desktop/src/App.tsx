@@ -193,6 +193,19 @@ export default function App() {
   }), [])
 
   useEffect(() => {
+    const offCancel = window.electronAPI?.onStatusRecognitionCancelled(() => {
+      void recordingService.forceStop()
+    })
+    const offSubmit = window.electronAPI?.onStatusRecognitionSubmitted(() => {
+      if (recordingService.isRecording) void recordingService.toggle(true)
+    })
+    return () => {
+      offCancel?.()
+      offSubmit?.()
+    }
+  }, [])
+
+  useEffect(() => {
     const offClosed = window.electronAPI?.onCaptionOverlayClosed(() => {
       // The caption close button ends the current live-recognition session but
       // must not disable the user's persistent "show desktop captions" setting.

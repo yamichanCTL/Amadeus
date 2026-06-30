@@ -54,7 +54,10 @@ export async function saveText(content: string, filename: string) {
 }
 
 export async function copyText(text: string) {
-  if (window.electronAPI) return window.electronAPI.textToClipboard(text)
+  if (window.electronAPI) {
+    window.electronAPI.textToClipboard(text)
+    return true
+  }
   await navigator.clipboard.writeText(text)
   return true
 }

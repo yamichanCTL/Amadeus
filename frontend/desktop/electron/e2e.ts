@@ -25,6 +25,7 @@ type Harness = {
   writeUserId: (userId: string) => Promise<{ userId: string; path: string }>
   readUserId: () => Promise<string>
   getCaptionRequestCounts: () => { close: number; settings: number }
+  getStatusRecognitionRequestCounts: () => { cancel: number; submit: number }
 }
 
 type TestResult = {
@@ -112,6 +113,52 @@ export async function runAmadeusWindowsE2E(harness: Harness) {
       }
     })
 
+    tests.responsiveHistory = await runTest(async () => {
+      const samples: unknown[] = []
+      for (const [width, height] of [[1280, 720], [1280, 960], [720, 520]]) {
+        harness.mainWindow.setSize(width, height)
+        await delay(250)
+        await harness.mainWindow.webContents.executeJavaScript(`
+          Array.from(document.querySelectorAll('.sidebar button')).find((button) => button.textContent?.includes('历史记录'))?.click()
+        `)
+        await delay(150)
+        const layout = await harness.mainWindow.webContents.executeJavaScript(`(() => {
+          const list = document.querySelector('.history-list')?.getBoundingClientRect()
+          const detail = document.querySelector('.history-detail')?.getBoundingClientRect()
+          const overlaps = Boolean(list && detail
+            && list.left < detail.right && list.right > detail.left
+            && list.top < detail.bottom && list.bottom > detail.top)
+          return {
+            innerWidth,
+            innerHeight,
+            documentScrollWidth: document.documentElement.scrollWidth,
+            bodyScrollWidth: document.body.scrollWidth,
+            overlaps,
+            columns: getComputedStyle(document.querySelector('.history-workspace')).gridTemplateColumns,
+          }
+        })()`)
+        samples.push({ width, height, ...layout })
+      }
+      harness.mainWindow.setSize(1100, 720)
+      const passed = samples.every((sample) => {
+        const value = sample as { width: number; documentScrollWidth: number; bodyScrollWidth: number; overlaps: boolean }
+        return value.documentScrollWidth === value.width && value.bodyScrollWidth === value.width && !value.overlaps
+      })
+      return { passed, samples }
+    })
+
+    tests.clipboardFastPath = await runTest(async () => {
+      const marker = `快速复制-${Date.now()}`
+      const elapsedMs = await harness.mainWindow.webContents.executeJavaScript(`(() => {
+        const startedAt = performance.now()
+        window.electronAPI.textToClipboard(${JSON.stringify(marker)})
+        return performance.now() - startedAt
+      })()`)
+      await delay(50)
+      const copied = clipboard.readText()
+      return { passed: copied === marker && elapsedMs < 50, copied, marker, elapsedMs, thresholdMs: 50 }
+    })
+
     tests.textInjection = await runTest(async () => {
       const marker = `Amadeus-Codex-E2E-${Date.now()}`
       const inputWindow = new BrowserWindow({ width: 620, height: 320, show: false, title: 'Amadeus E2E Input' })
@@ -182,17 +229,23 @@ export async function runAmadeusWindowsE2E(harness: Harness) {
     })
 
     tests.statusOverlay = await runTest(async () => {
+      const controlsBefore = harness.getStatusRecognitionRequestCounts()
       await harness.showStatusOverlay('recording', 0.46)
       await delay(200)
       const recordingWindow = harness.getStatusOverlay()
       const recording = await recordingWindow?.webContents.executeJavaScript(`({
         title: document.getElementById('title')?.textContent || '',
         detail: document.getElementById('detail')?.textContent || '',
-        level: Number.parseFloat(document.querySelector('#wave i:last-child')?.style.height || '0')
+        level: Number.parseFloat(document.querySelector('#wave i:last-child')?.style.height || '0'),
+        hasCancel: Boolean(document.getElementById('btnCancel')),
+        hasSubmit: Boolean(document.getElementById('btnSubmit'))
       })`)
       const bounds = recordingWindow?.getBounds()
       const workArea = recordingWindow ? screen.getPrimaryDisplay().workArea : null
       const recordingScreenshot = await capture(recordingWindow || null, path.join(outputDir, 'status-recording.png'))
+      await recordingWindow?.webContents.executeJavaScript(`document.getElementById('btnSubmit').click(); document.getElementById('btnCancel').click()`)
+      await delay(100)
+      const controlsAfter = harness.getStatusRecognitionRequestCounts()
       await harness.showStatusOverlay('thinking', 0, '正在识别并整理文本')
       await delay(1000)
       const thinking = await recordingWindow?.webContents.executeJavaScript(`document.getElementById('title')?.textContent || ''`)
@@ -219,14 +272,18 @@ export async function runAmadeusWindowsE2E(harness: Harness) {
         passed: recording?.title === '语音输入中'
           && recording?.detail === ''
           && Number(recording?.level) > 3
+          && recording?.hasCancel
+          && recording?.hasSubmit
+          && controlsAfter.cancel === controlsBefore.cancel + 1
+          && controlsAfter.submit === controlsBefore.submit + 1
           && /^thinking\.{1,3}$/.test(thinking)
           && result?.text === resultMarker
           && result.copyButton.includes('复制')
           && Boolean(result.closeButton)
           && copied === resultMarker
           && !recordingWindow?.isVisible()
-          && bounds?.width === 200
-          && bounds?.height === 32
+          && bounds?.width === 260
+          && bounds?.height === 42
           && centered,
         recording,
         thinking,
@@ -235,6 +292,8 @@ export async function runAmadeusWindowsE2E(harness: Harness) {
         bounds,
         workArea,
         centered,
+        controlsBefore,
+        controlsAfter,
         screenshots: [recordingScreenshot, thinkingScreenshot, resultScreenshot]
       }
     })

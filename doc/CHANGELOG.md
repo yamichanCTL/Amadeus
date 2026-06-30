@@ -4,6 +4,15 @@
 > **子文档**:
 > - [桌面端文档](desktop/README.md)
 
+## [2026-06-30] 桌面 ASR 自动增强回填、响应式 UI 与复制卡顿修复
+
+- **类型**: fix / refactor / test / docs
+- **描述**: 删除语音识别页无功能人物区域；自动输入按设置优先投递润色/翻译结果；普通复制改为非阻塞单向 IPC；历史页使用内容容器断点并修复网格收缩；初始窗口占满工作区高度；标题栏最小化 glyph 居中；录音浮层增加取消/提交；润色和翻译前端配置合并；Windows 主窗口、托盘、可执行文件和安装包统一使用 `amadeus-icon.png`；根 README 按成熟开源项目结构重写。
+- **影响范围**: `frontend/desktop/{electron,src,scripts,electron-builder.yml}`、`README.md`、`doc/desktop/`、`doc/reports/`
+- **验证**: Desktop Vitest 15 files / 61 tests 全量通过；TypeScript renderer/Electron、Vite、Python compileall、VitePress 通过；Electron/Xvfb 五档截图无横向溢出，历史页无重叠；生产 Electron 实测复制调用 0 ms、`×/✓` IPC 与结果/字幕浮层通过；Windows x64 目录打包曾实际执行 rcedit 图标写入，最后 CSS 细调后的重打包被执行权限用量上限拒绝。Windows UIAutomation 与 DJI/CABLE 硬件项需真机复跑；后端 auto-LLM 单测 45 秒无输出后 exit 124，不计为通过。
+- **Plan**: [链接到 plan 文件](plans/2026-06-30-desktop-asr-ui-polish.md)
+- **报告**: [桌面 ASR 交互与自适应 UI 验证报告](reports/2026-06-30-desktop-asr-ui-e2e-report.md)
+
 ## [2026-06-30] 桌面 ASR 首连门禁、离线润色、布局与图标修复
 
 - **类型**: feat / fix / test / docs

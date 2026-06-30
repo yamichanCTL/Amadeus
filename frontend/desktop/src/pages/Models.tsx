@@ -8,7 +8,7 @@ const builtInEngines = ['fireredasr2', 'sensevoice', 'qwen3asr', 'whisper', 'x-a
 const streamingEngines = ['x-asr']
 const offlineEngines = builtInEngines.filter((engine) => !streamingEngines.includes(engine))
 const xAsrVariants = [160, 480, 960, 1920] as const
-type ModelTab = 'asr' | 'llm' | 'translate' | 'tts'
+type ModelTab = 'asr' | 'llm' | 'tts'
 
 const defaultAsrConfigs: Record<string, AsrModelConfig> = {
   fireredasr2: { modelName: 'FireRedASR2-AED', device: 'cuda', computeType: '', extraJson: '{"beam_size":3,"batch_size":1}' },
@@ -116,7 +116,6 @@ export function ModelsPage() {
   const [busyEngines, setBusyEngines] = useState<Set<string>>(new Set())
   const [error, setError] = useState('')
   const [llmModels, setLlmModels] = useState<LLMModelsResult | null>(null)
-  const [translationModels, setTranslationModels] = useState<LLMModelsResult | null>(null)
   const [ttsHealth, setTtsHealth] = useState<HiggsHealthResult | null>(null)
   const [ttsProbe, setTtsProbe] = useState(false)
   const [ttsDialogOpen, setTtsDialogOpen] = useState(false)
@@ -129,13 +128,12 @@ export function ModelsPage() {
   const [hotwordPreview, setHotwordPreview] = useState('')
   const [hotwordPreviewResult, setHotwordPreviewResult] = useState('')
   const [hotwordBusy, setHotwordBusy] = useState(false)
-  const [modelProbe, setModelProbe] = useState<'llm' | 'translate' | ''>('')
+  const [modelProbe, setModelProbe] = useState<'llm' | ''>('')
   const referenceAudioRef = useRef<HTMLAudioElement | null>(null)
   const referenceRecorderRef = useRef<AudioRecorder | null>(null)
   const refreshControllerRef = useRef<AbortController | null>(null)
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
   const llmPreset = getProviderPreset(settings.llmProvider)
-  const translationPreset = getProviderPreset(settings.translationProvider)
   const currentVoicePreset = voicePresets.find((preset) => preset.name === settings.higgsTtsVoice)
   const ttsVoiceCount = Array.from(new Set([...settings.higgsTtsVoices, ...voicePresets.map((preset) => preset.name)])).filter(Boolean).length
   const referenceSource = settings.higgsTtsReferenceCodesJson.trim()
@@ -201,35 +199,10 @@ export function ModelsPage() {
       return
     }
     const timer = window.setTimeout(() => {
-      void checkRemoteModels('llm')
+      void checkRemoteModels()
     }, 650)
     return () => window.clearTimeout(timer)
   }, [activeTab, settings.llmProvider, settings.llmBaseUrl, settings.llmApiToken, api, backendReady])
-
-  useEffect(() => {
-    if (activeTab !== 'translate') return
-    if (!backendReady) {
-      setTranslationModels(null)
-      return
-    }
-    const token = settings.translationApiToken.trim() || settings.llmApiToken.trim()
-    if (!settings.translationBaseUrl.trim() || token.length < 6) {
-      setTranslationModels(null)
-      return
-    }
-    const timer = window.setTimeout(() => {
-      void checkRemoteModels('translate')
-    }, 650)
-    return () => window.clearTimeout(timer)
-  }, [
-    activeTab,
-    settings.translationProvider,
-    settings.translationBaseUrl,
-    settings.translationApiToken,
-    settings.llmApiToken,
-    api,
-    backendReady
-  ])
 
   useEffect(() => {
     if (activeTab !== 'tts') return
@@ -359,25 +332,14 @@ export function ModelsPage() {
     })
   }
 
-  const chooseTranslationProvider = (provider: LLMProvider) => {
-    const preset = getProviderPreset(provider)
-    updateSettings({
-      translationProvider: provider,
-      translationBaseUrl: provider === 'custom' ? settings.translationBaseUrl : preset.baseUrl
-    })
-  }
-
-  const checkRemoteModels = async (kind: 'llm' | 'translate') => {
+  const checkRemoteModels = async () => {
     if (!backendReady) {
       setError('未确认后端地址，无法通过后端检测大模型接口。')
       return
     }
-    const isTranslate = kind === 'translate'
-    const baseUrl = isTranslate ? settings.translationBaseUrl : settings.llmBaseUrl
-    const apiToken = isTranslate
-      ? settings.translationApiToken.trim() || settings.llmApiToken.trim()
-      : settings.llmApiToken
-    const provider = isTranslate ? settings.translationProvider : settings.llmProvider
+    const baseUrl = settings.llmBaseUrl
+    const apiToken = settings.llmApiToken
+    const provider = settings.llmProvider
     if (!baseUrl.trim() || !apiToken.trim()) {
       const empty: LLMModelsResult = {
         connected: false,
@@ -386,19 +348,17 @@ export function ModelsPage() {
         base_url: baseUrl,
         message: '请先填写接口地址和 API Token'
       }
-      if (isTranslate) setTranslationModels(empty)
-      else setLlmModels(empty)
+      setLlmModels(empty)
       return
     }
-    setModelProbe(kind)
+    setModelProbe('llm')
     try {
       const result = await api.listLLMModels({
         base_url: baseUrl,
         api_token: apiToken,
         provider
       })
-      if (isTranslate) setTranslationModels(result)
-      else setLlmModels(result)
+      setLlmModels(result)
     } catch (probeError) {
       const failed: LLMModelsResult = {
         connected: false,
@@ -407,17 +367,13 @@ export function ModelsPage() {
         base_url: baseUrl,
         message: probeError instanceof Error ? probeError.message : '模型连接检测失败'
       }
-      if (isTranslate) setTranslationModels(failed)
-      else setLlmModels(failed)
+      setLlmModels(failed)
     } finally {
       setModelProbe('')
     }
   }
 
-  const chooseRemoteModel = (kind: 'llm' | 'translate', model: string) => {
-    if (kind === 'translate') updateSettings({ translationModel: model })
-    else updateSettings({ llmModel: model })
-  }
+  const chooseRemoteModel = (model: string) => updateSettings({ llmModel: model })
 
   const refreshVoicePresets = async () => {
     if (!backendReady) return []
@@ -641,31 +597,29 @@ export function ModelsPage() {
     }
   }
 
-  const renderProviderProbe = (kind: 'llm' | 'translate', result: LLMModelsResult | null) => {
-    const isChecking = modelProbe === kind
-    const hasToken = kind === 'translate'
-      ? Boolean(settings.translationApiToken.trim() || settings.llmApiToken.trim())
-      : Boolean(settings.llmApiToken.trim())
+  const renderProviderProbe = (result: LLMModelsResult | null) => {
+    const isChecking = modelProbe === 'llm'
+    const hasToken = Boolean(settings.llmApiToken.trim())
     return (
       <div className={result?.connected ? 'provider-status connected' : 'provider-status'}>
         <div>
           <strong>{isChecking ? '正在连接官方接口' : result?.connected ? '连接成功' : '未连接'}</strong>
           <span>{result?.message || (hasToken ? '等待检测' : '填写 API Token 后自动检测')}</span>
         </div>
-        <button type="button" disabled={isChecking} onClick={() => void checkRemoteModels(kind)}>
+        <button type="button" disabled={isChecking} onClick={() => void checkRemoteModels()}>
           {isChecking ? '检测中' : '刷新模型'}
         </button>
         {result?.models.length ? (
           <div className="remote-model-list">
             <select
-              value={kind === 'translate' ? settings.translationModel : settings.llmModel}
-              onChange={(event) => chooseRemoteModel(kind, event.target.value)}
+              value={settings.llmModel}
+              onChange={(event) => chooseRemoteModel(event.target.value)}
             >
               <option value="">选择可用模型</option>
               {result.models.map((model) => <option key={model} value={model}>{model}</option>)}
             </select>
             {result.models.map((model) => (
-              <button key={model} type="button" onClick={() => chooseRemoteModel(kind, model)}>
+              <button key={model} type="button" onClick={() => chooseRemoteModel(model)}>
                 {model}
               </button>
             ))}
@@ -689,8 +643,7 @@ export function ModelsPage() {
         </div>
         <div className="model-tabs">
           <button type="button" className={activeTab === 'asr' ? 'active' : ''} onClick={() => setActiveTab('asr')}>ASR 模型设置</button>
-          <button type="button" className={activeTab === 'llm' ? 'active' : ''} onClick={() => setActiveTab('llm')}>大模型设置</button>
-          <button type="button" className={activeTab === 'translate' ? 'active' : ''} onClick={() => setActiveTab('translate')}>翻译模型设置</button>
+          <button type="button" className={activeTab === 'llm' ? 'active' : ''} onClick={() => setActiveTab('llm')}>润色/翻译设置</button>
           <button type="button" className={activeTab === 'tts' ? 'active' : ''} onClick={() => setActiveTab('tts')}>TTS 模型设置</button>
         </div>
         {error && <p className="error">{error}</p>}
@@ -879,50 +832,27 @@ export function ModelsPage() {
                 <input type="password" value={settings.llmApiToken} placeholder={`${llmPreset.tokenPlaceholder}，仅保存在本机`} onChange={(event) => updateSettings({ llmApiToken: event.target.value })} />
               </label>
               <div className="wide">
-                {renderProviderProbe('llm', llmModels)}
+                {renderProviderProbe(llmModels)}
               </div>
               <label className="wide">
-                润色 / 总结风格
-                <input value={settings.llmStyle} placeholder="例如：正式、简洁、会议纪要风格" onChange={(event) => updateSettings({ llmStyle: event.target.value })} />
+                润色/翻译 Prompt
+                <textarea rows={5} value={settings.llmPolishPrompt} placeholder="例如：修正错字，或把结果翻译成英文" onChange={(event) => updateSettings({ llmPolishPrompt: event.target.value })} />
               </label>
               <label className="check">
-                <input type="checkbox" checked={settings.llmAutoPolish} onChange={(event) => updateSettings({ llmAutoPolish: event.target.checked })} />
-                转写完成后自动润色
+                <input
+                  type="checkbox"
+                  checked={settings.llmAutoPolish || settings.llmAutoTranslate}
+                  onChange={(event) => updateSettings({ llmAutoPolish: event.target.checked, llmAutoTranslate: false })}
+                />
+                转写完成后自动润色/翻译
               </label>
-            </div>
-          </div>
-        )}
-        {activeTab === 'translate' && (
-          <div className="model-section">
-            <div className="model-settings-grid">
-              <label>
-                厂商
-                <select value={settings.translationProvider} onChange={(event) => chooseTranslationProvider(event.target.value as LLMProvider)}>
-                  {LLM_PROVIDER_PRESETS.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}
-                </select>
-              </label>
-              <label>
-                接口地址
-                <input value={settings.translationBaseUrl} placeholder={translationPreset.baseUrl || settings.llmBaseUrl} onChange={(event) => updateSettings({ translationBaseUrl: event.target.value })} />
-              </label>
-              <label>
-                翻译模型
-                <input value={settings.translationModel} placeholder={translationPreset.modelPlaceholder} onChange={(event) => updateSettings({ translationModel: event.target.value })} />
-              </label>
-              <label>
-                API Token
-                <input type="password" value={settings.translationApiToken} placeholder={`${translationPreset.tokenPlaceholder}，留空则使用大模型 Token`} onChange={(event) => updateSettings({ translationApiToken: event.target.value })} />
-              </label>
-              <div className="wide">
-                {renderProviderProbe('translate', translationModels)}
-              </div>
               <label>
                 目标语言
                 <input value={settings.llmTargetLanguage} onChange={(event) => updateSettings({ llmTargetLanguage: event.target.value })} />
               </label>
-              <label className="check">
-                <input type="checkbox" checked={settings.llmAutoTranslate} onChange={(event) => updateSettings({ llmAutoTranslate: event.target.checked })} />
-                转写完成后自动翻译
+              <label>
+                风格补充
+                <input value={settings.llmStyle} placeholder="正式、简洁、会议纪要风格" onChange={(event) => updateSettings({ llmStyle: event.target.value })} />
               </label>
             </div>
           </div>

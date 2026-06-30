@@ -34,16 +34,6 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
   }
 }
 
-function translationConfig() {
-  const settings = useASRStore.getState().settings
-  return {
-    provider: settings.translationProvider || settings.llmProvider,
-    model: settings.translationModel.trim() || settings.llmModel,
-    baseUrl: settings.translationBaseUrl.trim() || settings.llmBaseUrl,
-    apiToken: settings.translationApiToken.trim() || settings.llmApiToken
-  }
-}
-
 export function buildTranscribeOptions(): TranscribeOptions {
   const settings = useASRStore.getState().settings
   const options: TranscribeOptions = {
@@ -57,21 +47,15 @@ export function buildTranscribeOptions(): TranscribeOptions {
     archive_dir: settings.archiveDir || undefined,
     user_id: settings.userId || undefined,
   }
-  const translate = translationConfig()
-  const onlyTranslate = settings.llmAutoTranslate && !settings.llmAutoPolish
-  const autoModel = onlyTranslate ? translate.model : settings.llmModel
-  const autoBaseUrl = onlyTranslate ? translate.baseUrl : settings.llmBaseUrl
-  const autoToken = onlyTranslate ? translate.apiToken : settings.llmApiToken
-  const autoProvider = onlyTranslate ? translate.provider : settings.llmProvider
-  if ((settings.llmAutoPolish || settings.llmAutoTranslate) && autoModel.trim() && autoBaseUrl.trim() && autoToken.trim()) {
+  if ((settings.llmAutoPolish || settings.llmAutoTranslate) && settings.llmModel.trim() && settings.llmBaseUrl.trim() && settings.llmApiToken.trim()) {
     options.llm = {
       enable_polish: settings.llmAutoPolish,
       enable_translate: settings.llmAutoTranslate,
       target_language: settings.llmTargetLanguage || 'English',
-      provider: autoProvider,
-      model: autoModel,
-      base_url: autoBaseUrl,
-      api_token: autoToken,
+      provider: settings.llmProvider,
+      model: settings.llmModel,
+      base_url: settings.llmBaseUrl,
+      api_token: settings.llmApiToken,
       style: settings.llmStyle || undefined,
       prompt: settings.llmAutoPolish ? settings.llmPolishPrompt || undefined : undefined
     }
@@ -79,7 +63,20 @@ export function buildTranscribeOptions(): TranscribeOptions {
   return options
 }
 
-export { translationConfig }
+/** Select the text the user explicitly asked the automatic enhancement path
+ * to deliver. Raw ASR remains the lossless fallback when the LLM failed. */
+export function selectDeliveryText(result: TranscribeResponse): string {
+  const settings = useASRStore.getState().settings
+  if (settings.llmAutoTranslate) {
+    const translated = result.llm_outputs?.translate?.text?.trim()
+    if (translated) return translated
+  }
+  if (settings.llmAutoPolish) {
+    const polished = result.llm_outputs?.polish?.text?.trim()
+    if (polished) return polished
+  }
+  return result.full_text.trim()
+}
 
 export class RecordingService {
   /** Set when a transcription starts; cleared on completion. Read by the UI. */
@@ -335,7 +332,8 @@ export class RecordingService {
 
   private async deliverResult(result: TranscribeResponse, autoInject: boolean, myId: number) {
     const settings = useASRStore.getState().settings
-    const hasText = result.full_text.trim().length > 0
+    const deliveryText = selectDeliveryText(result)
+    const hasText = deliveryText.length > 0
 
     // If a newer transcription has started while we were waiting for
     // injectText, don't touch the overlay — the newer transcription owns it.
@@ -347,21 +345,21 @@ export class RecordingService {
         return
       }
       try {
-        const injected = await window.electronAPI?.injectText(result.full_text)
+        const injected = await window.electronAPI?.injectText(deliveryText)
         if (isStale()) return // newer transcription already took over
         if (injected === false) {
-          await window.electronAPI?.showStatusOverlay('result', 0, result.full_text)
+          await window.electronAPI?.showStatusOverlay('result', 0, deliveryText)
         } else {
           await window.electronAPI?.hideStatusOverlay()
         }
       } catch {
-        if (!isStale()) await window.electronAPI?.showStatusOverlay('result', 0, result.full_text)
+        if (!isStale()) await window.electronAPI?.showStatusOverlay('result', 0, deliveryText)
       }
     } else if (autoInject && settings.injectMode === 'copy') {
-      await window.electronAPI?.textToClipboard(result.full_text)
-      if (!isStale()) await window.electronAPI?.showStatusOverlay('result', 0, hasText ? result.full_text : '未识别到语音内容')
+      if (hasText) window.electronAPI?.textToClipboard(deliveryText)
+      if (!isStale()) await window.electronAPI?.showStatusOverlay('result', 0, hasText ? deliveryText : '未识别到语音内容')
     } else if (!autoInject) {
-      if (hasText) await window.electronAPI?.textToClipboard(result.full_text)
+      if (hasText) window.electronAPI?.textToClipboard(deliveryText)
       if (!isStale()) await window.electronAPI?.hideStatusOverlay()
     }
   }

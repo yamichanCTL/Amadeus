@@ -20,6 +20,7 @@ import path from 'node:path'
 import os from 'node:os'
 import { runAmadeusWindowsE2E } from './e2e'
 import { LatestTaskQueue } from './latest-task-queue'
+import { calculateInitialWindowBounds } from './window-layout'
 
 type ClosePreference = 'ask' | 'background' | 'quit'
 
@@ -55,7 +56,7 @@ function resolveAssetPath(relativePath: string): string {
 }
 
 function loadAppIcon(): Electron.NativeImage | undefined {
-  for (const relativePath of ['img/Amadeus/amadeus.ico', 'img/Amadeus/amadeus-icon.png', 'img/Amadeus/amadeus.jpg']) {
+  for (const relativePath of ['img/Amadeus/amadeus-icon.png', 'img/Amadeus/amadeus.ico', 'img/Amadeus/amadeus.jpg']) {
     try {
       const icon = nativeImage.createFromPath(resolveAssetPath(relativePath))
       if (!icon.isEmpty()) return icon
@@ -75,10 +76,6 @@ let captionOverlay: BrowserWindow | null = null
 // User-dragged position of the status overlay, kept across phase transitions
 // within a session so recording→thinking→result don't snap back to center.
 let statusOverlayPos: { x: number; y: number } | null = null
-// Current status overlay phase, so the mouse-capture IPC handler knows
-// whether the overlay must stay fully interactive (result) or can toggle
-// click-through for the drag handle.
-let currentStatusPhase = 'recording'
 let tray: Tray | null = null
 let forceQuit = false
 let mouseHook: ChildProcessWithoutNullStreams | null = null
@@ -101,10 +98,13 @@ let registeredHotkey = ''
 let lastTriggerAt = 0
 let captionCloseRequestCount = 0
 let captionSettingsRequestCount = 0
+let statusCancelRequestCount = 0
+let statusSubmitRequestCount = 0
 const TEXT_INJECT_TIMEOUT_MS = 475
 const textInjectDebugEvents: string[] = []
 
 app.setName('Amadeus')
+if (isWindows) app.setAppUserModelId('com.asrapp.desktop')
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
 function emitHotkeyTriggered() {
@@ -139,10 +139,10 @@ async function writeClosePreference(closePreference: ClosePreference) {
 
 function createWindow() {
   const windowIcon = loadAppIcon()
+  const initialBounds = calculateInitialWindowBounds(screen.getPrimaryDisplay().workArea)
 
   mainWindow = new BrowserWindow({
-    width: 1280,
-    height: 800,
+    ...initialBounds,
     minWidth: 720,
     minHeight: 520,
     frame: false,
@@ -370,9 +370,10 @@ function statusOverlayHtml() {
     <style>
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { overflow: hidden; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; color: white; }
-      .box { width: 100vw; height: 100vh; display: grid; grid-template-columns: 122px minmax(0, 1fr); align-items: center; gap: 6px; padding: 4px 7px; background: rgba(14, 22, 35, .9); border: 1px solid rgba(255,255,255,.2); border-radius: 9px; box-shadow: 0 8px 20px rgba(0,0,0,.28); }
+      .box { width: 100vw; height: 100vh; display: grid; grid-template-columns: 32px minmax(0, 1fr) 32px; align-items: center; gap: 6px; padding: 4px 6px; background: rgba(14, 22, 35, .9); border: 1px solid rgba(255,255,255,.2); border-radius: 999px; box-shadow: 0 8px 20px rgba(0,0,0,.28); }
       .box.result { grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 7px 9px; border-radius: 12px; }
       .wave { height: 22px; display: flex; align-items: center; justify-content: flex-start; gap: 2px; overflow: hidden; }
+      .voice-content { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
       .wave i { flex: 0 0 2px; width: 2px; height: 3px; border-radius: 99px; background: linear-gradient(180deg, #a9beff, #5a7cff); transition: height 55ms linear; }
       .copy { min-width: 0; display: block; overflow: hidden; }
       strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 600; letter-spacing: 0; }
@@ -387,20 +388,25 @@ function statusOverlayHtml() {
       .result-actions button:hover { background: rgba(255,255,255,.28); }
       .result-actions .btn-copy { width: auto; padding: 0 14px; font-size: 13px; gap: 5px; background: rgba(90,124,255,.35); border-color: rgba(90,124,255,.5); }
       .result-actions .btn-copy:hover { background: rgba(90,124,255,.55); }
-      .result .wave, .result .copy { display: none; }
+      .result .voice-content, .result .wave, .result .copy { display: none; }
+      .voice-action { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid rgba(255,255,255,.28); border-radius: 50%; background: rgba(255,255,255,.12); color: white; cursor: pointer; font-size: 18px; line-height: 1; }
+      .voice-action:hover { background: rgba(255,255,255,.26); }
+      .voice-action.cancel:hover { background: rgba(218,65,65,.7); }
+      .voice-action.submit:hover { background: rgba(38,166,91,.7); }
+      .thinking .voice-action.submit, .error .voice-action.submit, .result .voice-action { display: none; }
       @keyframes think-wave { 0%, 100% { height: 3px; opacity: .5; } 50% { height: 19px; opacity: 1; } }
-      /* Drag handle: a thin grab strip along the top edge of the box. The
-         window is click-through everywhere (forward:true), but when the
-         cursor enters this handle we tell the main process to take over the
-         mouse (setIgnoreMouseEvents false) so -webkit-app-region: drag can
-         move the frameless window. On leave we hand the mouse back. */
+      /* Thin native drag strip; action buttons remain interactive. */
       .drag-handle { position: absolute; left: 0; right: 0; top: 0; height: 8px; cursor: grab; pointer-events: auto; -webkit-app-region: drag; border-top-left-radius: 9px; border-top-right-radius: 9px; }
       .box.result .drag-handle { border-top-left-radius: 12px; border-top-right-radius: 12px; }
     </style>
     <div class="box" id="box">
       <div class="drag-handle" id="dragHandle" title="拖动以移动位置"></div>
-      <div class="wave" id="wave">${Array.from({ length: 28 }, () => '<i></i>').join('')}</div>
-      <div class="copy" id="copyBlock"><strong id="title">语音输入中</strong><small id="detail" style="display:none"></small></div>
+      <button class="voice-action cancel" id="btnCancel" title="取消识别" aria-label="取消识别">×</button>
+      <div class="voice-content">
+        <div class="wave" id="wave">${Array.from({ length: 28 }, () => '<i></i>').join('')}</div>
+        <div class="copy" id="copyBlock"><strong id="title">语音输入中</strong><small id="detail" style="display:none"></small></div>
+      </div>
+      <button class="voice-action submit" id="btnSubmit" title="提交识别" aria-label="提交识别">✓</button>
       <div class="result-text" id="resultText" style="display:none"></div>
       <div class="result-actions" id="resultActions" style="display:none">
         <button class="btn-copy" id="btnCopy" title="复制到剪贴板">📋 复制</button>
@@ -418,6 +424,8 @@ function statusOverlayHtml() {
         const resultActions = document.getElementById('resultActions');
         const btnCopy = document.getElementById('btnCopy');
         const btnClose = document.getElementById('btnClose');
+        const btnCancel = document.getElementById('btnCancel');
+        const btnSubmit = document.getElementById('btnSubmit');
         let phase = 'recording';
         let dots = 1;
         let resultTextContent = '';
@@ -445,23 +453,8 @@ function statusOverlayHtml() {
         btnClose.addEventListener('click', () => {
           window.statusOverlay?.closeResult();
         });
-
-        // Drag handle: take over the mouse while hovering so Electron's
-        // native -webkit-app-region: drag can move the frameless window.
-        // The window is otherwise click-through (forward:true); on enter we
-        // disable ignore-mouse-events, on leave we re-enable forwarding.
-        const dragHandle = document.getElementById('dragHandle');
-        if (dragHandle) {
-          dragHandle.addEventListener('mouseenter', () => window.statusOverlay?.setMouseCapture(true));
-          dragHandle.addEventListener('mouseleave', () => window.statusOverlay?.setMouseCapture(false));
-          // While actually dragging, mouseleave can fire spuriously; release
-          // on the next mouseup anywhere to be safe.
-          document.addEventListener('mouseup', () => {
-            if (window.statusOverlay && !dragHandle.matches(':hover')) {
-              window.statusOverlay.setMouseCapture(false);
-            }
-          });
-        }
+        btnCancel.addEventListener('click', () => window.statusOverlay?.cancelRecognition());
+        btnSubmit.addEventListener('click', () => window.statusOverlay?.submitRecognition());
 
         window.amadeusStatus = {
           onCopy: null,
@@ -506,10 +499,10 @@ function statusOverlayHtml() {
 }
 
 async function showStatusOverlay(status: string, level = 0, message = '') {
-  if (!isWindows) return false
+  if (!isWindows && !isE2EMode) return false
   const workArea = screen.getPrimaryDisplay().workArea
-  const width = status === 'result' ? 360 : 200
-  const height = status === 'result' ? 64 : 32
+  const width = status === 'result' ? 360 : 260
+  const height = status === 'result' ? 64 : 42
   // Default centered position; if the user dragged the overlay previously,
   // reuse their position (clamped to the work area) so it doesn't jump back.
   const defaultX = Math.round(workArea.x + (workArea.width - width) / 2)
@@ -544,20 +537,9 @@ async function showStatusOverlay(status: string, level = 0, message = '') {
     })
   }
   const phase = status === 'recording' ? 'recording' : status === 'error' ? 'error' : status === 'result' ? 'result' : 'thinking'
-  currentStatusPhase = phase
-  const interactive = phase === 'result'
-  statusOverlay.setFocusable(interactive)
-  // Click-through but FORWARD mouse events so the renderer can detect when the
-  // cursor hovers the drag handle and temporarily take over the mouse for
-  // native dragging. Only the result phase fully captures the mouse (for the
-  // copy/close buttons). This makes the recording/thinking overlay draggable
-  // via the handle while otherwise letting clicks pass through to the app
-  // behind it.
-  if (interactive) {
-    statusOverlay.setIgnoreMouseEvents(false)
-  } else {
-    statusOverlay.setIgnoreMouseEvents(true, { forward: true })
-  }
+  statusOverlay.setFocusable(false)
+  // Controls receive clicks; the top strip moves the frameless overlay.
+  statusOverlay.setIgnoreMouseEvents(false)
   await statusOverlay.webContents.executeJavaScript(
     `window.amadeusStatus?.update(${JSON.stringify(phase)}, ${Number(level) || 0}, ${JSON.stringify(message)})`
   )
@@ -595,7 +577,7 @@ function captionOverlayHtml() {
 }
 
 async function showCaptionOverlay(text: string, rawOptions: CaptionOverlayOptions) {
-  if (!isWindows) return false
+  if (!isWindows && !isE2EMode) return false
   const options = sanitizeCaptionOptions(rawOptions)
   if (!captionOverlay || captionOverlay.isDestroyed()) {
     captionOverlay = createOverlayWindow('caption', {
@@ -1211,9 +1193,8 @@ function registerIpc() {
     stopMouseHook()
     return true
   })
-  ipcMain.handle('text:toClipboard', (_event, text: string) => {
+  ipcMain.on('text:toClipboard', (_event, text: string) => {
     clipboard.writeText(text)
-    return true
   })
   ipcMain.handle('text:inject', (_event, text: string) => injectText(text))
   ipcMain.handle('statusOverlay:show', (_event, status: string, level?: number, message?: string) => showStatusOverlay(status, level, message))
@@ -1230,17 +1211,13 @@ function registerIpc() {
     statusOverlay?.hide()
     mainWindow?.webContents.send('statusOverlay:resultClosed')
   })
-  // Toggle click-through so the drag handle can take over the mouse for
-  // native frameless dragging, then hand it back when the cursor leaves.
-  ipcMain.on('statusOverlay:setMouseCapture', (_event, capture: boolean) => {
-    if (!statusOverlay || statusOverlay.isDestroyed()) return
-    // result phase always needs full mouse interaction (buttons)
-    if (currentStatusPhase === 'result') return
-    if (capture) {
-      statusOverlay.setIgnoreMouseEvents(false)
-    } else {
-      statusOverlay.setIgnoreMouseEvents(true, { forward: true })
-    }
+  ipcMain.on('statusOverlay:cancelRecognition', () => {
+    statusCancelRequestCount += 1
+    mainWindow?.webContents.send('statusOverlay:cancelRecognition')
+  })
+  ipcMain.on('statusOverlay:submitRecognition', () => {
+    statusSubmitRequestCount += 1
+    mainWindow?.webContents.send('statusOverlay:submitRecognition')
   })
   ipcMain.handle('captionOverlay:show', (_event, text: string, options: CaptionOverlayOptions) => showCaptionOverlay(text, options))
   ipcMain.handle('captionOverlay:hide', () => {
@@ -1305,6 +1282,10 @@ app.whenReady().then(() => {
           getCaptionRequestCounts: () => ({
             close: captionCloseRequestCount,
             settings: captionSettingsRequestCount
+          }),
+          getStatusRecognitionRequestCounts: () => ({
+            cancel: statusCancelRequestCount,
+            submit: statusSubmitRequestCount
           })
         })
       } catch (error) {

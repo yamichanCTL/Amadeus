@@ -26,7 +26,8 @@ declare global {
     statusOverlay?: {
       copyResult: (text: string) => void
       closeResult: () => void
-      setMouseCapture: (capture: boolean) => void
+      cancelRecognition: () => void
+      submitRecognition: () => void
     }
     electronAPI?: {
       minimize: () => void
@@ -52,9 +53,13 @@ declare global {
       unregisterMouseButton: () => Promise<boolean>
       captureTextTarget: () => Promise<boolean>
       injectText: (text: string) => Promise<boolean>
-      textToClipboard: (text: string) => Promise<boolean>
+      textToClipboard: (text: string) => boolean
       showStatusOverlay: (status: string, level?: number, message?: string) => Promise<boolean>
       hideStatusOverlay: () => Promise<boolean>
+      onStatusResultCopied: (callback: (text: string) => void) => () => void
+      onStatusResultClosed: (callback: () => void) => () => void
+      onStatusRecognitionCancelled: (callback: () => void) => () => void
+      onStatusRecognitionSubmitted: (callback: () => void) => () => void
       showCaptionOverlay: (text: string, options: CaptionOverlayOptions) => Promise<boolean>
       hideCaptionOverlay: () => Promise<boolean>
       onCaptionOverlayClosed: (callback: () => void) => () => void

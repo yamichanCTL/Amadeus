@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { copyText, resultToJson, resultToTxt, saveResult, saveText, segmentsToSrt } from '@/services/export'
 import type { LLMOperation, TranscribeResponse } from '@/services/api'
 import { SegmentList } from './SegmentList'
 import { TabBar } from './TabBar'
 
-type ResultTab = 'text' | 'polish' | 'translate' | 'segments' | 'json'
+type ResultTab = 'text' | 'enhance' | 'segments' | 'json'
 
 type ResultPanelProps = {
   result: TranscribeResponse | null
@@ -14,6 +14,9 @@ type ResultPanelProps = {
 
 export function ResultPanel({ result, onProcess, processingOperation = 'idle' }: ResultPanelProps) {
   const [tab, setTab] = useState<ResultTab>('text')
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => setCopied(false), [result?.task_id, tab])
 
   if (!result) {
     return (
@@ -26,9 +29,16 @@ export function ResultPanel({ result, onProcess, processingOperation = 'idle' }:
   const text = resultToTxt(result)
   const polishedText = result.llm_outputs?.polish?.text || ''
   const translatedText = result.llm_outputs?.translate?.text || ''
-  const activeText = tab === 'polish' ? polishedText : tab === 'translate' ? translatedText : text
-  const activeSuffix = tab === 'polish' ? 'polished' : tab === 'translate' ? 'translated' : 'text'
+  const enhancedText = polishedText || translatedText
+  const activeText = tab === 'enhance' ? enhancedText : text
+  const activeSuffix = tab === 'enhance' ? 'enhanced' : 'text'
   const canProcess = Boolean(onProcess && text.trim())
+  const handleCopy = () => {
+    if (!activeText) return
+    setCopied(true)
+    void copyText(activeText)
+    window.setTimeout(() => setCopied(false), 1200)
+  }
 
   return (
     <section className="result-panel">
@@ -39,12 +49,9 @@ export function ResultPanel({ result, onProcess, processingOperation = 'idle' }:
         </div>
         <div className="result-actions">
           <button type="button" disabled={!canProcess || processingOperation !== 'idle'} onClick={() => onProcess?.('polish')}>
-            {processingOperation === 'polish' ? '润色中' : '润色'}
+            {processingOperation !== 'idle' ? '处理中' : '润色/翻译'}
           </button>
-          <button type="button" disabled={!canProcess || processingOperation !== 'idle'} onClick={() => onProcess?.('translate')}>
-            {processingOperation === 'translate' ? '翻译中' : '翻译'}
-          </button>
-          <button type="button" disabled={!activeText} onClick={() => copyText(activeText)}>复制</button>
+          <button type="button" disabled={!activeText} onClick={handleCopy}>{copied ? '已复制' : '复制'}</button>
           <button type="button" disabled={!activeText} onClick={() => saveText(activeText, `${result.task_id}_${activeSuffix}.txt`)}>当前TXT</button>
           <button type="button" onClick={() => saveResult(result, `${result.task_id}.txt`, 'txt')}>TXT</button>
           <button type="button" onClick={() => saveResult(result, `${result.task_id}.srt`, 'srt')}>SRT</button>
@@ -56,18 +63,14 @@ export function ResultPanel({ result, onProcess, processingOperation = 'idle' }:
         onChange={setTab}
         items={[
           { value: 'text', label: '原文' },
-          { value: 'polish', label: polishedText ? '润色' : '润色+' },
-          { value: 'translate', label: translatedText ? '翻译' : '翻译+' },
+          { value: 'enhance', label: enhancedText ? '润色/翻译' : '润色/翻译+' },
           { value: 'segments', label: '分段' },
           { value: 'json', label: 'JSON' }
         ]}
       />
       {tab === 'text' && <pre className="result-text">{text}</pre>}
-      {tab === 'polish' && (
-        polishedText ? <pre className="result-text">{polishedText}</pre> : <p className="empty">暂无润色结果。</p>
-      )}
-      {tab === 'translate' && (
-        translatedText ? <pre className="result-text">{translatedText}</pre> : <p className="empty">暂无翻译结果。</p>
+      {tab === 'enhance' && (
+        enhancedText ? <pre className="result-text">{enhancedText}</pre> : <p className="empty">暂无润色/翻译结果。</p>
       )}
       {result.llm_error && <p className="error">{result.llm_error}</p>}
       {tab === 'segments' && <SegmentList segments={result.segments} />}

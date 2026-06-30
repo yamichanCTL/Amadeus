@@ -10,6 +10,7 @@
 > - [ASR 立即回填与纯麦克风采集测试报告](../reports/2026-06-28-asr-fill-pure-mic-test-report.md)
 > - [连续离线 ASR 自动回填延迟测试报告](../reports/2026-06-29-consecutive-offline-asr-fill-latency-report.md)
 > - [麦克风收音连续性测试报告](../reports/2026-06-29-microphone-capture-continuity-report.md)
+> - [桌面 ASR 交互与自适应 UI 验证报告](../reports/2026-06-30-desktop-asr-ui-e2e-report.md)
 
 ## 范围
 
@@ -20,7 +21,7 @@
 - `实时对话`：连续语音 Agent 与本地工具编排。
 - `语音识别`：文件待确认识别、录音和实时字幕。
 - `变声器/TTS`：语音转 TTS、文字 TTS、实时 ASR+TTS、音效和麦克风/虚拟声卡中转混音。
-- `模型管理`：离线/实时 ASR、热词、LLM、翻译和本地/Boson TTS 配置。
+- `模型管理`：离线/实时 ASR、热词、统一的润色/翻译模型和本地/Boson TTS 配置。
 - `开发调试台`：HTTP、WebSocket、ASR 和 TTS 延时、错误与 JSON 导出。
 - `设置`：用户 ID、后端地址、真实麦克风、虚拟麦克风输出、字幕和触发方式。
 
@@ -34,4 +35,5 @@
 - [ASR 立即回填与纯麦克风采集测试报告](../reports/2026-06-28-asr-fill-pure-mic-test-report.md)
 - [连续离线 ASR 自动回填延迟测试报告](../reports/2026-06-29-consecutive-offline-asr-fill-latency-report.md)
 - [麦克风收音连续性测试报告](../reports/2026-06-29-microphone-capture-continuity-report.md)
+- [桌面 ASR 交互与自适应 UI 验证报告](../reports/2026-06-30-desktop-asr-ui-e2e-report.md)
 - [ASRAPP Frontend 桌面端](../asrapp/frontend/DESKTOP.md)

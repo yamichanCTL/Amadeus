@@ -479,7 +479,7 @@ export const useASRStore = create<ASRState>()(
     }),
     {
       name: 'asr-desktop-store',
-      version: 33,
+      version: 34,
       partialize: (state) => ({ settings: state.settings, history: state.history }),
       migrate: (persisted, version) => {
         const state = persisted as Partial<ASRState>
@@ -497,6 +497,15 @@ export const useASRStore = create<ASRState>()(
         if (version < 32 && settings.triggerType === 'mouse' && settings.triggerKey === 'mouse_middle') {
           settings.triggerType = 'keyboard'
           settings.triggerKey = 'AltRight'
+        }
+        if (version < 34 && settings.llmAutoTranslate && !settings.llmAutoPolish) {
+          settings.llmProvider = settings.translationProvider || settings.llmProvider
+          settings.llmBaseUrl = settings.translationBaseUrl || settings.llmBaseUrl
+          settings.llmModel = settings.translationModel || settings.llmModel
+          settings.llmApiToken = settings.translationApiToken || settings.llmApiToken
+          settings.llmPolishPrompt = `请把以下语音识别结果翻译成${settings.llmTargetLanguage || 'English'}，保持原意和语气，只返回译文。`
+          settings.llmAutoPolish = true
+          settings.llmAutoTranslate = false
         }
         return {
           ...state,

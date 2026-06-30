@@ -1,6 +1,6 @@
 appId: com.asrapp.desktop
 productName: Amadeus
-icon: ../../img/Amadeus/amadeus.ico
+icon: ../../img/Amadeus/amadeus-icon.png
 directories:
   output: release
 files:
@@ -15,8 +15,8 @@ extraResources:
       - amadeus-icon.png
       - amadeus.ico
 win:
-  icon: ../../img/Amadeus/amadeus.ico
-  signAndEditExecutable: false
+  icon: ../../img/Amadeus/amadeus-icon.png
+  signAndEditExecutable: true
   signDlls: false
   target:
     - target: nsis

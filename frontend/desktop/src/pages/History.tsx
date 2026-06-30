@@ -28,6 +28,7 @@ export function HistoryPage() {
   const [language, setLanguage] = useState('all')
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
+  const [copied, setCopied] = useState(false)
   const filteredHistory = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase()
     const from = fromDate ? new Date(`${fromDate}T00:00:00`).getTime() : Number.NEGATIVE_INFINITY
@@ -64,6 +65,12 @@ export function HistoryPage() {
     setFromDate('')
     setToDate('')
   }
+  const copySelected = () => {
+    if (!selected?.full_text) return
+    setCopied(true)
+    void copyText(selected.full_text)
+    window.setTimeout(() => setCopied(false), 1200)
+  }
 
   return (
     <div className="page history-page">
@@ -92,7 +99,7 @@ export function HistoryPage() {
         <article className="stat-card">
           <span>大模型增强</span>
           <strong>{enhancedCount}</strong>
-          <small>润色 / 翻译</small>
+          <small>润色/翻译</small>
         </article>
         <article className="stat-card">
           <span>默认引擎</span>
@@ -120,7 +127,7 @@ export function HistoryPage() {
               <time>{formatDateTime(item.created_at)}</time>
               <strong>{item.filename}</strong>
               <small>{item.full_text.slice(0, 72)}</small>
-              <em>{item.llm_outputs?.translate ? '翻译' : item.llm_outputs?.polish ? '润色' : item.engine_used}</em>
+              <em>{item.llm_outputs?.translate || item.llm_outputs?.polish ? '润色/翻译' : item.engine_used}</em>
             </button>
           ))}
         </section>
@@ -133,7 +140,7 @@ export function HistoryPage() {
                   <p>{formatDateTime(selected.created_at)} · 时长 {selected.duration_sec ? `${selected.duration_sec.toFixed(1)}s` : '未知'}</p>
                 </div>
                 <div className="result-actions">
-                  <button type="button" onClick={() => copyText(selected.full_text)}>复制</button>
+                  <button type="button" onClick={copySelected}>{copied ? '已复制' : '复制'}</button>
                   <button type="button" onClick={() => saveResult(selected, `${selected.task_id}.txt`, 'txt')}>TXT</button>
                   <button type="button" onClick={() => saveResult(selected, `${selected.task_id}.srt`, 'srt')}>SRT</button>
                   <button type="button" className="danger" onClick={() => removeHistory(selected.id)}>删除</button>
