@@ -1031,18 +1031,8 @@ export function base64ToBlob(base64: string, mimeType: string) {
 
 function buildWsUrl(serverUrl: string, path: string): string {
   const trimmed = (serverUrl || '').trim()
-  // Empty → same-origin only in a browser (http/https) served via the Vite
-  // proxy. In Electron (file:// / app://) there is no origin to fall back
-  // to, so we return '' — callers must refuse to connect when no backend
-  // address has been configured and confirmed (Req: 未设置不通信). We no
-  // longer fall back to ws://localhost:8000.
   if (!trimmed || trimmed === '/') {
-    const protocol = window.location.protocol
-    if (protocol === 'file:' || protocol === 'app:') {
-      return ''
-    }
-    const wsProtocol = protocol === 'https:' ? 'wss:' : 'ws:'
-    return `${wsProtocol}//${window.location.host}${path}`
+    return ''
   }
   const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`
   return withScheme.replace(/\/+$/, '').replace(/^http/i, 'ws') + path
@@ -1054,12 +1044,6 @@ function buildWsUrlCandidates(serverUrl: string, path: string): string[] {
     if (value && !candidates.includes(value)) candidates.push(value)
   }
   add(buildWsUrl(serverUrl, path))
-  // Only add same-origin as a fallback candidate in browser dev (where the
-  // Vite proxy can forward WS). In Electron there is no host to use.
-  if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
-    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    add(`${wsProtocol}//${window.location.host}${path}`)
-  }
   return candidates
 }
 

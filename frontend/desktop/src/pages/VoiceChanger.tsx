@@ -46,6 +46,7 @@ export function VoiceChangerPage() {
   const settings = useASRStore((s) => s.settings)
   const updateSettings = useASRStore((s) => s.updateSettings)
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
+  const backendReady = Boolean(settings.backendConfirmed && settings.serverUrl.trim())
   const streamClientRef = useRef<VoiceTTSStreamingClient | null>(null)
   const recorderRef = useRef<AudioRecorder | null>(null)
   const playbackRef = useRef<HTMLAudioElement | null>(null)
@@ -296,6 +297,11 @@ export function VoiceChangerPage() {
   const refreshRuntime = useCallback(async () => {
     const devices = await listAudioOutputDevices().catch(() => [])
     setOutputDevices(devices)
+    if (!backendReady) {
+      setHealth('未确认后端地址，Higgs 状态未检查')
+      setVoicePresets([])
+      return
+    }
     const [healthResult, voicesResult, presetsResult] = await Promise.allSettled([
       api.higgsConnection({
         provider: settings.higgsTtsProvider,
@@ -327,7 +333,7 @@ export function VoiceChangerPage() {
     updateSettings({ higgsTtsVoices: dedupedVoices })
     setVoicePresets(presets)
     setActiveVoice((current) => dedupedVoices.includes(current) ? current : settings.higgsTtsVoice || 'Elysia')
-  }, [api, settings.higgsTtsApiToken, settings.higgsTtsBaseUrl, settings.higgsTtsProvider, settings.higgsTtsRemoteBaseUrl, settings.higgsTtsVoice, updateSettings])
+  }, [api, backendReady, settings.higgsTtsApiToken, settings.higgsTtsBaseUrl, settings.higgsTtsProvider, settings.higgsTtsRemoteBaseUrl, settings.higgsTtsVoice, updateSettings])
 
   const applyVoicePreset = useCallback((voiceName: string) => {
     const preset = voicePresets.find((p) => p.name === voiceName)
@@ -650,6 +656,10 @@ export function VoiceChangerPage() {
       return
     }
 
+    if (!backendReady) {
+      setError('未确认后端地址。请先在设置中输入后端 IP/地址并点击确认。')
+      return
+    }
     setMode('realtime')
     setStatus('streaming')
     setStatusText('正在连接实时 ASR + TTS…')

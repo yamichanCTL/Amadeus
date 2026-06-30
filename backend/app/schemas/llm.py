@@ -107,6 +107,7 @@ class LLMProcessRequest(BaseModel):
     provider: str | None = None
     target_language: str | None = "English"
     style: str | None = None
+    prompt: str | None = None
 
     @field_validator("text", "model", "base_url", "api_token")
     @classmethod
@@ -126,6 +127,7 @@ class LLMAutoOptions(BaseModel):
     base_url: str | None = None
     api_token: str | None = None
     style: str | None = None
+    prompt: str | None = None
 
 
 class LLMOutputs(BaseModel):

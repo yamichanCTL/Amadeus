@@ -35,7 +35,7 @@ export function SettingsPage() {
       setServerUrlStatus('地址格式无效，请填写形如 http://host:port 的地址')
       return
     }
-    updateSettings({ serverUrl: trimmed })
+    updateSettings({ serverUrl: trimmed, backendConfirmed: Boolean(trimmed) })
     setServerUrlStatus(trimmed ? `已确认后端地址：${trimmed.replace(/\/+$/, '')}` : '已清空后端地址，未设置不进行通信')
   }
 
@@ -243,7 +243,7 @@ export function SettingsPage() {
             <button type="button" onClick={() => void confirmServerUrl()}>确认</button>
           </div>
           <small>{serverUrlStatus || '填写后点击「确认」才保存并开始通信；未确认前不会连接任何后端。实时 ASR+TTS 的 WebSocket 也连向此地址的 /v1/tts/higgs/stream 路由。'}</small>
-          {settings.serverUrl && <small className="soft-badge">已确认：{settings.serverUrl}</small>}
+          {settings.backendConfirmed && settings.serverUrl && <small className="soft-badge">已确认：{settings.serverUrl}</small>}
         </label>
         <label>
           Higgs TTS 地址

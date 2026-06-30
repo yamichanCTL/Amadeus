@@ -37,8 +37,10 @@ Desktop/Android
      │
      ├─ HTTP REST → /v1/transcribe, /v1/models, /v1/tasks...
      ├─ WebSocket → /v1/stream (流式识别)
-     └─ 默认后端: http://10.154.39.91:8001
+     └─ 用户确认后的后端地址
 ```
+
+桌面端首次安装不会自动连接默认后端，也不会回退到 `localhost:8000`。用户在设置页输入后端 IP/地址并点击“确认”后，前端才会开始健康检查、模型刷新、识别和实时 WebSocket 通信。
 
 ---
 

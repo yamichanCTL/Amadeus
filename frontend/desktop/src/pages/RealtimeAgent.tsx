@@ -230,6 +230,7 @@ export function RealtimeAgentPage() {
   }, [backendSkills])
 
   const canChat = Boolean(settings.llmModel.trim() && settings.llmBaseUrl.trim() && settings.llmApiToken.trim())
+  const backendReady = Boolean(settings.backendConfirmed && settings.serverUrl.trim())
   const busy = status === 'listening' || status === 'transcribing' || status === 'thinking' || status === 'responding'
   const voiceBlocked = status === 'listening' || status === 'transcribing' || status === 'thinking'
   const agentAction = statusAction(status) || agentDirectedAction
@@ -303,6 +304,10 @@ export function RealtimeAgentPage() {
 
   // Fetch backend skills on mount
   useEffect(() => {
+    if (!backendReady) {
+      setBackendSkills([])
+      return
+    }
     let cancelled = false
     api.listSkills().then((response) => {
       if (!cancelled) setBackendSkills(response.skills)
@@ -310,7 +315,7 @@ export function RealtimeAgentPage() {
       // Backend may not have skills endpoint yet; fail silently
     })
     return () => { cancelled = true }
-  }, [api])
+  }, [api, backendReady])
 
   useEffect(() => {
     if (settings.agentHandsFree) updateSettings({ agentHandsFree: false })
@@ -1080,6 +1085,10 @@ export function RealtimeAgentPage() {
       return
     }
     if (status !== 'idle') return
+    if (!backendReady) {
+      setError('未确认后端地址。请先在设置中输入后端 IP/地址并点击确认。')
+      return
+    }
     setError('')
     setHandsFreeStatus('connecting')
     try {

@@ -34,7 +34,7 @@ class LiveCaptionService {
     if (state.transcribeStatus === 'uploading' || state.transcribeStatus === 'polling') return
 
     // Req: 未设置后端地址时不进行任何通信（不连 WebSocket、不回退本机）。
-    if (!settings.serverUrl.trim()) {
+    if (!settings.backendConfirmed || !settings.serverUrl.trim()) {
       state.setLiveCaptionStatus('error')
       state.setError('未配置后端地址。请在「设置 → 后端地址」填写并点击「确认」后再开始实时识别。')
       return

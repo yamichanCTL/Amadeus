@@ -35,6 +35,7 @@ export interface UtteranceEntry {
 
 export type Settings = {
   serverUrl: string
+  backendConfirmed: boolean
   offlineEngine: string
   streamingEngine: string
   asrModelConfigs: Record<string, AsrModelConfig>
@@ -92,6 +93,7 @@ export type Settings = {
   llmApiToken: string
   llmTargetLanguage: string
   llmStyle: string
+  llmPolishPrompt: string
   llmAutoPolish: boolean
   llmAutoTranslate: boolean
   translationProvider: string
@@ -136,7 +138,8 @@ export type HistoryItem = TranscribeResponse & {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  serverUrl: '',   // same-origin in dev (through Vite proxy); set to http://localhost:8000 for prod
+  serverUrl: '',
+  backendConfirmed: false,
   offlineEngine: 'sensevoice',
   streamingEngine: 'x-asr',
   asrModelConfigs: {
@@ -200,6 +203,7 @@ export const DEFAULT_SETTINGS: Settings = {
   llmApiToken: '',
   llmTargetLanguage: 'English',
   llmStyle: '',
+  llmPolishPrompt: '请润色以下离线语音识别结果：修正错别字、标点和不自然表达，保持原意，不添加新事实，只返回润色后的文本。',
   llmAutoPolish: false,
   llmAutoTranslate: false,
   translationProvider: 'deepseek',
@@ -317,6 +321,8 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
     merged.serverUrl = `http://${merged.serverUrl}`
   }
   merged.serverUrl = merged.serverUrl.replace(/\/+$/, '') // strip trailing slashes
+  merged.backendConfirmed = Boolean(merged.backendConfirmed && merged.serverUrl)
+  if (!merged.backendConfirmed) merged.serverUrl = ''
   const allowedEngines = ['fireredasr2', 'sensevoice', 'qwen3asr', 'whisper', 'x-asr']
   const offlineEngines = allowedEngines.filter((engine) => engine !== 'x-asr')
   const streamingEngines = ['x-asr']
@@ -378,6 +384,9 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
   merged.higgsTtsInitialCodecChunkFrames = Math.min(16, Math.max(0, Math.floor(Number(merged.higgsTtsInitialCodecChunkFrames) || 1)))
   merged.translationProvider = merged.translationProvider || merged.llmProvider
   merged.translationBaseUrl = merged.translationBaseUrl || merged.llmBaseUrl
+  merged.llmPolishPrompt = typeof merged.llmPolishPrompt === 'string' && merged.llmPolishPrompt.trim()
+    ? merged.llmPolishPrompt
+    : DEFAULT_SETTINGS.llmPolishPrompt
   merged.passiveSummaryFrequencyMin = Math.min(1440, Math.max(5, Number(merged.passiveSummaryFrequencyMin) || 60))
   merged.passiveSummaryUserId = merged.passiveSummaryUserId ?? 'dsm'
   merged.passiveSummaryCategory = merged.passiveSummaryCategory ?? '实时转写'
@@ -446,7 +455,13 @@ export const useASRStore = create<ASRState>()(
       setTranscribeStatus: (transcribeStatus) => set({ transcribeStatus }),
       setRecordStatus: (recordStatus) => set({ recordStatus }),
       setLiveCaptionStatus: (liveCaptionStatus) => set({ liveCaptionStatus }),
-      updateSettings: (settings) => set((state) => ({ settings: normalizeSettings({ ...state.settings, ...settings }) })),
+      updateSettings: (settings) => set((state) => {
+        const patch = { ...settings }
+        if (Object.prototype.hasOwnProperty.call(patch, 'serverUrl') && !Object.prototype.hasOwnProperty.call(patch, 'backendConfirmed')) {
+          patch.backendConfirmed = false
+        }
+        return { settings: normalizeSettings({ ...state.settings, ...patch }) }
+      }),
       setModels: (models) => set({ models }),
       setCurrentResult: (currentResult) => set({ currentResult }),
       setActiveTaskId: (activeTaskId) => set({ activeTaskId }),

@@ -8,10 +8,6 @@ import { liveCaptionService } from '@/services/liveCaption'
 import { recordingService, translationConfig } from '@/services/recordingService'
 import { useASRStore } from '@/store/useASRStore'
 
-function formatClock(date = new Date()) {
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-}
-
 function formatTime(date: Date): string {
   const h = String(date.getHours()).padStart(2, '0')
   const min = String(date.getMinutes()).padStart(2, '0')
@@ -39,6 +35,7 @@ export function TranscribePage() {
   const taskEndedAt = recordingService.taskEndedAt
   const [llmStatus, setLlmStatus] = useState<LLMOperation | 'idle'>('idle')
   const [pendingFiles, setPendingFiles] = useState<LocalAudioFile[]>([])
+  const backendReady = Boolean(settings.backendConfirmed && settings.serverUrl.trim())
 
   // Derive status text from liveCaptionStatus
   const liveStatusText = useMemo(() => {
@@ -78,6 +75,10 @@ export function TranscribePage() {
   const confirmFiles = async () => {
     const files = pendingFiles
     if (!files.length) return
+    if (!backendReady) {
+      setError('未确认后端地址。请先在「设置」中输入后端 IP/地址并点击「确认」。')
+      return
+    }
     setPendingFiles([])
     for (const file of files) {
       await recordingService.runTranscription(file.blob, file.name, false)
@@ -91,6 +92,10 @@ export function TranscribePage() {
       return
     }
 
+    if (!backendReady) {
+      setError('未确认后端地址。请先在「设置」中输入后端 IP/地址并点击「确认」。')
+      return
+    }
     if (recordStatus !== 'idle' || transcribeStatus === 'uploading' || transcribeStatus === 'polling') return
     recordingService.taskStartedAt = new Date()
     recordingService.taskEndedAt = null
@@ -123,7 +128,8 @@ export function TranscribePage() {
         api_token: apiToken,
         provider,
         target_language: settings.llmTargetLanguage || 'English',
-        style: settings.llmStyle || undefined
+        style: settings.llmStyle || undefined,
+        prompt: operation === 'polish' ? settings.llmPolishPrompt || undefined : undefined
       })
       const next: TranscribeResponse = {
         ...currentResult,
@@ -144,33 +150,34 @@ export function TranscribePage() {
 
   return (
     <div className="page transcribe-page">
+      <section className="panel recognition-control-panel">
+        <div className="player-info">
+          <span className="mini-wave large" aria-hidden="true" />
+          <div>
+            <strong>{liveCaptionStatus !== 'idle' ? liveStatusText : recordStatus === 'recording' ? '正在聆听...' : backendReady ? '准备识别' : '等待确认后端'}</strong>
+            <small>{liveCaptionStatus !== 'idle' ? `实时识别：${liveCaptionStatus}` : recordStatus === 'recording' ? '点击结束并转写' : '离线录音和实时识别开关'}</small>
+          </div>
+        </div>
+        <div className="recognition-actions">
+          <RecordButton onToggle={() => void recordingService.toggle(false)} />
+          <button type="button" className={liveCaptionStatus !== 'idle' ? 'primary' : ''} onClick={() => void toggleLiveCaption()}>
+            {liveCaptionStatus === 'idle' ? '实时识别' : '停止识别'}
+          </button>
+          {(recordStatus !== 'idle' || liveCaptionStatus !== 'idle' || ['uploading', 'processing', 'polling'].includes(transcribeStatus)) && (
+            <button type="button" className="force-stop-button" onClick={() => void recordingService.forceStop()}>强制停止</button>
+          )}
+        </div>
+      </section>
+
       <div className="transcribe-layout">
         <div className="transcribe-main">
-          <section className="panel upload-panel">
-            <div className="section-head">
-              <div>
-                <h1>语音识别</h1>
-                <p>选择音频 / 视频文件后先确认，再开始识别，不会因拖放立即上传。</p>
-              </div>
-              <span className="soft-badge">{transcribeStatus === 'idle' ? '待识别' : transcribeStatus}</span>
-            </div>
-            <DropZone onFiles={handleFiles} />
-            {pendingFiles.length > 0 && (
-              <div className="pending-files" role="status">
-                <div>
-                  <strong>已选择 {pendingFiles.length} 个文件，等待确认</strong>
-                  <span>{pendingFiles.map((file) => file.name).join('、')}</span>
-                </div>
-                <button type="button" onClick={() => setPendingFiles([])}>取消</button>
-                <button type="button" className="primary" onClick={() => void confirmFiles()}>确认并开始识别</button>
-              </div>
-            )}
-          </section>
-
           <section className="panel preview-panel">
             <div className="section-head compact">
-              <h2>识别预览</h2>
-              <span className="soft-badge">自动识别：{settings.defaultLanguage === 'auto' ? '自动' : settings.defaultLanguage}</span>
+              <div>
+                <h1>语音识别</h1>
+                <p>离线录音、实时识别和文件识别共用当前模型设置。</p>
+              </div>
+              <span className="soft-badge">{transcribeStatus === 'idle' ? '待识别' : transcribeStatus}</span>
             </div>
             {liveCaptionStatus !== 'idle' ? (
               <div className="preview-transcript">
@@ -247,7 +254,22 @@ export function TranscribePage() {
                 <strong>翻译</strong>
                 <small>{settings.llmAutoTranslate ? settings.llmTargetLanguage : '不翻译'}</small>
               </button>
+              <button type="button" className={settings.llmAutoPolish ? 'quick-tile active' : 'quick-tile'} onClick={() => updateSettings({ llmAutoPolish: !settings.llmAutoPolish })}>
+                <span>AI</span>
+                <strong>离线润色</strong>
+                <small>{settings.llmAutoPolish ? settings.llmModel || '已开启' : '点击开启'}</small>
+              </button>
             </div>
+            <label className="polish-prompt-field">
+              润色 Prompt
+              <textarea
+                rows={4}
+                value={settings.llmPolishPrompt}
+                onChange={(event) => updateSettings({ llmPolishPrompt: event.target.value })}
+                placeholder="输入离线 ASR 润色要求"
+              />
+              <small>仅在离线录音/文件识别自动润色或手动点击“润色”时使用；模型、接口和 Token 来自模型管理。</small>
+            </label>
           </section>
 
           <div className="assistant-zone">
@@ -260,26 +282,25 @@ export function TranscribePage() {
         </aside>
       </div>
 
-      <section className="dock-player">
-        <div className="player-info">
-          <span className="mini-wave large" aria-hidden="true" />
+      <section className="panel upload-panel file-recognition-panel">
+        <div className="section-head">
           <div>
-            <strong>{liveCaptionStatus !== 'idle' ? liveStatusText : recordStatus === 'recording' ? '正在聆听...' : '准备识别'}</strong>
-            <small>{liveCaptionStatus !== 'idle' ? `实时识别：${liveCaptionStatus}` : recordStatus === 'recording' ? '轻触结束识别' : '拖入文件或按下麦克风开始'}</small>
+            <h2>文件识别</h2>
+            <p>选择音频 / 视频文件后先确认，再开始识别，不会因拖放立即上传。</p>
           </div>
+          <span className="soft-badge">文件 ASR</span>
         </div>
-        <RecordButton onToggle={() => void recordingService.toggle(false)} />
-        <button type="button" className={liveCaptionStatus !== 'idle' ? 'primary' : ''} onClick={() => void toggleLiveCaption()}>
-          {liveCaptionStatus === 'idle' ? '实时识别' : '停止识别'}
-        </button>
-        {(recordStatus !== 'idle' || liveCaptionStatus !== 'idle' || ['uploading', 'processing', 'polling'].includes(transcribeStatus)) && (
-          <button type="button" className="force-stop-button" onClick={() => void recordingService.forceStop()}>强制停止</button>
+        <DropZone onFiles={handleFiles} />
+        {pendingFiles.length > 0 && (
+          <div className="pending-files" role="status">
+            <div>
+              <strong>已选择 {pendingFiles.length} 个文件，等待确认</strong>
+              <span>{pendingFiles.map((file) => file.name).join('、')}</span>
+            </div>
+            <button type="button" onClick={() => setPendingFiles([])}>取消</button>
+            <button type="button" className="primary" onClick={() => void confirmFiles()}>确认并开始识别</button>
+          </div>
         )}
-        <div className="network-meter">
-          <span />
-          <strong>网络良好</strong>
-          <small>{formatClock()}</small>
-        </div>
       </section>
 
       {error && <p className="error floating-error">{error}</p>}

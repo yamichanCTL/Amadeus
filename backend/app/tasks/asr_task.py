@@ -218,6 +218,7 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
                     style=llm_opts.style,
                     enable_polish=llm_opts.enable_polish,
                     enable_translate=llm_opts.enable_translate,
+                    prompt=llm_opts.prompt,
                 )
                 llm_outputs = LLMOutputs(
                     polish=outputs.get("polish"),

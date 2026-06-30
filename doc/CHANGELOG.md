@@ -4,6 +4,14 @@
 > **子文档**:
 > - [桌面端文档](desktop/README.md)
 
+## [2026-06-30] 桌面 ASR 首连门禁、离线润色、布局与图标修复
+
+- **类型**: feat / fix / test / docs
+- **描述**: 桌面端新增后端地址“输入 + 确认”门禁，未确认时 health、模型刷新、离线 ASR、实时字幕、TTS/Agent 后端技能等路径均不主动连接后端；语音识别页新增离线 ASR 自动润色开关和用户 Prompt，复用模型管理 LLM 设置，后端继续排除 `api_token` 落库。语音识别页顶部放置“开始录音/实时识别”，移除“网络良好”和固定时间/延迟，文件识别移动到底部。字幕框 × 现在结束实时识别但不取消“显示桌面字幕框”设置。任务栏/托盘/打包图标改用由 `img/Amadeus/amadeus.jpg` 派生的 `.ico/.png`。
+- **影响范围**: `frontend/desktop/src/{App.tsx,store,useASRStore.ts,services,pages,components,styles}`、`frontend/desktop/electron*`、`backend/app/{schemas,core,api,tasks}`、`img/Amadeus/`、桌面文档与专项测试
+- **验证**: 前端 targeted Vitest 12 passed；renderer TypeScript、Electron TypeScript、Vite build、Python compileall 通过；后端轻量 schema 验证确认 Prompt 保留且 `api_token` 排除，`test_transcribe_auto_llm_success` 在本环境 90 秒无输出后中止，未计为通过。Electron/Xvfb 截图受沙箱限制未形成有效截图证据，已用 Image Gen 审查项指导 CSS 修复并记录限制。
+- **Plan**: [链接到 plan 文件](plans/2026-06-30-desktop-asr-first-run-polish-ui-icon.md)
+
 ## [2026-06-29] 修复麦克风收音间断与非原始音
 
 - **类型**: fix / test

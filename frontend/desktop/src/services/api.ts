@@ -398,6 +398,7 @@ export type TranscribeOptions = {
     base_url?: string
     api_token?: string
     style?: string
+    prompt?: string
   }
 }
 
@@ -410,19 +411,12 @@ export type LLMProcessRequest = {
   provider?: string
   target_language?: string
   style?: string
+  prompt?: string
 }
 
-const DEFAULT_SERVER = 'http://localhost:8000'
-
 function normalizeServerUrl(url: string) {
-  // empty / '' / '/' → empty string. We intentionally do NOT fall back to
-  // localhost:8000 anymore: the user must explicitly set and confirm a
-  // backend address before any communication happens (Req: 未设置不通信).
-  // In dev, same-origin requests are proxied by Vite, so '' is valid there.
   const trimmed = (url || '').trim()
   if (!trimmed || trimmed === '/') {
-    // No backend configured. Return '' so callers can guard and refuse to
-    // communicate. (In dev, '' resolves to same-origin via the Vite proxy.)
     return ''
   }
   const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`
@@ -503,15 +497,23 @@ async function parseAudioResponse(response: Response, clientStartedAt: number): 
 }
 
 export class ASRApi {
-  constructor(private readonly serverUrl = DEFAULT_SERVER) {}
+  constructor(private readonly serverUrl = '') {}
+
+  private ensureBackend(path: string) {
+    const baseUrl = normalizeServerUrl(this.serverUrl)
+    if (!baseUrl) {
+      throw new Error(`未确认后端地址，已阻止请求 ${path}。请先在「设置」中输入后端 IP/地址并点击「确认」。`)
+    }
+    return baseUrl
+  }
 
   private url(path: string) {
-    return `${normalizeServerUrl(this.serverUrl)}${path}`
+    return `${this.ensureBackend(path)}${path}`
   }
 
   private describeBackendTarget(path: string) {
     const baseUrl = normalizeServerUrl(this.serverUrl)
-    return baseUrl ? `${baseUrl}${path}` : `${window.location.origin || '当前页面' }${path}`
+    return baseUrl ? `${baseUrl}${path}` : `未确认后端地址 ${path}`
   }
 
   health() {

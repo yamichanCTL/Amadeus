@@ -88,7 +88,8 @@ vi.mock('@/services/audio', () => ({
 const store = vi.hoisted(() => ({
   state: {
     settings: {
-      serverUrl: '',
+      serverUrl: 'http://backend.test',
+      backendConfirmed: true,
       audioInputDeviceId: 'physical-microphone-id',
       audioOutputDeviceId: 'virtual-cable-output',
       offlineEngine: 'sensevoice',

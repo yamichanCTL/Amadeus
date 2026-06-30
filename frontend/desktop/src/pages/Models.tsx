@@ -147,8 +147,16 @@ export function ModelsPage() {
         : currentVoicePreset
           ? '已保存音色'
           : '未设置'
+  const backendReady = Boolean(settings.backendConfirmed && settings.serverUrl.trim())
 
   const refresh = useCallback(async () => {
+    if (!backendReady) {
+      refreshControllerRef.current?.abort(new DOMException('未确认后端地址', 'AbortError'))
+      refreshControllerRef.current = null
+      setModels([])
+      setError('未确认后端地址，模型管理不会连接后端。请先在设置中输入后端 IP/地址并点击确认。')
+      return
+    }
     refreshControllerRef.current?.abort(new DOMException('模型列表刷新已被新请求替代', 'AbortError'))
     const controller = new AbortController()
     refreshControllerRef.current = controller
@@ -161,7 +169,7 @@ export function ModelsPage() {
     } finally {
       if (refreshControllerRef.current === controller) refreshControllerRef.current = null
     }
-  }, [api, setModels])
+  }, [api, backendReady, setModels])
 
   useEffect(() => {
     void refresh()
@@ -173,13 +181,21 @@ export function ModelsPage() {
 
   useEffect(() => {
     if (activeTab !== 'asr') return
+    if (!backendReady) {
+      setHotwordConfig(null)
+      return
+    }
     void api.hotwords().then(setHotwordConfig).catch((loadError) => {
       setError(loadError instanceof Error ? loadError.message : '热词配置读取失败')
     })
-  }, [activeTab, api])
+  }, [activeTab, api, backendReady])
 
   useEffect(() => {
     if (activeTab !== 'llm') return
+    if (!backendReady) {
+      setLlmModels(null)
+      return
+    }
     if (!settings.llmBaseUrl.trim() || settings.llmApiToken.trim().length < 6) {
       setLlmModels(null)
       return
@@ -188,10 +204,14 @@ export function ModelsPage() {
       void checkRemoteModels('llm')
     }, 650)
     return () => window.clearTimeout(timer)
-  }, [activeTab, settings.llmProvider, settings.llmBaseUrl, settings.llmApiToken, api])
+  }, [activeTab, settings.llmProvider, settings.llmBaseUrl, settings.llmApiToken, api, backendReady])
 
   useEffect(() => {
     if (activeTab !== 'translate') return
+    if (!backendReady) {
+      setTranslationModels(null)
+      return
+    }
     const token = settings.translationApiToken.trim() || settings.llmApiToken.trim()
     if (!settings.translationBaseUrl.trim() || token.length < 6) {
       setTranslationModels(null)
@@ -207,16 +227,21 @@ export function ModelsPage() {
     settings.translationBaseUrl,
     settings.translationApiToken,
     settings.llmApiToken,
-    api
+    api,
+    backendReady
   ])
 
   useEffect(() => {
     if (activeTab !== 'tts') return
+    if (!backendReady) {
+      setTtsHealth(null)
+      return
+    }
     const timer = window.setTimeout(() => {
       void refreshTtsRuntime()
     }, 500)
     return () => window.clearTimeout(timer)
-  }, [activeTab, settings.higgsTtsApiToken, settings.higgsTtsBaseUrl, settings.higgsTtsProvider, settings.higgsTtsRemoteBaseUrl, api])
+  }, [activeTab, settings.higgsTtsApiToken, settings.higgsTtsBaseUrl, settings.higgsTtsProvider, settings.higgsTtsRemoteBaseUrl, api, backendReady])
 
   useEffect(() => () => {
     referenceRecorderRef.current?.cancel()
@@ -343,6 +368,10 @@ export function ModelsPage() {
   }
 
   const checkRemoteModels = async (kind: 'llm' | 'translate') => {
+    if (!backendReady) {
+      setError('未确认后端地址，无法通过后端检测大模型接口。')
+      return
+    }
     const isTranslate = kind === 'translate'
     const baseUrl = isTranslate ? settings.translationBaseUrl : settings.llmBaseUrl
     const apiToken = isTranslate
@@ -391,6 +420,7 @@ export function ModelsPage() {
   }
 
   const refreshVoicePresets = async () => {
+    if (!backendReady) return []
     const result = await api.higgsVoicePresets()
     setVoicePresets(result.presets)
     const voices = Array.from(new Set(['default', ...settings.higgsTtsVoices, ...result.voices, settings.higgsTtsVoice]
@@ -401,6 +431,10 @@ export function ModelsPage() {
   }
 
   const refreshTtsRuntime = async () => {
+    if (!backendReady) {
+      setError('未确认后端地址，无法检查 TTS 运行状态。')
+      return
+    }
     const baseUrl = settings.higgsTtsProvider === 'boson'
       ? settings.higgsTtsRemoteBaseUrl.trim() || 'https://api.boson.ai/v1'
       : settings.higgsTtsBaseUrl.trim() || 'http://localhost:8002'
@@ -451,6 +485,10 @@ export function ModelsPage() {
   }
 
   const saveVoicePreset = async () => {
+    if (!backendReady) {
+      setError('未确认后端地址，无法保存音色到后端。')
+      return
+    }
     const name = settings.higgsTtsVoice.trim()
     if (!name) {
       setError('请先填写音色名')
@@ -573,6 +611,10 @@ export function ModelsPage() {
   }
 
   const generateReferenceText = async () => {
+    if (!backendReady) {
+      setError('未确认后端地址，无法生成参考文本。')
+      return
+    }
     if (!settings.higgsTtsReferenceAudioDataUrl) {
       setError('请先上传参考音频')
       return

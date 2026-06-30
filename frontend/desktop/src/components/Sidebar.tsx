@@ -42,8 +42,8 @@ export function Sidebar() {
       <div className={`server-pill ${serverStatus}`}>
         <span />
         <div>
-          <strong>{serverStatus === 'connected' ? '网络良好' : serverStatus === 'checking' ? '检查服务中' : '服务断开'}</strong>
-          <small>{serverStatus === 'connected' ? '延迟 18ms' : '后端连接状态'}</small>
+          <strong>{serverStatus === 'connected' ? '服务已连接' : serverStatus === 'checking' ? '检查服务中' : '服务断开'}</strong>
+          <small>后端连接状态</small>
         </div>
       </div>
     </aside>

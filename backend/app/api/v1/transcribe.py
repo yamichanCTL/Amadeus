@@ -158,6 +158,7 @@ async def _run_llm_auto(text: str, opts: TranscribeOptions) -> tuple[LLMOutputs 
         style=opts.llm.style,
         enable_polish=opts.llm.enable_polish,
         enable_translate=opts.llm.enable_translate,
+        prompt=opts.llm.prompt,
     )
     llm_outputs = LLMOutputs(
         polish=outputs.get("polish"),

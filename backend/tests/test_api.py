@@ -196,7 +196,9 @@ async def test_transcribe_invalid_options_json(async_client: AsyncClient) -> Non
 
 
 @pytest.mark.asyncio
-async def test_transcribe_auto_llm_success(async_client: AsyncClient, fake_llm) -> None:
+async def test_transcribe_auto_llm_success(
+    async_client: AsyncClient, db_session: AsyncSession, fake_llm
+) -> None:
     wav = make_wav_bytes(0.5)
     token = "secret-token"
     resp = await async_client.post(
@@ -206,7 +208,8 @@ async def test_transcribe_auto_llm_success(async_client: AsyncClient, fake_llm) 
             "options": (
                 '{"engine":"mock","llm":{"enable_polish":true,'
                 '"model":"demo-model","base_url":"https://llm.test/v1",'
-                f'"api_token":"{token}"'
+                f'"api_token":"{token}",'
+                '"prompt":"请保持原意并修正口语表达"'
                 '}}'
             )
         },
@@ -217,6 +220,13 @@ async def test_transcribe_auto_llm_success(async_client: AsyncClient, fake_llm) 
     assert data["llm_outputs"]["polish"]["model"] == "demo-model"
     assert token not in resp.text
     assert fake_llm.calls[0]["headers"]["Authorization"] == f"Bearer {token}"
+    assert fake_llm.calls[0]["json"]["messages"][1]["content"].startswith("请保持原意并修正口语表达")
+    saved_task = await db_session.get(ASRTask, data["task_id"])
+    assert saved_task is not None
+    engine_options = json.loads(saved_task.engine_options or "{}")
+    assert engine_options["llm"]["model"] == "demo-model"
+    assert engine_options["llm"]["prompt"] == "请保持原意并修正口语表达"
+    assert "api_token" not in json.dumps(engine_options)
 
 
 @pytest.mark.asyncio

@@ -72,7 +72,8 @@ export function buildTranscribeOptions(): TranscribeOptions {
       model: autoModel,
       base_url: autoBaseUrl,
       api_token: autoToken,
-      style: settings.llmStyle || undefined
+      style: settings.llmStyle || undefined,
+      prompt: settings.llmAutoPolish ? settings.llmPolishPrompt || undefined : undefined
     }
   }
   return options
@@ -227,6 +228,13 @@ export class RecordingService {
     // transcription becomes a no-op for overlay updates.
     const myId = ++this.transcriptionId
     const settings = useASRStore.getState().settings
+    if (!settings.backendConfirmed || !settings.serverUrl.trim()) {
+      const state = useASRStore.getState()
+      state.setTranscribeStatus('error')
+      state.setRecordStatus('idle')
+      state.setError('未确认后端地址。请先在「设置」中输入后端 IP/地址并点击「确认」。')
+      return
+    }
     const api = new ASRApi(settings.serverUrl)
     const trace = startTelemetryTrace('asr', `文件 ASR · ${filename}`, settings.offlineEngine)
     recordTelemetryStage(trace, '用户确认开始')

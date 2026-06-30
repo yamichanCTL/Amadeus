@@ -55,12 +55,13 @@ function resolveAssetPath(relativePath: string): string {
 }
 
 function loadAppIcon(): Electron.NativeImage | undefined {
-  const iconPath = resolveAssetPath('img/Amadeus/amadeus.jpg')
-  try {
-    const icon = nativeImage.createFromPath(iconPath)
-    if (!icon.isEmpty()) return icon
-  } catch {
-    // fall through
+  for (const relativePath of ['img/Amadeus/amadeus.ico', 'img/Amadeus/amadeus-icon.png', 'img/Amadeus/amadeus.jpg']) {
+    try {
+      const icon = nativeImage.createFromPath(resolveAssetPath(relativePath))
+      if (!icon.isEmpty()) return icon
+    } catch {
+      // try the next format
+    }
   }
   return undefined
 }

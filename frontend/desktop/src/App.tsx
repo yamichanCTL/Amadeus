@@ -71,8 +71,9 @@ export default function App() {
     let alive = true
     const check = async () => {
       const serverUrl = useASRStore.getState().settings.serverUrl
+      const backendConfirmed = useASRStore.getState().settings.backendConfirmed
       // 用户未配置后端地址时不尝试连接，避免自动连接外网被拦截
-      if (!serverUrl) {
+      if (!backendConfirmed || !serverUrl) {
         if (alive) setServerStatus('disconnected')
         return
       }
@@ -90,7 +91,7 @@ export default function App() {
       alive = false
       window.clearInterval(timer)
     }
-  }, [api, setServerStatus])
+  }, [api, setServerStatus, settings.backendConfirmed])
 
   useEffect(() => {
     const theme = settings.theme === 'windows' ? 'system' : settings.theme
@@ -193,8 +194,8 @@ export default function App() {
 
   useEffect(() => {
     const offClosed = window.electronAPI?.onCaptionOverlayClosed(() => {
-      updateSettings({ showDesktopCaptions: false })
-      // Requirement 2b: closing caption overlay also stops live recognition
+      // The caption close button ends the current live-recognition session but
+      // must not disable the user's persistent "show desktop captions" setting.
       if (liveCaptionService.isActive) {
         void liveCaptionService.stop()
       }
@@ -230,6 +231,7 @@ export default function App() {
     const runPassiveSummary = async () => {
       if (stopped || running) return
       const latest = useASRStore.getState().settings
+      if (!latest.backendConfirmed || !latest.serverUrl.trim()) return
       if (!latest.passiveSummaryEnabled) return
       if (!latest.llmModel.trim() || !latest.llmBaseUrl.trim() || !latest.llmApiToken.trim()) return
       const now = new Date()

@@ -16,6 +16,7 @@ const store = vi.hoisted(() => {
     error: '',
     settings: {
       serverUrl: 'http://instant-asr.test',
+      backendConfirmed: true,
       offlineEngine: 'sensevoice',
       timeoutSec: 20,
       defaultLanguage: 'auto',

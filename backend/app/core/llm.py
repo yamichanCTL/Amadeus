@@ -57,6 +57,12 @@ def _audio_speech_url(base_url: str) -> str:
 
 def _prompt_for(request: LLMProcessRequest) -> tuple[str, str]:
     if request.operation == "polish":
+        custom_prompt = (request.prompt or "").strip()
+        if custom_prompt:
+            return (
+                "You are a professional transcript editor. Return only the revised text.",
+                f"{custom_prompt}\n\n原始离线语音识别结果：\n{request.text}",
+            )
         style = request.style or "clean, natural, and faithful to the original meaning"
         return (
             "You are a professional transcript editor. Return only the revised text.",
@@ -149,6 +155,7 @@ async def run_auto_processing(
     style: str | None,
     enable_polish: bool,
     enable_translate: bool,
+    prompt: str | None = None,
 ) -> tuple[dict[LLMOperation, LLMTextResult], str | None]:
     if not text.strip() or not model or not base_url or not api_token:
         return {}, None
@@ -168,6 +175,7 @@ async def run_auto_processing(
                     api_token=api_token,
                     target_language=target_language,
                     style=style,
+                    prompt=prompt if operation == "polish" else None,
                 )
             )
         except Exception as exc:
