@@ -22,7 +22,7 @@
 ## 自动化验证
 
 ```bash
-cd /home/yami/AI/asrapp
+cd ~/AI/asrapp
 
 # 后端定向测试
 timeout 90s .venv/bin/pytest -q \
@@ -66,7 +66,7 @@ npm run build
 代码默认模型为 FunASR `ct-punc`。首次真实中文调用需要下载权重；当前会话的外部执行审批因额度耗尽被拒绝，且本地缓存没有该模型。本轮验证覆盖了实际异步调用边界和模型结果解析，但未覆盖真实权重推理。环境恢复后执行：
 
 ```bash
-cd /home/yami/AI/asrapp
+cd ~/AI/asrapp
 .venv/bin/python -c "import asyncio; from backend.app.core.pipeline.post.punctuation import restore_punctuation; print(asyncio.run(restore_punctuation('你好世界今天天气怎么样', 'zh')))"
 ```
 

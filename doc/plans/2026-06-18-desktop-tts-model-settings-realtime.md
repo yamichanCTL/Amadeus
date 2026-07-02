@@ -7,7 +7,7 @@
 
 - 在桌面前端 `模型管理` 中新增 `TTS 模型设置`，集中配置 Higgs TTS API 地址、音色和生成参数。
 - 从 `变声器 / TTS` 工作台移除模型地址和音色配置入口，仅消费模型管理中永久保存的 TTS 设置。
-- 参考 `/home/yami/AI/audio/TTS/higgs-audio/webui.py` 的音色列表行为，支持刷新 Higgs 音色列表并持久保存选中的音色。
+- 参考 `~/AI/audio/TTS/higgs-audio/webui.py` 的音色列表行为，支持刷新 Higgs 音色列表并持久保存选中的音色。
 - 修复 `实时 ASR + TTS` 中一句话 VAD 结束并返回 TTS 后前端异常中断的问题，让连接保持持续实时。
 
 ## 影响范围

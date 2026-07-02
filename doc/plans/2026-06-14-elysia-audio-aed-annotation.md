@@ -66,7 +66,7 @@ unrar x 爱莉希雅-数据集.rar -d /tmp/elysia_rar_extract/
 
 #### Step 3: 创建 16k 音频目录
 ```bash
-mkdir -p /home/yami/AI/dataset/audio/Elysia_new_16k/
+mkdir -p ~/AI/dataset/audio/Elysia_new_16k/
 # 复制/转换所有新增音频到此目录
 ```
 

@@ -46,7 +46,7 @@
 
 - 普通状态浮窗已改为 200×32；28 段窄柱按采样顺序维护时间历史，Electron E2E 尺寸和末端波形高度断言同步更新。
 - UI Automation 先检查 `ValuePattern` / `ControlType.Edit`，再对 QQ/TIM/微信、VS Code/Cursor/Trae 的自绘控件按焦点进程放行；自动粘贴成功仍直接关闭 Thinking 浮窗。
-- 后端应用目录中已无 `/home/yami`、`/root`、`/usr/local/cuda` 或固定系统 libstdc++ 路径；新增 `backend/.env.example`，当前机器路径只保留在被忽略的 `backend/.env`。
+- 后端应用目录中已无用户家目录、`/root`、`/usr/local/cuda` 或固定系统 libstdc++ 路径；新增 `backend/.env.example`，当前机器路径只保留在被忽略的 `backend/.env`。
 - X-ASR CUDA 默认运行在独立 spawn worker。真实 6.8 秒录音使用 960 ms 模型完成 213 个 PCM 块、6 次 partial 和 1 次 final，runtime 为 `sherpa-onnx 1.13.2+cuda12.cudnn9`；当前运行中的 8000 后端也成功通过模型加载 API 启动 worker，并返回非空 `worker_pid`。
 - `backend/tests/test_x_asr.py` 13 项通过，X-ASR 文件 Ruff 检查通过；Renderer TypeScript、Electron TypeScript、Vite 生产构建（77 modules）和 VitePress 文档构建通过。
 - 后端配置和请求 schema 默认值均断言为 20 秒；桌面语音识别、Agent 语音和参考音频识别均携带 `settings.timeoutSec`。

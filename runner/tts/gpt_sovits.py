@@ -12,6 +12,7 @@ are still generating — pseudo-streaming for lower perceived latency.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import struct
 import subprocess
@@ -31,7 +32,12 @@ _OUTPUT_DIR = _PROJECT_ROOT / ".runtime" / "tts_output"
 _RUNTIME_DIR = _PROJECT_ROOT / ".runtime"
 # Elysia voice reference
 _REF_AUDIO = str(_RUNTIME_DIR / "ref_elysia.wav")
-_GPT_SOVITS_DIR = Path("/home/yami/AI/GPT-SoVITS")
+_GPT_SOVITS_DIR = Path(
+    os.environ.get(
+        "GPT_SOVITS_DIR",
+        str(_PROJECT_ROOT / ".." / ".." / "GPT-SoVITS"),
+    )
+)
 
 # ── Sentence splitting pattern ───────────────────────────────────────────────
 # Matches Chinese/Japanese punctuation and English sentence endings

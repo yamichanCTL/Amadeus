@@ -472,7 +472,7 @@
 ## [2026-06-18] 合并外层 doc 到 asrapp 项目文档
 
 - **类型**: docs
-- **描述**: 将 `/home/yami/AI/doc` 合并迁入 `/home/yami/AI/asrapp/doc`。因目标目录已有近期 asrapp 文档、TTS 说明和多个 plan，本次采用合并而非替换：保留现有 `README.md`、`CHANGELOG.md`、桌面端文档和近期计划；迁入外层 VitePress 配置、`asrapp/` 完整文档树、历史 plan、文档站 package 文件，并将外层总仓 README/CHANGELOG 归档到 `doc/archive/root-doc/`。
+- **描述**: 将 `~/AI/doc` 合并迁入 `~/AI/asrapp/doc`。因目标目录已有近期 asrapp 文档、TTS 说明和多个 plan，本次采用合并而非替换：保留现有 `README.md`、`CHANGELOG.md`、桌面端文档和近期计划；迁入外层 VitePress 配置、`asrapp/` 完整文档树、历史 plan、文档站 package 文件，并将外层总仓 README/CHANGELOG 归档到 `doc/archive/root-doc/`。
 - **影响范围**: `doc/`、`doc/.vitepress/config.mts`、`doc/asrapp/`、`doc/archive/root-doc/`、`doc/plans/`、`.gitignore`
 - **Plan**: [链接到 plan 文件](plans/2026-06-18-merge-root-doc-into-asrapp.md)
 
@@ -486,7 +486,7 @@
 ## [2026-06-18] 补全 Higgs TTS 音色与控制参数
 
 - **类型**: feat
-- **描述**: 对照 `/home/yami/AI/audio/TTS/higgs-audio/webui.py` 补全桌面端 `模型管理 → TTS 模型设置`：新增参考音频 Data URL、参考音频 URL、参考文本、`reference_codes`、句首情绪/风格/韵律控制标签、`aac` 输出格式和流式首个 codec chunk 帧数。后端 Higgs proxy 现在按 webui 的 payload 规则生成 `references` / `reference_codes` 和控制标签，并让文本 TTS、上传音频 ASR→TTS、实时 ASR+TTS 共用这些持久化设置。
+- **描述**: 对照 `~/AI/audio/TTS/higgs-audio/webui.py` 补全桌面端 `模型管理 → TTS 模型设置`：新增参考音频 Data URL、参考音频 URL、参考文本、`reference_codes`、句首情绪/风格/韵律控制标签、`aac` 输出格式和流式首个 codec chunk 帧数。后端 Higgs proxy 现在按 webui 的 payload 规则生成 `references` / `reference_codes` 和控制标签，并让文本 TTS、上传音频 ASR→TTS、实时 ASR+TTS 共用这些持久化设置。
 - **影响范围**: `backend/app/api/v1/tts_api.py`、`backend/tests/test_higgs_tts_api.py`、`frontend/desktop/src/pages/Models.tsx`、`frontend/desktop/src/pages/VoiceChanger.tsx`、`frontend/desktop/src/services/api.ts`、`frontend/desktop/src/services/audio.ts`、`frontend/desktop/src/store/useASRStore.ts`、`frontend/desktop/src/styles/global.css`、`doc/desktop/TTS_VOICE.md`
 - **Plan**: [链接到 plan 文件](plans/2026-06-18-complete-higgs-tts-model-settings.md)
 

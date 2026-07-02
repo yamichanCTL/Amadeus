@@ -100,5 +100,5 @@
 ## 验证
 
 - `cd frontend/desktop && npx tsc --noEmit -p tsconfig.json` 与 `npx tsc --noEmit -p tsconfig.node.json`
-- `cd /home/yami/AI/asrapp && python -m pytest -q`
+- `cd ~/AI/asrapp && python -m pytest -q`
 - 代码审查：inject 放宽、后端空地址不通信、浮窗拖动、录音单例。

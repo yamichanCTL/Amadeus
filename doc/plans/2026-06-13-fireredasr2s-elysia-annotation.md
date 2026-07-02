@@ -1,7 +1,7 @@
 # FireRedASR2S 为 Elysia 音频打标
 
 ## 目标
-使用 FireRedASR2S 的 ASR 系统（ASR + VAD + LID + Punc）对 `/home/yami/AI/dataset/audio/Elysia/` 下 398 个中文普通话音频文件进行语音识别，生成带时间戳的标注结果。
+使用 FireRedASR2S 的 ASR 系统（ASR + VAD + LID + Punc）对 `~/AI/dataset/audio/Elysia/` 下 398 个中文普通话音频文件进行语音识别，生成带时间戳的标注结果。
 
 ## 影响范围
 - `dataset/audio/Elysia/` - 398 个原始 wav 文件（44.1kHz 立体声）

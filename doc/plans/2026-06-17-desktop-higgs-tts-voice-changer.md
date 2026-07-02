@@ -2,7 +2,7 @@
 
 ## 任务目标
 
-- 在 `/home/yami/AI/asrapp` 桌面前端新增独立的变声器/TTS 工作台。
+- 在 `~/AI/asrapp` 桌面前端新增独立的变声器/TTS 工作台。
 - 支持三种用法：
   - 语音输入，后端 VAD 结束后走 ASR，再走 Higgs TTS 返回音频。
   - 文本输入，直接调用 Higgs v3 TTS 合成音频。

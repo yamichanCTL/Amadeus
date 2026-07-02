@@ -5,7 +5,7 @@
 
 ## 任务目标
 
-- 对照 `/home/yami/AI/audio/TTS/higgs-audio/webui.py` 的实际 payload，补全桌面端 `模型管理 → TTS 模型设置` 中缺失的 Higgs 参数。
+- 对照 `~/AI/audio/TTS/higgs-audio/webui.py` 的实际 payload，补全桌面端 `模型管理 → TTS 模型设置` 中缺失的 Higgs 参数。
 - 明确 `webui.py` 没有独立的“音色相似度”数值参数；音色相似度相关能力通过注册音色、参考音频/URL、参考文本和 `reference_codes` 实现。
 - 让文本 TTS、上传音频 ASR→TTS、实时 ASR+TTS 都使用同一套持久化 TTS 设置。
 

@@ -7,7 +7,7 @@
 ## 环境准备
 
 ```bash
-cd /home/yami/AI/asrapp
+cd ~/AI/asrapp
 uv sync --all-extras           # 安装 Python 依赖
 ```
 

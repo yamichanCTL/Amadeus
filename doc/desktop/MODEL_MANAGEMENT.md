@@ -36,7 +36,7 @@ ASR 模型行和离线/实时下拉不再维护前端引擎枚举。页面刷新
 本机使用官方 `sherpa-onnx 1.13.2+cuda12.cudnn9`。安装与验证：
 
 ```bash
-cd /home/yami/AI/asrapp
+cd ~/AI/asrapp
 scripts/install_x_asr_cuda.sh
 .venv/bin/python scripts/verify_x_asr_cuda.py
 ```
@@ -44,7 +44,7 @@ scripts/install_x_asr_cuda.sh
 项目通用 lockfile 保留跨平台 CPU 依赖，因此启动已安装 CUDA wheel 的本机后端时使用：
 
 ```bash
-cd /home/yami/AI/asrapp/backend
+cd ~/AI/asrapp/backend
 uv run --no-sync uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 

@@ -10,7 +10,7 @@
 
 ## 模块
 
-- [Amadeus 完整文档树](asrapp/README.md)：从 `/home/yami/AI/doc` 合并迁入的 VitePress 文档树，包含架构、后端、Runner、前端、ASR 与设计决策。
+- [Amadeus 完整文档树](asrapp/README.md)：从 `~/AI/doc` 合并迁入的 VitePress 文档树，包含架构、后端、Runner、前端、ASR 与设计决策。
 - [环境安装与迁移](asrapp/installation/README.md)：后端、桌面端、Android、第三方库/模型和迁移验收。
 - [桌面端](desktop/README.md)：Electron 桌面客户端、实时语音、TTS 与变声器功能。
 - [开发环境](development/README.md)：工作区级编辑器设置与开发工具约定。

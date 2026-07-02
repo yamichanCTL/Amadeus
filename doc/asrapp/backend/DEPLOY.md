@@ -7,7 +7,7 @@
 ## 方式一：Docker Compose（推荐生产）
 
 ```bash
-cd /home/yami/AI/asrapp
+cd ~/AI/asrapp
 docker-compose up --build
 ```
 
@@ -24,7 +24,7 @@ docker-compose up --build
 ### 1. 安装依赖
 
 ```bash
-cd /home/yami/AI/asrapp
+cd ~/AI/asrapp
 uv sync --all-extras
 sudo apt install -y ffmpeg redis-server
 ```

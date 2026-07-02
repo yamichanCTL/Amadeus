@@ -50,7 +50,7 @@ sdk.dir=/你的/Android/Sdk
 2. 进入 `Settings > Languages & Frameworks > Android SDK`。
 3. 安装 `Android SDK Platform 35`。
 4. 在 `SDK Tools` 中安装 `Android SDK Build-Tools 35.x`、`Android SDK Platform-Tools`、`Android Emulator`、`Android SDK Command-line Tools`。
-5. 记下 SDK 路径，例如 `/home/yami/Android/Sdk` 或 Windows 侧 `/mnt/c/Users/<用户名>/AppData/Local/Android/Sdk`。
+5. 记下 SDK 路径，例如 `~/Android/Sdk` 或 Windows 侧 `%LOCALAPPDATA%\Android\Sdk`。
 
 方式 B：用 Google 官方 Android CLI
 
@@ -75,7 +75,7 @@ sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "emulato
 最后创建 `local.properties`：
 
 ```bash
-cd /home/yami/AI/asrapp/frontend/android
+cd ~/AI/asrapp/frontend/android
 cp local.properties.example local.properties
 ```
 
@@ -86,7 +86,7 @@ cp local.properties.example local.properties
 从仓库根目录启动后端：
 
 ```bash
-cd /home/yami/AI/asrapp/backend
+cd ~/AI/asrapp/backend
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
 ```
 
@@ -134,7 +134,7 @@ adb devices -l
 打开目录：
 
 ```bash
-code /home/yami/AI/asrapp/frontend/android
+code ~/AI/asrapp/frontend/android
 ```
 
 然后依次运行 VS Code 命令：
@@ -148,7 +148,7 @@ code /home/yami/AI/asrapp/frontend/android
 也可以手动执行：
 
 ```bash
-cd /home/yami/AI/asrapp/frontend/android
+cd ~/AI/asrapp/frontend/android
 ./gradlew :app:assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n com.asrapp.android/.MainActivity

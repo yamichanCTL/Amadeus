@@ -71,7 +71,7 @@ git, python, echo, mkdir, touch, cp, mv
 
 | 约束 | 值 |
 |------|-----|
-| 工作目录 | `/home/yami/AI/asrapp` |
+| 工作目录 | `~/AI/asrapp` |
 | 超时 | 300s |
 | 最大输出 | 20000 chars |
 | dry-run | 支持（只记录命令，不执行） |
