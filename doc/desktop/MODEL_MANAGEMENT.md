@@ -7,6 +7,12 @@
 
 模型管理把原“大模型设置”和“翻译模型设置”合并为“润色/翻译设置”。两种任务共用厂商、接口地址、模型和 API Token，通过 Prompt 区分纠错、改写或翻译；目标语言与风格是同一配置的补充字段。旧版独立翻译字段保留在持久化类型中用于兼容读取，但不再形成第二套 UI 和请求配置。
 
+## 后端驱动的 ASR 模型发现
+
+ASR 模型行和离线/实时下拉不再维护前端引擎枚举。页面刷新时读取 `/v1/models`，根据每个模型的 `extra.model_modes`（`offline` / `streaming`）生成列表和“设为离线/实时”操作；旧后端只返回 `supports_streaming` 时仍有兼容回退。未知新引擎使用后端 `model_name`、`device` 和 `compute_type` 生成初始配置，Zustand 规范化也会保留动态配置键。
+
+因此后端注册新 ASR engine 并正确返回能力元数据后，桌面端无需再修改引擎枚举或流式引擎判断。
+
 ## `signal is aborted without reason`
 
 旧版模型列表请求固定在 8 秒后调用不带 reason 的 `AbortController.abort()`。Electron/Chromium 会把它直接格式化为 `signal is aborted without reason`。React StrictMode 的首次双 effect、切换后端地址或连续点击刷新会增加出现次数，但模型之间没有共享 signal。

@@ -521,7 +521,8 @@ export function VoiceChangerPage() {
     pitch: settings.higgsTtsPitch,
     expressiveness: settings.higgsTtsExpressiveness,
     initialCodecChunkFrames: settings.higgsTtsInitialCodecChunkFrames,
-    speculativePartialTts: true
+    speculativePartialTts: true,
+    archive: settings.allowServerDataCollection
   }), [
     settings.audioInputDeviceId,
     settings.defaultLanguage,
@@ -549,6 +550,7 @@ export function VoiceChangerPage() {
     settings.higgsTtsPitch,
     settings.higgsTtsExpressiveness,
     settings.higgsTtsInitialCodecChunkFrames,
+    settings.allowServerDataCollection,
     settings.streamingEngine
   ])
 

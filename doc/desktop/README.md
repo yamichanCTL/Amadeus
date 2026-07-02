@@ -7,10 +7,13 @@
 > - [Higgs TTS 与变声器](TTS_VOICE.md)
 > - [远程 Higgs TTS 与开发调试台](REMOTE_TTS_AND_DEBUG.md)
 > - [模型管理稳定性与 CUDA](MODEL_MANAGEMENT.md)
+> - [当日总结、数据留存与桌面生命周期](SUMMARY_PRIVACY_AND_LIFECYCLE.md)
 > - [ASR 立即回填与纯麦克风采集测试报告](../reports/2026-06-28-asr-fill-pure-mic-test-report.md)
 > - [连续离线 ASR 自动回填延迟测试报告](../reports/2026-06-29-consecutive-offline-asr-fill-latency-report.md)
 > - [麦克风收音连续性测试报告](../reports/2026-06-29-microphone-capture-continuity-report.md)
 > - [桌面 ASR 交互与自适应 UI 验证报告](../reports/2026-06-30-desktop-asr-ui-e2e-report.md)
+> - [总结、隐私、模型、退出与输入验证报告](../reports/2026-07-02-desktop-summary-privacy-model-exit-input-report.md)
+> - [润色归档、Both 总结与紧凑窗口验证报告](../reports/2026-07-02-archive-polish-both-summary-compact-window-report.md)
 
 ## 范围
 
@@ -32,8 +35,11 @@
 - [远程 Higgs TTS 与开发调试台](REMOTE_TTS_AND_DEBUG.md)
 - [模型管理稳定性与 CUDA](MODEL_MANAGEMENT.md)
 - [输入、浮窗与跨应用注入](INPUT_AND_OVERLAYS.md)
+- [当日总结、数据留存与桌面生命周期](SUMMARY_PRIVACY_AND_LIFECYCLE.md)
 - [ASR 立即回填与纯麦克风采集测试报告](../reports/2026-06-28-asr-fill-pure-mic-test-report.md)
 - [连续离线 ASR 自动回填延迟测试报告](../reports/2026-06-29-consecutive-offline-asr-fill-latency-report.md)
 - [麦克风收音连续性测试报告](../reports/2026-06-29-microphone-capture-continuity-report.md)
 - [桌面 ASR 交互与自适应 UI 验证报告](../reports/2026-06-30-desktop-asr-ui-e2e-report.md)
+- [总结、隐私、模型、退出与输入验证报告](../reports/2026-07-02-desktop-summary-privacy-model-exit-input-report.md)
+- [润色归档、Both 总结与紧凑窗口验证报告](../reports/2026-07-02-archive-polish-both-summary-compact-window-report.md)
 - [ASRAPP Frontend 桌面端](../asrapp/frontend/DESKTOP.md)

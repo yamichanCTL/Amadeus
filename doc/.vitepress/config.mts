@@ -44,6 +44,7 @@ export default defineConfig({
             { text: '桌面端', link: '/desktop/README' },
             { text: '语音识别', link: '/desktop/SPEECH_RECOGNITION' },
             { text: '输入、浮窗与注入', link: '/desktop/INPUT_AND_OVERLAYS' },
+            { text: '总结、隐私与生命周期', link: '/desktop/SUMMARY_PRIVACY_AND_LIFECYCLE' },
             { text: 'TTS 音色与参数', link: '/desktop/TTS_VOICE' },
             { text: '开发环境', link: '/development/README' },
           ]

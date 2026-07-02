@@ -292,6 +292,7 @@ export type ArchiveSummaryRequest = {
   model: string
   base_url: string
   api_token: string
+  prompt?: string
   style?: string
   max_input_chars?: number
 }

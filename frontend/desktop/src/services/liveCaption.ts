@@ -107,6 +107,7 @@ class LiveCaptionService {
         deviceId: useSpeaker ? undefined : (settings.audioInputDeviceId || undefined),
         inputStream: preparedInput,
         userId: settings.userId || undefined,
+        archive: settings.allowServerDataCollection,
       })
       state.updateSettings({ liveCaptionEnabled: true })
       window.electronAPI?.notifyLiveCaptionState(true)

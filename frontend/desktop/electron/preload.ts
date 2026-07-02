@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimize: () => ipcRenderer.send('win:minimize'),
   maximize: () => ipcRenderer.send('win:maximize'),
   close: () => ipcRenderer.send('win:close'),
+  setKeepRunningInBackground: (enabled: boolean) => ipcRenderer.send('app:keepRunningInBackground:set', enabled),
   openAudioDialog: () => ipcRenderer.invoke('dialog:openAudio'),
   openDirectoryDialog: () => ipcRenderer.invoke('dialog:openDirectory'),
   getDefaultArchiveDir: () => ipcRenderer.invoke('app:defaultArchiveDir'),

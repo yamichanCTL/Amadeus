@@ -9,6 +9,20 @@ function localDateValue(date = new Date()) {
   return new Date(date.getTime() - offsetMs).toISOString().slice(0, 10)
 }
 
+export function localTimeValue(date = new Date()) {
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+export function defaultSummaryTimeRange(date = new Date()) {
+  return { startTime: '00:00', endTime: localTimeValue(date) }
+}
+
+export const SUMMARY_CATEGORY_OPTIONS = [
+  { value: '', label: 'Both / 所有类型' },
+  { value: '一段语音转写', label: '离线识别' },
+  { value: '实时转录', label: '实时识别' },
+] as const
+
 function formatStat(value: number) {
   return Number.isFinite(value) ? value.toLocaleString() : '0'
 }
@@ -19,9 +33,10 @@ export function SummaryPage() {
   const updateSettings = useASRStore((state) => state.updateSettings)
   const [date, setDate] = useState(localDateValue())
   const [userId, setUserId] = useState('dsm')
-  const [category, setCategory] = useState('实时转写')
-  const [startTime, setStartTime] = useState('')
-  const [endTime, setEndTime] = useState('')
+  const [category, setCategory] = useState('实时转录')
+  const initialTimeRange = useMemo(() => defaultSummaryTimeRange(), [])
+  const [startTime, setStartTime] = useState(initialTimeRange.startTime)
+  const [endTime, setEndTime] = useState(initialTimeRange.endTime)
   const [maxInputChars, setMaxInputChars] = useState(24000)
   const [summary, setSummary] = useState<ArchiveSummaryResult | null>(null)
   const [loading, setLoading] = useState(false)
@@ -50,6 +65,7 @@ export function SummaryPage() {
         model: settings.llmModel,
         base_url: settings.llmBaseUrl,
         api_token: settings.llmApiToken,
+        prompt: settings.summaryPrompt,
         style: settings.llmStyle || '工作纪要',
         max_input_chars: maxInputChars
       })
@@ -111,8 +127,12 @@ export function SummaryPage() {
               <input value={userId} placeholder="留空为全部用户" onChange={(event) => setUserId(event.target.value)} />
             </label>
             <label>
-              类别
-              <input value={category} placeholder="留空为全部类别" onChange={(event) => setCategory(event.target.value)} />
+              总结类型
+              <select value={category} onChange={(event) => setCategory(event.target.value)}>
+                {SUMMARY_CATEGORY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
             </label>
             <label>
               开始时间
@@ -134,6 +154,16 @@ export function SummaryPage() {
               />
             </label>
           </div>
+          <label className="polish-prompt-field">
+            总结 Prompt
+            <textarea
+              rows={5}
+              value={settings.summaryPrompt}
+              placeholder="说明总结重点、格式或希望回答的问题"
+              onChange={(event) => updateSettings({ summaryPrompt: event.target.value })}
+            />
+            <small>Prompt 会放在时间范围和 ASR 原文之前，主动与被动总结共用。</small>
+          </label>
           <div className="summary-provider">
             <span>模型</span>
             <strong>{settings.llmModel || providerPreset.modelPlaceholder}</strong>
@@ -214,8 +244,12 @@ export function SummaryPage() {
             <input value={settings.passiveSummaryUserId} onChange={(event) => updateSettings({ passiveSummaryUserId: event.target.value })} />
           </label>
           <label>
-            类别
-            <input value={settings.passiveSummaryCategory} onChange={(event) => updateSettings({ passiveSummaryCategory: event.target.value })} />
+            总结类型
+            <select value={settings.passiveSummaryCategory} onChange={(event) => updateSettings({ passiveSummaryCategory: event.target.value })}>
+              {SUMMARY_CATEGORY_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
           </label>
           <label>
             开始时间

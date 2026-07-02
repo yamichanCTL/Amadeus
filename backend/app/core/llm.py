@@ -7,6 +7,7 @@ OpenAI-compatible text post-processing client.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import AsyncIterator
 
@@ -26,6 +27,8 @@ from app.schemas.llm import (
     LLMTextResult,
     LLMSpeechRequest,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _chat_completions_url(base_url: str) -> str:
@@ -183,6 +186,21 @@ async def run_auto_processing(
     return outputs, "; ".join(errors) if errors else None
 
 
+def log_asr_ai_polish_result(task_id: str, outputs: object) -> None:
+    """Log the user-requested post-polish result without request credentials."""
+    polish = getattr(outputs, "polish", None)
+    text = getattr(polish, "text", None)
+    if not isinstance(text, str) or not text.strip():
+        return
+    polished = text.strip()
+    logger.info(
+        "Task %s: ASR AI polish result (%d chars): %s",
+        task_id,
+        len(polished),
+        polished,
+    )
+
+
 async def list_provider_models(request: LLMModelsRequest) -> LLMModelsResult:
     started = time.perf_counter()
     headers = {
@@ -302,7 +320,7 @@ async def summarize_archive(request: ArchiveSummaryRequest) -> ArchiveSummaryRes
                     "不要补充未出现的信息。"
                 ),
                 user_prompt=(
-                    f"下面是第 {index}/{len(chunks)} 段按时间排序的 ASR 文本。"
+                    f"下面是第 {index}/{len(chunks)} 段按时间排序的归档 label。"
                     "请压缩为不超过 900 字的中文要点，保留人物、事项、决定、待办和关键时间。\n\n"
                     f"{chunk}"
                 ),
@@ -386,7 +404,7 @@ async def summarize_archive_stream(request: ArchiveSummaryRequest) -> AsyncItera
                     "不要补充未出现的信息。"
                 ),
                 user_prompt=(
-                    f"第 {index}/{len(chunks)} 段 ASR 文本已只保留时间戳和文本。"
+                    f"第 {index}/{len(chunks)} 段归档记录已只保留开始时间、结束时间和一个文本 label。"
                     "压缩为不超过 900 字中文要点，保留事项、决定、待办和关键时间。\n\n"
                     f"{chunk}"
                 ),
@@ -445,7 +463,8 @@ def _summary_user_prompt(request: ArchiveSummaryRequest, final_input: str) -> st
     return (
         f"Prompt：{prompt}\n\n"
         f"时间范围：{request.date} {_time_range_label(request.start_time, request.end_time) or '全天'}。\n"
-        "下面只包含时间戳和 ASR 文本。请严格围绕 Prompt 回答，输出 Markdown：\n"
+        "下面只包含开始时间、结束时间和单条文本 label；label 优先使用 AI 润色结果。"
+        "请严格围绕 Prompt 回答，输出 Markdown：\n"
         "## 总览\n## 关键要点\n## 决定与待办\n## 时间线\n"
         "如果没有决定或待办，写“无”。\n\nASR：\n"
         f"{final_input}"

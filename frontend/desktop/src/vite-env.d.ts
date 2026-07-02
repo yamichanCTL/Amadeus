@@ -33,6 +33,7 @@ declare global {
       minimize: () => void
       maximize: () => void
       close: () => void
+      setKeepRunningInBackground: (enabled: boolean) => void
       openAudioDialog: () => Promise<string[]>
       openDirectoryDialog: () => Promise<string>
       getDefaultArchiveDir: () => Promise<string>

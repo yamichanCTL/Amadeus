@@ -20,9 +20,9 @@ import path from 'node:path'
 import os from 'node:os'
 import { runAmadeusWindowsE2E } from './e2e'
 import { LatestTaskQueue } from './latest-task-queue'
+import { runTextInjectionWithRecovery, TextInjectionCancelledError } from './text-inject-retry'
+import { closeAction } from './close-behavior'
 import { calculateInitialWindowBounds } from './window-layout'
-
-type ClosePreference = 'ask' | 'background' | 'quit'
 
 type CaptionOverlayOptions = {
   fontSize: number
@@ -78,6 +78,7 @@ let captionOverlay: BrowserWindow | null = null
 let statusOverlayPos: { x: number; y: number } | null = null
 let tray: Tray | null = null
 let forceQuit = false
+let keepRunningInBackground = false
 let mouseHook: ChildProcessWithoutNullStreams | null = null
 let keyboardHook: ChildProcessWithoutNullStreams | null = null
 let textInjectHelper: ChildProcessWithoutNullStreams | null = null
@@ -101,6 +102,7 @@ let captionSettingsRequestCount = 0
 let statusCancelRequestCount = 0
 let statusSubmitRequestCount = 0
 const TEXT_INJECT_TIMEOUT_MS = 475
+const TEXT_INJECT_READY_TIMEOUT_MS = 1_500
 const textInjectDebugEvents: string[] = []
 
 app.setName('Amadeus')
@@ -118,23 +120,6 @@ if (isE2EMode && e2eUserData) {
   app.setPath('userData', path.resolve(e2eUserData))
 } else if (isDev) {
   app.setPath('userData', path.join(os.tmpdir(), 'amadeus-desktop-dev'))
-}
-
-const prefPath = () => path.join(app.getPath('userData'), 'preferences.json')
-
-async function readClosePreference(): Promise<ClosePreference> {
-  try {
-    const raw = await fs.readFile(prefPath(), 'utf8')
-    const parsed = JSON.parse(raw) as { closePreference?: ClosePreference }
-    return parsed.closePreference ?? 'ask'
-  } catch {
-    return 'ask'
-  }
-}
-
-async function writeClosePreference(closePreference: ClosePreference) {
-  await fs.mkdir(app.getPath('userData'), { recursive: true })
-  await fs.writeFile(prefPath(), JSON.stringify({ closePreference }, null, 2), 'utf8')
 }
 
 function createWindow() {
@@ -179,49 +164,15 @@ function createWindow() {
     mainWindow = null
   })
 
-  mainWindow.on('close', async (event) => {
-    // Always prevent default synchronously — Electron requires this
-    // before the first await, otherwise the window may be destroyed.
-    // We decide below whether to actually close, hide, or ask.
+  mainWindow.on('close', (event) => {
     if (!isWindows || forceQuit) return
-
     event.preventDefault()
-
-    const preference = await readClosePreference()
-
-    if (preference === 'quit') {
-      forceQuit = true
-      mainWindow?.close()
-      return
-    }
-
-    if (preference === 'background') {
+    if (closeAction(keepRunningInBackground) === 'hide') {
       mainWindow?.hide()
       return
     }
-
-    // preference === 'ask' (default)
-    const result = await dialog.showMessageBox(mainWindow!, {
-      type: 'question',
-      buttons: ['后台运行', '退出', '取消'],
-      defaultId: 0,
-      cancelId: 2,
-      checkboxLabel: '记住我的选择',
-      title: '关闭 Amadeus',
-      message: '要让 Amadeus 继续在后台运行吗？'
-    })
-
-    if (result.checkboxChecked && result.response !== 2) {
-      await writeClosePreference(result.response === 0 ? 'background' : 'quit')
-    }
-
-    if (result.response === 0) {
-      mainWindow?.hide()
-    } else if (result.response === 1) {
-      forceQuit = true
-      mainWindow?.close()
-    }
-    // response === 2 (取消): nothing — close was already prevented
+    forceQuit = true
+    app.quit()
   })
 }
 
@@ -945,7 +896,7 @@ while (($line = [Console]::In.ReadLine()) -ne $null) {
 function stopTextInjectHelper() {
   if (textInjectPending) {
     clearTimeout(textInjectPending.timer)
-    textInjectPending.reject(new Error('文本注入 helper 已停止'))
+    textInjectPending.reject(new TextInjectionCancelledError())
     textInjectPending = null
   }
   textInjectHelper?.kill()
@@ -962,7 +913,17 @@ function ensureTextInjectHelper() {
   const helper = spawn('powershell.exe', ['-STA', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true })
   textInjectHelper = helper
   textInjectHelperReady = new Promise<boolean>((resolve) => { settleTextInjectHelperReady = resolve })
+  const readyPromise = textInjectHelperReady
   let readySeen = false
+  const readyTimer = setTimeout(() => {
+    if (textInjectHelper !== helper || readySeen) return
+    console.warn('[text:inject] helper ready handshake timed out')
+    textInjectHelper = null
+    settleTextInjectHelperReady?.(false)
+    settleTextInjectHelperReady = null
+    textInjectHelperReady = null
+    helper.kill()
+  }, TEXT_INJECT_READY_TIMEOUT_MS)
 
   helper.stdout.on('data', (data: Buffer) => {
     if (textInjectHelper !== helper) return
@@ -971,6 +932,7 @@ function ensureTextInjectHelper() {
       if (!line) continue
       if (!readySeen && line.includes('"ready"')) {
         readySeen = true
+        clearTimeout(readyTimer)
         if (isE2EMode) textInjectDebugEvents.push('helper-ready')
         settleTextInjectHelperReady?.(true)
         settleTextInjectHelperReady = null
@@ -1006,6 +968,7 @@ function ensureTextInjectHelper() {
   })
   helper.on('error', (error) => {
     if (textInjectHelper !== helper) return
+    clearTimeout(readyTimer)
     textInjectHelper = null
     settleTextInjectHelperReady?.(false)
     settleTextInjectHelperReady = null
@@ -1018,6 +981,7 @@ function ensureTextInjectHelper() {
   })
   helper.on('exit', () => {
     if (textInjectHelper !== helper) return
+    clearTimeout(readyTimer)
     textInjectHelper = null
     settleTextInjectHelperReady?.(false)
     settleTextInjectHelperReady = null
@@ -1029,7 +993,7 @@ function ensureTextInjectHelper() {
       textInjectPending = null
     }
   })
-  return textInjectHelperReady!
+  return readyPromise
 }
 
 async function injectTextOnce(text: string) {
@@ -1127,7 +1091,13 @@ async function injectText(text: string) {
     console.warn('[text:inject] skipping empty text injection')
     return false
   }
-  return await textInjectQueue.run(() => injectTextOnce(text))
+  // Preserve the result even when PowerShell/UIAutomation cannot start after
+  // a reboot. A transient helper failure is recovered with one clean restart.
+  clipboard.writeText(text)
+  return await textInjectQueue.run(() => runTextInjectionWithRecovery(
+    () => injectTextOnce(text),
+    stopTextInjectHelper,
+  ))
 }
 
 function registerIpc() {
@@ -1138,6 +1108,9 @@ function registerIpc() {
     else mainWindow.maximize()
   })
   ipcMain.on('win:close', () => mainWindow?.close())
+  ipcMain.on('app:keepRunningInBackground:set', (_event, enabled: boolean) => {
+    keepRunningInBackground = enabled === true
+  })
 
   ipcMain.handle('dialog:openAudio', async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {

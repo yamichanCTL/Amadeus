@@ -4,11 +4,9 @@ import { AudioRecorder } from '@/services/audio'
 import { getProviderPreset, LLM_PROVIDER_PRESETS, type LLMProvider } from '@/services/llmProviders'
 import { useASRStore, type AsrModelConfig } from '@/store/useASRStore'
 
-const builtInEngines = ['fireredasr2', 'sensevoice', 'qwen3asr', 'whisper', 'x-asr']
-const streamingEngines = ['x-asr']
-const offlineEngines = builtInEngines.filter((engine) => !streamingEngines.includes(engine))
 const xAsrVariants = [160, 480, 960, 1920] as const
 type ModelTab = 'asr' | 'llm' | 'tts'
+type AsrModelMode = 'offline' | 'streaming'
 
 const defaultAsrConfigs: Record<string, AsrModelConfig> = {
   fireredasr2: { modelName: 'FireRedASR2-AED', device: 'cuda', computeType: '', extraJson: '{"beam_size":3,"batch_size":1}' },
@@ -24,6 +22,23 @@ const engineLabels: Record<string, string> = {
   qwen3asr: 'Qwen3-ASR',
   whisper: 'Whisper',
   'x-asr': 'X-ASR'
+}
+
+export function getAsrModelModes(model: ModelInfo): AsrModelMode[] {
+  const advertised = Array.isArray(model.extra?.model_modes)
+    ? model.extra.model_modes.filter((mode): mode is AsrModelMode => mode === 'offline' || mode === 'streaming')
+    : []
+  if (advertised.length) return Array.from(new Set(advertised))
+  return model.extra?.supports_streaming === true ? ['streaming'] : ['offline']
+}
+
+function fallbackAsrConfig(engine: string, model?: ModelInfo): AsrModelConfig {
+  return defaultAsrConfigs[engine] || {
+    modelName: model?.model_name || engine,
+    device: model?.device || 'cuda',
+    computeType: model?.compute_type || '',
+    extraJson: '{}',
+  }
 }
 
 const higgsEmotionOptions = [
@@ -161,13 +176,22 @@ export function ModelsPage() {
     try {
       setError('')
       const nextModels = await api.models({ signal: controller.signal, timeoutMs: 20_000 })
-      if (refreshControllerRef.current === controller) setModels(nextModels)
+      if (refreshControllerRef.current === controller) {
+        setModels(nextModels)
+        const latest = useASRStore.getState().settings
+        const discoveredOffline = nextModels.filter((model) => getAsrModelModes(model).includes('offline')).map((model) => model.engine)
+        const discoveredStreaming = nextModels.filter((model) => getAsrModelModes(model).includes('streaming')).map((model) => model.engine)
+        updateSettings({
+          ...(discoveredOffline.length && !discoveredOffline.includes(latest.offlineEngine) ? { offlineEngine: discoveredOffline[0] } : {}),
+          ...(discoveredStreaming.length && !discoveredStreaming.includes(latest.streamingEngine) ? { streamingEngine: discoveredStreaming[0] } : {}),
+        })
+      }
     } catch (modelError) {
       if (!isAbortError(modelError)) setError(describeRequestError(modelError, '模型列表获取失败'))
     } finally {
       if (refreshControllerRef.current === controller) refreshControllerRef.current = null
     }
-  }, [api, backendReady, setModels])
+  }, [api, backendReady, setModels, updateSettings])
 
   useEffect(() => {
     void refresh()
@@ -221,18 +245,12 @@ export function ModelsPage() {
   }, [])
 
   const modelList = Array.isArray(models) ? models : []
-  const rows: ModelInfo[] = builtInEngines.map((engine) => modelList.find((model) => model.engine === engine) || {
-    engine,
-    model_name: settings.asrModelConfigs[engine]?.modelName || defaultAsrConfigs[engine]?.modelName || engine,
-    is_loaded: false,
-    device: null,
-    compute_type: null,
-    languages: [],
-    extra: {}
-  })
+  const rows: ModelInfo[] = modelList
+  const offlineEngines = rows.filter((model) => getAsrModelModes(model).includes('offline')).map((model) => model.engine)
+  const streamingEngines = rows.filter((model) => getAsrModelModes(model).includes('streaming')).map((model) => model.engine)
 
   const updateAsrConfig = (engine: string, patch: Partial<AsrModelConfig>) => {
-    const current = settings.asrModelConfigs[engine] || defaultAsrConfigs[engine]
+    const current = settings.asrModelConfigs[engine] || fallbackAsrConfig(engine, rows.find((model) => model.engine === engine))
     updateSettings({
       asrModelConfigs: {
         ...settings.asrModelConfigs,
@@ -242,7 +260,7 @@ export function ModelsPage() {
   }
 
   const asrLoadPayload = (engine: string) => {
-    const config = settings.asrModelConfigs[engine] || defaultAsrConfigs[engine]
+    const config = settings.asrModelConfigs[engine] || fallbackAsrConfig(engine, rows.find((model) => model.engine === engine))
     let extra: Record<string, unknown> = {}
     try {
       extra = config.extraJson.trim() ? JSON.parse(config.extraJson) as Record<string, unknown> : {}
@@ -679,7 +697,8 @@ export function ModelsPage() {
             </div>
             <div className="model-table">
               {rows.map((model) => {
-                const config = settings.asrModelConfigs[model.engine] || defaultAsrConfigs[model.engine]
+                const config = settings.asrModelConfigs[model.engine] || fallbackAsrConfig(model.engine, model)
+                const modelModes = getAsrModelModes(model)
                 const isExpanded = expandedAsrEngine === model.engine
                 return (
                   <article key={model.engine} className={isExpanded ? 'model-row expanded' : 'model-row'}>
@@ -687,19 +706,23 @@ export function ModelsPage() {
                       <div>
                         <strong>{engineLabels[model.engine] || model.engine}</strong>
                         <span>{model.model_name}</span>
-                        <small>{Boolean(model.extra?.supports_streaming) || model.engine === 'x-asr' ? '真流式模型' : '离线模型'}</small>
+                        <small>{modelModes.map((mode) => mode === 'streaming' ? '实时识别' : '离线识别').join(' / ')}</small>
                       </div>
                       <span className={model.is_loaded ? 'loaded' : 'unloaded'}>{model.is_loaded ? '已加载' : '未加载'}</span>
                       <span>{model.device || config.device || '-'}</span>
                       <span>{model.compute_type || config.computeType || '-'}</span>
                     </button>
                     <div className="row-actions">
-                      <button type="button" onClick={() => model.engine === 'x-asr'
-                        ? updateSettings({ streamingEngine: model.engine })
-                        : updateSettings({ offlineEngine: model.engine })}>
-                        {(model.engine === 'x-asr' && settings.streamingEngine === model.engine)
-                          || (model.engine !== 'x-asr' && settings.offlineEngine === model.engine) ? '使用中' : model.engine === 'x-asr' ? '设为实时' : '设为离线'}
-                      </button>
+                      {modelModes.includes('offline') && (
+                        <button type="button" onClick={() => updateSettings({ offlineEngine: model.engine })}>
+                          {settings.offlineEngine === model.engine ? '离线使用中' : '设为离线'}
+                        </button>
+                      )}
+                      {modelModes.includes('streaming') && (
+                        <button type="button" onClick={() => updateSettings({ streamingEngine: model.engine })}>
+                          {settings.streamingEngine === model.engine ? '实时使用中' : '设为实时'}
+                        </button>
+                      )}
                       {model.is_loaded ? (
                         <button type="button" disabled={busyEngines.has(model.engine)} onClick={() => unload(model.engine)}>卸载</button>
                       ) : (

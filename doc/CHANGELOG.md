@@ -4,6 +4,32 @@
 > **子文档**:
 > - [桌面端文档](desktop/README.md)
 
+## [2026-07-02] 提高初始窗口上限并保持居中
+
+- **类型**: fix / test / docs
+- **描述**: Electron 主窗口初始尺寸上限由 1180×760 调整为 1600×1000，继续按工作区约 78% 宽、82% 高自适应并居中；新增带偏移大工作区的尺寸上限和中心坐标回归测试。
+- **影响范围**: `frontend/desktop/electron/window-layout.ts`、窗口边界测试、桌面窗口文档
+- **验证**: Desktop Vitest 19 files / 73 tests；Renderer/Electron TypeScript、Vite 生产构建、VitePress 与 staged/unstaged diff check 通过。
+- **Plan**: [链接到 plan 文件](plans/2026-07-02-initial-window-1600x1000.md)
+
+## [2026-07-02] 修复 AI 润色归档、Both 总结与初始窗口尺寸
+
+- **类型**: fix / feat / test / docs
+- **描述**: 服务端同步/异步离线 ASR 归档新增脱敏 `llm_outputs` 与 `labels.ai_polished`；总结类型增加 `Both / 所有类型`，后端仅把开始时间、结束时间和一个优先 AI 润色的 label 发送给 LLM；初始窗口从接近全屏改为最大 1180×760 的紧凑居中布局。另从 SQLite 任务结果回填用户指定的 22:11:14 历史归档。
+- **影响范围**: `backend/app/{core/archive.py,core/llm.py,api/v1/transcribe.py,tasks/asr_task.py}`、`frontend/desktop/{electron/window-layout.ts,src/pages/Summary.tsx,src/store/useASRStore.ts}`、定向测试与桌面文档
+- **验证**: Desktop Vitest 19 files / 72 tests；Backend 定向 9 passed；Renderer/Electron TypeScript、Vite、Python compileall、VitePress 与 diff check 通过。指定归档提取实测只返回 `[22:11:14-22:11:14] 你看起来不会记路啊`。
+- **Plan**: [链接到 plan 文件](plans/2026-07-02-archive-polish-both-summary-compact-window.md)
+- **报告**: [润色归档、Both 总结与紧凑窗口验证报告](reports/2026-07-02-archive-polish-both-summary-compact-window-report.md)
+
+## [2026-07-02] 桌面总结、隐私、模型发现、退出与输入可靠性
+
+- **类型**: feat / fix / test / docs
+- **描述**: ASR 同步/异步后处理日志新增 AI 润色最终文本；当日总结改为离线/实时固定选择，默认 `00:00` 至当前时间并新增持久化 Prompt；服务端 HTTP/Celery/WebSocket 调试归档全部改为严格 opt-in；模型管理按 `/v1/models` 能力动态发现新引擎；关闭窗口默认真正退出，只有显式启用后台运行才隐藏；Windows 文本 helper 首次异常时自动重建重试并预先保留剪贴板。
+- **影响范围**: `backend/app/{api,core,schemas,tasks}`、`frontend/desktop/{electron,src}`、定向测试与 `doc/desktop/`
+- **验证**: Desktop Vitest 19 files / 71 tests；Backend 定向 6 passed；Renderer/Electron TypeScript、Vite 生产构建和 Python compileall 通过。Windows 重启后真实输入与打包进程退出仍需 Windows 真机 E2E。
+- **Plan**: [链接到 plan 文件](plans/2026-07-02-desktop-asr-summary-privacy-model-exit-input.md)
+- **报告**: [总结、隐私、模型、退出与输入验证报告](reports/2026-07-02-desktop-summary-privacy-model-exit-input-report.md)
+
 ## [2026-06-30] 桌面 ASR 自动增强回填、响应式 UI 与复制卡顿修复
 
 - **类型**: fix / refactor / test / docs

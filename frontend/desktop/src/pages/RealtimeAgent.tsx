@@ -1131,7 +1131,8 @@ export function RealtimeAgentPage() {
           : audioRelayMixer.isActive()
             ? audioRelayMixer.createInputStream()
             : recorderRef.current.takePreparedStream(settings.audioInputDeviceId || undefined),
-        userId: settings.userId || undefined
+        userId: settings.userId || undefined,
+        archive: settings.allowServerDataCollection
       })
       updateSettings({ agentHandsFree: true })
     } catch (handsFreeError) {

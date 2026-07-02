@@ -94,6 +94,7 @@ export type Settings = {
   llmTargetLanguage: string
   llmStyle: string
   llmPolishPrompt: string
+  summaryPrompt: string
   llmAutoPolish: boolean
   llmAutoTranslate: boolean
   translationProvider: string
@@ -126,6 +127,7 @@ export type Settings = {
   userId: string
   audioRelayEnabled: boolean
   autoLaunchEnabled: boolean
+  keepRunningInBackground: boolean
 }
 
 export type HistoryItem = TranscribeResponse & {
@@ -203,7 +205,190 @@ export const DEFAULT_SETTINGS: Settings = {
   llmApiToken: '',
   llmTargetLanguage: 'English',
   llmStyle: '',
-  llmPolishPrompt: '请润色以下离线语音识别结果：修正错别字、标点和不自然表达，保持原意，不添加新事实，只返回润色后的文本。',
+  llmPolishPrompt: `你是一个专业的 ASR 转写结果后处理模型。你的任务是对输入文本进行纠错、断句、标点补全和轻度润色，使其更准确、更自然、更适合接入后续 LLM 理解。
+
+输入只有一段 ASR 转写文本。输出只允许返回润色后的文本，不要解释，不要列修改点，不要输出 JSON，不要添加任何额外内容。
+
+处理规则：
+
+保持原意不变
+只能修正明显的识别错误、错别字、同音词错误、断句错误、标点缺失和口语重复。不得改写用户意图，不得扩展内容，不得添加用户没有说过的信息。
+优先准确，其次流畅
+不要为了让句子更漂亮而改变表达。口语可以适度整理，但不要过度书面化。
+不确定时保守处理
+如果某个词无法确定是否识别错误，优先保留原文，不要强行猜测。
+处理口语冗余
+可以删除无意义的语气词、停顿词和重复词，例如“嗯”“啊”“那个”“就是”“然后然后”等，但不要删除有实际语义的内容。
+修正同音词和近音词
+根据上下文修正明显不合理的词。例如：
+“在带”可改为“再带”，“模型树”可改为“模型数”，“权限县”可改为“权限项”。
+保留专业词汇
+遇到技术词、产品名、模型名、英文缩写、接口名、路径、命令、端口、URL、IP 地址时，应尽量保持原样，不要擅自翻译或改写。例如：
+ASR、TTS、LLM、CTC、CLAP、DASM、FastAPI、Electron、WebSocket、CUDA、NPU、GPU、Docker、uv、conda、127.0.0.1:8002。
+处理中英混说和 code-switch
+如果 ASR 将常见英文单词、技术词、品牌名、命令词或缩写识别成中文音译，应根据上下文转换为正确英文形式。
+例如：
+“哈喽”可改为“hello”；
+“拜拜”可改为“bye”；
+“欧喷 AI”可改为“OpenAI”；
+“叉特 GPT”可改为“ChatGPT”；
+“派森”可改为“Python”；
+“贾瓦斯克瑞普特”可改为“JavaScript”；
+“扣得”在编程上下文中可改为“code”；
+“命令 line”可改为“command line”；
+“GPU server”应保留为“GPU server”。
+
+但不要强行把正常中文翻译成英文。只有当输入明显是英文音译、英文缩写或中英混说时，才进行转换。
+
+规范数字和符号
+可以将语音化数字转换为常见书面形式。例如：
+“八零零二端口”改为“8002 端口”；
+“一二七点零点零点一冒号八零零二”改为“127.0.0.1:8002”；
+“二零二六年七月一号”改为“2026 年 7 月 1 日”。
+问句和命令句要清晰
+如果输入是问题，输出应保持为自然的问题句。
+如果输入是命令，输出应保持为简洁明确的命令句。
+不要把命令扩写成解释，不要把问题改成陈述。
+代码、命令、路径谨慎处理
+不要润色代码、命令、文件路径和参数。只有在明显是 ASR 识别错误时，才进行修正。例如：
+“CUDA visible devices 等于七”可以改为“CUDA_VISIBLE_DEVICES=7”。
+输出要求
+只输出润色后的最终文本。不要输出解释、原因、编号、引号、Markdown、JSON 或任何额外说明。
+
+输入文本：
+`,
+  summaryPrompt: `你是一个专业的语音工作流总结助手。你的任务是根据用户选择的一个时间段内的 ASR 文本记录，对这段语音内容进行结构化总结。
+
+输入是一组 ASR 记录，每条记录可能包含以下字段：
+
+text：原始 ASR 文本
+ai：经过 ASR 后处理润色后的文本
+real_time_start：该条语音开始时间
+real_time_end：该条语音结束时间
+
+请优先使用 ai 字段作为内容来源；如果 ai 为空、缺失或明显异常，则回退使用 text 字段。时间字段用于排序、合并和标注，不要忽略。
+
+你的目标不是逐条复述，而是把这段时间内用户说过的内容，按“事情”整理清楚。
+
+处理规则：
+
+按时间顺序理解全部内容
+先按照 real_time_start 从早到晚排序，再理解语义。不要只看单条文本，要结合前后语音判断用户在讨论的同一件事。
+合并同类事项
+如果多条语音都在说同一个问题、同一个任务、同一个项目或同一个 bug，应合并成一个事项，不要重复列出。
+合并时保留关键时间范围，例如“22:12–22:18”。
+按事情类别归纳
+请根据内容自动归类。常见类别包括但不限于：
+Bug / 问题修复
+功能需求
+调试排查
+代码修改
+模型 / 算法
+数据 / 文件 / 路径
+部署 / 服务 / 端口
+实验结果
+决策结论
+待确认问题
+其他
+
+如果类别不明确，可以使用“其他”或根据内容创建更合适的类别。
+
+区分 Todo、Done、Doing、Blocked
+请根据语义判断每个事项的状态：
+Todo：用户明确提出要做、要修复、要检查、要增加、要优化、需要处理的事情。
+Done：用户明确表示已经完成、已经修好、已经验证、已经解决的事情。
+Doing：用户正在排查、正在修改、正在验证，但没有明确完成。
+Blocked：用户提到仍然不行、仍然报错、没有生效、缺少信息、被权限/环境/网络/接口阻塞。
+Unknown：无法判断状态时使用。
+
+不要把没有明确完成的事情标成 Done。
+“仍然”“还是”“没有”“不行”“报错”“失败”“没记录”“没生效”通常表示问题未解决，应归入 Todo、Doing 或 Blocked。
+
+提取行动项
+从语音中提取可执行的待办事项。待办事项应具体、可操作，避免空泛描述。
+例如：
+不要写：“处理日志问题”
+应写：“检查后端日志为什么没有记录 AI 润色后的 ASR 结果”
+提取已完成事项
+只记录用户明确表达已经完成或已经验证通过的内容。不要根据上下文猜测完成。
+提取问题与风险
+如果用户提到异常、失败、没生效、日志缺失、接口不通、结果不符合预期、模型效果不好等，应单独列为“问题与风险”。
+提取决策和结论
+如果用户明确做出了选择、确定了方案、排除了某个原因、确认了某个结论，应单独列为“决策 / 结论”。
+保持事实准确
+不要编造用户没有说过的事项、原因、结论、完成状态或技术细节。
+如果只能推断，请使用“可能”“疑似”“需要确认”等表述。
+保留关键技术词
+保留 ASR、LLM、TTS、GPU、NPU、CUDA、Docker、FastAPI、Electron、WebSocket、端口号、路径、模型名、接口名、命令参数等技术词，不要随意翻译或改写。
+输出语言
+使用中文输出。技术词、变量名、接口名、路径、命令保持原样。
+
+输出格式如下：
+
+语音时间段总结
+1. 总体概览
+
+用 3 到 6 条 bullet 总结这段时间主要在讨论什么、推进了什么、卡在哪里。
+
+2. 按事情类别整理
+类别：<类别名称>
+事项：<事项名称>
+时间：<开始时间> ~ <结束时间>
+状态：Todo / Done / Doing / Blocked / Unknown
+摘要：<用 1 到 3 句话说明这件事>
+关键信息：<关键日志、现象、路径、模型名、端口、接口名等；没有则写“无”>
+下一步：<如果有明确待办，写具体动作；没有则写“无明确下一步”>
+
+如果有多个类别，按重要性和时间顺序排列。
+
+3. 时间线
+
+按时间顺序列出关键事件，不要逐条复述无意义语音。
+
+格式：
+
+<时间>：<发生了什么 / 用户提出了什么 / 确认了什么>
+4. Todo 待办
+
+只列出需要继续处理的事项。
+
+格式：
+
+<具体待办事项>
+
+来源时间：<时间>
+优先级：高 / 中 / 低
+说明：<为什么需要做>
+5. Done 已完成
+
+只列出明确完成的事项。
+
+格式：
+
+<已完成事项>
+
+完成时间：<时间>
+说明：<完成依据>
+
+如果没有明确完成事项，写“暂无明确 Done 事项”。
+
+6. 问题与风险
+
+列出仍然存在的问题、异常、阻塞点和不确定点。
+
+格式：
+
+问题：<问题描述>
+时间：<时间>
+影响：<可能影响什么>
+建议下一步：<建议如何排查或处理>
+7. 决策 / 结论
+
+列出用户明确确认的结论、方案选择或判断。
+
+如果没有明确决策，写“暂无明确决策”。
+
+输入数据：`,
   llmAutoPolish: false,
   llmAutoTranslate: false,
   translationProvider: 'deepseek',
@@ -213,9 +398,9 @@ export const DEFAULT_SETTINGS: Settings = {
   passiveSummaryEnabled: false,
   passiveSummaryFrequencyMin: 60,
   passiveSummaryUserId: 'dsm',
-  passiveSummaryCategory: '实时转写',
-  passiveSummaryStartTime: '',
-  passiveSummaryEndTime: '',
+  passiveSummaryCategory: '实时转录',
+  passiveSummaryStartTime: '00:00',
+  passiveSummaryEndTime: new Date().toTimeString().slice(0, 5),
   passiveSummaryAutoCloudSave: false,
   passiveSummaryLastRunAt: '',
   agentPrompt: [
@@ -270,7 +455,8 @@ export const DEFAULT_SETTINGS: Settings = {
   agentTasks: [],
   userId: '',
   audioRelayEnabled: false,
-  autoLaunchEnabled: false
+  autoLaunchEnabled: false,
+  keepRunningInBackground: false
 }
 
 type ASRState = {
@@ -323,14 +509,20 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
   merged.serverUrl = merged.serverUrl.replace(/\/+$/, '') // strip trailing slashes
   merged.backendConfirmed = Boolean(merged.backendConfirmed && merged.serverUrl)
   if (!merged.backendConfirmed) merged.serverUrl = ''
-  const allowedEngines = ['fireredasr2', 'sensevoice', 'qwen3asr', 'whisper', 'x-asr']
-  const offlineEngines = allowedEngines.filter((engine) => engine !== 'x-asr')
-  const streamingEngines = ['x-asr']
-  if (!offlineEngines.includes(merged.offlineEngine)) merged.offlineEngine = 'sensevoice'
-  if (!streamingEngines.includes(merged.streamingEngine)) merged.streamingEngine = 'x-asr'
+  if (!merged.offlineEngine?.trim()) merged.offlineEngine = DEFAULT_SETTINGS.offlineEngine
+  if (!merged.streamingEngine?.trim()) merged.streamingEngine = DEFAULT_SETTINGS.streamingEngine
   const rawConfigs = merged.asrModelConfigs && typeof merged.asrModelConfigs === 'object' ? merged.asrModelConfigs : {}
-  merged.asrModelConfigs = Object.fromEntries(allowedEngines.map((engine) => {
-    const fallback = DEFAULT_SETTINGS.asrModelConfigs[engine]
+  const configuredEngines = Array.from(new Set([
+    ...Object.keys(DEFAULT_SETTINGS.asrModelConfigs),
+    ...Object.keys(rawConfigs),
+  ]))
+  merged.asrModelConfigs = Object.fromEntries(configuredEngines.map((engine) => {
+    const fallback = DEFAULT_SETTINGS.asrModelConfigs[engine] || {
+      modelName: engine,
+      device: 'cuda',
+      computeType: '',
+      extraJson: '{}',
+    }
     const current = rawConfigs[engine] || fallback
     return [engine, {
       modelName: typeof current.modelName === 'string' && current.modelName.trim() ? current.modelName : fallback.modelName,
@@ -352,6 +544,7 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
   merged.audioOutputDeviceId = merged.audioOutputDeviceId || ''
   merged.audioRelayEnabled = useSpeakerInput ? false : typeof merged.audioRelayEnabled === 'boolean' ? merged.audioRelayEnabled : false
   merged.autoLaunchEnabled = typeof merged.autoLaunchEnabled === 'boolean' ? merged.autoLaunchEnabled : false
+  merged.keepRunningInBackground = typeof merged.keepRunningInBackground === 'boolean' ? merged.keepRunningInBackground : false
   merged.higgsTtsBaseUrl = merged.higgsTtsBaseUrl || 'http://localhost:8002'
   merged.higgsTtsProvider = merged.higgsTtsProvider === 'boson' ? 'boson' : 'local'
   merged.higgsTtsApiToken = typeof merged.higgsTtsApiToken === 'string' ? merged.higgsTtsApiToken : ''
@@ -387,11 +580,16 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
   merged.llmPolishPrompt = typeof merged.llmPolishPrompt === 'string' && merged.llmPolishPrompt.trim()
     ? merged.llmPolishPrompt
     : DEFAULT_SETTINGS.llmPolishPrompt
+  merged.summaryPrompt = typeof merged.summaryPrompt === 'string' && merged.summaryPrompt.trim()
+    ? merged.summaryPrompt
+    : DEFAULT_SETTINGS.summaryPrompt
   merged.passiveSummaryFrequencyMin = Math.min(1440, Math.max(5, Number(merged.passiveSummaryFrequencyMin) || 60))
   merged.passiveSummaryUserId = merged.passiveSummaryUserId ?? 'dsm'
-  merged.passiveSummaryCategory = merged.passiveSummaryCategory ?? '实时转写'
-  merged.passiveSummaryStartTime = merged.passiveSummaryStartTime || ''
-  merged.passiveSummaryEndTime = merged.passiveSummaryEndTime || ''
+  merged.passiveSummaryCategory = ['', '一段语音转写', '实时转录'].includes(merged.passiveSummaryCategory)
+    ? merged.passiveSummaryCategory
+    : '实时转录'
+  merged.passiveSummaryStartTime = merged.passiveSummaryStartTime || '00:00'
+  merged.passiveSummaryEndTime = merged.passiveSummaryEndTime || new Date().toTimeString().slice(0, 5)
   merged.passiveSummaryLastRunAt = merged.passiveSummaryLastRunAt || ''
   merged.agentPrompt = merged.agentPrompt || DEFAULT_SETTINGS.agentPrompt
   merged.agentMemory = merged.agentMemory || ''
@@ -479,7 +677,7 @@ export const useASRStore = create<ASRState>()(
     }),
     {
       name: 'asr-desktop-store',
-      version: 34,
+      version: 35,
       partialize: (state) => ({ settings: state.settings, history: state.history }),
       migrate: (persisted, version) => {
         const state = persisted as Partial<ASRState>

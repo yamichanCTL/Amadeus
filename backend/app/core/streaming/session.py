@@ -38,7 +38,8 @@ class StreamConfig:
     user_id: str | None = None
     category: str = settings.stream_archive_category
     sample_rate: int = settings.stream_sample_rate
-    archive: bool = True
+    # Debug audio/JSON retention is opt-in for every WebSocket client.
+    archive: bool = False
 
 
 class StreamingASRSession:

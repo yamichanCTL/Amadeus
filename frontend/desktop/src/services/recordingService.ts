@@ -383,6 +383,8 @@ export class RecordingService {
       archived_json: ''
     })
 
+    // This is a user-local Electron archive, not server-side debug retention.
+    // The server privacy toggle is enforced by the backend request paths.
     void this.archiveResult(result, filename, blob, settings.archiveDir || undefined)
   }
 

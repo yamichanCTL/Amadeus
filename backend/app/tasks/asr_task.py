@@ -84,7 +84,7 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
     from app.core.archive import archive_file_error_record, archive_file_record
     from app.core.asr.base import EngineOptions
     from app.core.asr.hotwords import get_hotword_manager
-    from app.core.llm import run_auto_processing
+    from app.core.llm import log_asr_ai_polish_result, run_auto_processing
     from app.core.model_manager import get_model_manager
     from app.core.pipeline.post.punctuation import restore_punctuation
     from app.core.pipeline.pre.vad import detect_speech
@@ -226,6 +226,8 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
                 )
                 if not llm_outputs.polish and not llm_outputs.translate:
                     llm_outputs = None
+                if llm_outputs:
+                    log_asr_ai_polish_result(task_id, llm_outputs)
                 timing["llm_sec"] = round(time.perf_counter() - llm_started, 6)
 
             # ── 8. Persist result ─────────────────────────────────────────
@@ -256,24 +258,30 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
                 confidence=result.confidence,
                 raw_results=raw_results or None,
             )
-            archive_file_record(
-                audio_bytes=audio_bytes,
-                suffix=Path(task.filename or "audio.wav").suffix or ".wav",
-                user_id=task.user_id or engine_opts_raw.get("archive_user_id"),
-                category=(
-                    engine_opts_raw.get("archive_category")
-                    or settings.upload_archive_category
-                ),
-                text=result.full_text,
-                engine=result.engine_name,
-                language=result.language,
-                duration_sec=task.duration_sec,
-                metadata={
-                    "task_id": task_id,
-                    "transcript_id": transcript.id,
-                    "allow_server_data_collection": keep_audio,
-                },
-            )
+            if keep_audio:
+                archive_file_record(
+                    audio_bytes=audio_bytes,
+                    suffix=Path(task.filename or "audio.wav").suffix or ".wav",
+                    user_id=task.user_id or engine_opts_raw.get("archive_user_id"),
+                    category=(
+                        engine_opts_raw.get("archive_category")
+                        or settings.upload_archive_category
+                    ),
+                    text=result.full_text,
+                    engine=result.engine_name,
+                    language=result.language,
+                    duration_sec=task.duration_sec,
+                    llm_outputs=(
+                        llm_outputs.model_dump(mode="json", exclude_none=True)
+                        if llm_outputs
+                        else None
+                    ),
+                    metadata={
+                        "task_id": task_id,
+                        "transcript_id": transcript.id,
+                        "allow_server_data_collection": True,
+                    },
+                )
 
             await update_task_status(db, task_id, TaskStatus.SUCCESS)
             await db.commit()
@@ -291,7 +299,7 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
 
         except Exception as exc:
             logger.exception("Task %s failed: %s", task_id, exc)
-            if "audio_bytes" in locals():
+            if keep_audio and "audio_bytes" in locals():
                 archive_file_error_record(
                     audio_bytes=audio_bytes,
                     suffix=Path(task.filename or "audio.wav").suffix or ".wav",

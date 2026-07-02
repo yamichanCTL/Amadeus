@@ -55,6 +55,7 @@ def archive_pcm_record(
         },
         "created_at": now.astimezone().isoformat(),
         "audio_file": wav_path.name,
+        "labels": {"asr": text},
         "metadata": metadata or {},
     }
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -71,6 +72,7 @@ def archive_file_record(
     engine: str,
     language: str | None,
     duration_sec: float | None,
+    llm_outputs: dict[str, Any] | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     """Save an uploaded audio file plus adjacent JSON metadata."""
@@ -83,6 +85,8 @@ def archive_file_record(
     json_path = root / f"{stem}.json"
 
     audio_path.write_bytes(audio_bytes)
+    clean_llm_outputs = llm_outputs if isinstance(llm_outputs, dict) else {}
+    ai_polished_text = _llm_output_text(clean_llm_outputs, "polish")
     payload = {
         "user_id": user_id or "anonymous",
         "category": category or settings.upload_archive_category,
@@ -99,6 +103,11 @@ def archive_file_record(
         },
         "created_at": now.astimezone().isoformat(),
         "audio_file": audio_path.name,
+        "llm_outputs": clean_llm_outputs,
+        "labels": {
+            "asr": text,
+            **({"ai_polished": ai_polished_text} if ai_polished_text else {}),
+        },
         "metadata": metadata or {},
     }
     json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -200,8 +209,10 @@ def build_summary_transcript(
     range_end = _parse_clock(end_time)
     lines: list[tuple[datetime | None, str]] = []
     for record in records:
-        text = _record_text(record)
-        if not text:
+        if category is None and not _is_asr_record(record):
+            continue
+        label = _record_summary_label(record)
+        if not label:
             continue
         started_at = _parse_datetime(
             _nested_get(record, "spoken_at", "start")
@@ -216,7 +227,7 @@ def build_summary_transcript(
         if not _within_clock_range(started_at, ended_at, range_start, range_end):
             continue
         prefix = _format_time_prefix(started_at, ended_at)
-        lines.append((started_at, f"{prefix} {text}"))
+        lines.append((started_at, f"{prefix} {label}"))
 
     lines.sort(key=lambda entry: entry[0].timestamp() if entry[0] else 0)
     compact_lines = _drop_adjacent_duplicates([line for _, line in lines])
@@ -348,11 +359,49 @@ def _nested_get(record: dict[str, Any], key: str, child: str) -> object:
     return value.get(child)
 
 
-def _record_text(record: dict[str, Any]) -> str:
+def _record_summary_label(record: dict[str, Any]) -> str:
+    """Prefer the AI-polished label; fall back for realtime records without one."""
+    labels = record.get("labels")
+    if isinstance(labels, dict):
+        label = labels.get("ai_polished")
+        if isinstance(label, str) and label.strip():
+            return re.sub(r"\s+", " ", label).strip()
+    outputs = record.get("llm_outputs")
+    text = _llm_output_text(outputs, "polish")
+    if text:
+        return re.sub(r"\s+", " ", text).strip()
+    legacy = record.get("ai_polished_text")
+    if isinstance(legacy, str) and legacy.strip():
+        return re.sub(r"\s+", " ", legacy).strip()
+    if isinstance(labels, dict):
+        asr_label = labels.get("asr")
+        if isinstance(asr_label, str) and asr_label.strip():
+            return re.sub(r"\s+", " ", asr_label).strip()
     text = record.get("text") or record.get("full_text")
-    if not isinstance(text, str):
+    if isinstance(text, str) and text.strip():
+        return re.sub(r"\s+", " ", text).strip()
+    return ""
+
+
+def _is_asr_record(record: dict[str, Any]) -> bool:
+    category = record.get("category") or record.get("type")
+    return isinstance(category, str) and category in {
+        settings.upload_archive_category,
+        settings.stream_archive_category,
+        "一段语音转写",
+        "实时转录",
+        "实时转写",
+    }
+
+
+def _llm_output_text(outputs: object, operation: str) -> str:
+    if not isinstance(outputs, dict):
         return ""
-    return re.sub(r"\s+", " ", text).strip()
+    result = outputs.get(operation)
+    if not isinstance(result, dict):
+        return ""
+    text = result.get("text")
+    return text.strip() if isinstance(text, str) else ""
 
 
 def _record_speaker(record: dict[str, Any]) -> str:

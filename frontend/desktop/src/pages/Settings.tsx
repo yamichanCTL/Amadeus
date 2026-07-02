@@ -271,6 +271,14 @@ export function SettingsPage() {
           />
           开机自动启动 Amadeus
         </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={settings.keepRunningInBackground}
+            onChange={(event) => updateSettings({ keepRunningInBackground: event.target.checked })}
+          />
+          关闭窗口后保留后台运行
+        </label>
         <label>
           音频输入
           <div className="inline-control">

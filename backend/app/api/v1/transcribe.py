@@ -36,7 +36,7 @@ from app.config import get_settings
 from app.core.archive import archive_file_error_record, archive_file_record
 from app.core.asr.base import EngineOptions
 from app.core.asr.hotwords import get_hotword_manager
-from app.core.llm import run_auto_processing
+from app.core.llm import log_asr_ai_polish_result, run_auto_processing
 from app.core.pipeline.post.punctuation import restore_punctuation
 from app.db.crud import (
     create_task,
@@ -63,6 +63,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/transcribe", tags=["transcription"])
 settings = get_settings()
 T = TypeVar("T")
+
+
+def should_archive_debug_data(opts: TranscribeOptions) -> bool:
+    """Single opt-in boundary used by success and error archive paths."""
+    return opts.allow_server_data_collection is True
 
 
 async def _run_with_timeout(operation: Callable[[], Awaitable[T]], timeout_sec: float) -> T:
@@ -348,6 +353,8 @@ async def transcribe(
 
         llm_started = time.perf_counter()
         llm_outputs, llm_error = await _run_llm_auto(result.full_text, opts)
+        if llm_outputs:
+            log_asr_ai_polish_result(task.id, llm_outputs)
         timing["llm_sec"] = round(time.perf_counter() - llm_started, 6)
 
         # Persist
@@ -369,21 +376,27 @@ async def transcribe(
                 {**(result.raw or {}), "timing": timing}, llm_outputs, llm_error
             ),
         )
-        archive_file_record(
-            audio_bytes=audio_bytes,
-            suffix=Path(file.filename or "audio.wav").suffix or ".wav",
-            user_id=user.id if user else opts.user_id,
-            category=opts.archive_category or settings.upload_archive_category,
-            text=result.full_text,
-            engine=result.engine_name,
-            language=result.language,
-            duration_sec=duration,
-            metadata={
-                "task_id": task.id,
-                "transcript_id": transcript.id,
-                "allow_server_data_collection": opts.allow_server_data_collection,
-            },
-        )
+        if should_archive_debug_data(opts):
+            archive_file_record(
+                audio_bytes=audio_bytes,
+                suffix=Path(file.filename or "audio.wav").suffix or ".wav",
+                user_id=user.id if user else opts.user_id,
+                category=opts.archive_category or settings.upload_archive_category,
+                text=result.full_text,
+                engine=result.engine_name,
+                language=result.language,
+                duration_sec=duration,
+                llm_outputs=(
+                    llm_outputs.model_dump(mode="json", exclude_none=True)
+                    if llm_outputs
+                    else None
+                ),
+                metadata={
+                    "task_id": task.id,
+                    "transcript_id": transcript.id,
+                    "allow_server_data_collection": True,
+                },
+            )
 
         # Reload task for elapsed_sec
         await update_task_status(db, task.id, TaskStatus.SUCCESS)
@@ -415,17 +428,18 @@ async def transcribe(
 
     except Exception as exc:
         logger.exception("Sync transcription failed for task %s: %s", task.id, exc)
-        archive_file_error_record(
-            audio_bytes=audio_bytes,
-            suffix=Path(file.filename or "audio.wav").suffix or ".wav",
-            user_id=user.id if user else opts.user_id,
-            category=opts.archive_category or settings.upload_archive_category,
-            engine=opts.engine,
-            language=opts.language,
-            duration_sec=duration,
-            error=str(exc),
-            metadata={"task_id": task.id},
-        )
+        if should_archive_debug_data(opts):
+            archive_file_error_record(
+                audio_bytes=audio_bytes,
+                suffix=Path(file.filename or "audio.wav").suffix or ".wav",
+                user_id=user.id if user else opts.user_id,
+                category=opts.archive_category or settings.upload_archive_category,
+                engine=opts.engine,
+                language=opts.language,
+                duration_sec=duration,
+                error=str(exc),
+                metadata={"task_id": task.id},
+            )
         await update_task_status(
             db, task.id, TaskStatus.FAILED, error_message=str(exc)
         )

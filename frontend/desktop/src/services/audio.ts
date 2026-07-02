@@ -1342,6 +1342,7 @@ export class StreamingASRClient {
     deviceId?: string
     inputStream?: MediaStream
     userId?: string
+    archive?: boolean
   }) {
     this.startedAt = performance.now()
     this.stoppedByUser = false
@@ -1515,6 +1516,7 @@ export class StreamingASRClient {
           engine: config.engine || 'x-asr',
           language: config.language || 'zh',
           user_id: config.userId || '',
+          archive: config.archive === true,
         }))
       }
       ws.onmessage = handleMessage
@@ -1635,6 +1637,7 @@ export class VoiceTTSStreamingClient {
     initialCodecChunkFrames?: number
     stream?: boolean
     speculativePartialTts?: boolean
+    archive?: boolean
   }) {
     this.stoppedByUser = false
     this.sessionTrace = startTelemetryTrace('websocket', '实时变声会话', config.engine || 'x-asr')
@@ -1666,6 +1669,7 @@ export class VoiceTTSStreamingClient {
         type: 'config',
         engine: config.engine || 'x-asr',
         language: config.language || 'zh',
+        archive: config.archive === true,
         higgs_base_url: config.higgsBaseUrl || 'http://localhost:8002',
         provider: config.provider || 'local',
         api_token: config.apiToken || '',

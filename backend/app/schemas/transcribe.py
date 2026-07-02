@@ -58,9 +58,9 @@ class TranscribeOptions(BaseModel):
 
     enable_hotwords: bool = True
 
-    # Uploaded audio/result archive. Enabled by default so recognition records
-    # are written under user/day/type for both short and long audio.
-    allow_server_data_collection: bool = True
+    # Uploaded audio/result debug archive. This is opt-in: omitting the field
+    # must never cause the server to retain an audio/JSON archive.
+    allow_server_data_collection: bool = False
     archive_dir: str | None = None
     archive_category: str | None = None
     user_id: str | None = Field(None, max_length=128, description="Desktop archive user ID.")

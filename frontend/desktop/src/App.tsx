@@ -100,6 +100,10 @@ export default function App() {
   }, [settings.theme])
 
   useEffect(() => {
+    window.electronAPI?.setKeepRunningInBackground(settings.keepRunningInBackground)
+  }, [settings.keepRunningInBackground])
+
+  useEffect(() => {
     if (!isE2EMode) return
     window.__amadeusE2EAudio = runAudioRelayDeviceE2E
     return () => { delete window.__amadeusE2EAudio }
@@ -265,6 +269,7 @@ export default function App() {
           model: latest.llmModel,
           base_url: latest.llmBaseUrl,
           api_token: latest.llmApiToken,
+          prompt: latest.summaryPrompt,
           style: latest.llmStyle || '工作纪要',
           max_input_chars: 24000
         })
