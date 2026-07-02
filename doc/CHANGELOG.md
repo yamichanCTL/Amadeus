@@ -9,7 +9,7 @@
 - **类型**: fix / refactor / test / docs
 - **描述**: 删除语音识别页无功能人物区域；自动输入按设置优先投递润色/翻译结果；普通复制改为非阻塞单向 IPC；历史页使用内容容器断点并修复网格收缩；初始窗口占满工作区高度；标题栏最小化 glyph 居中；录音浮层增加取消/提交；润色和翻译前端配置合并；Windows 主窗口、托盘、可执行文件和安装包统一使用 `amadeus-icon.png`；根 README 按成熟开源项目结构重写。
 - **影响范围**: `frontend/desktop/{electron,src,scripts,electron-builder.yml}`、`README.md`、`doc/desktop/`、`doc/reports/`
-- **验证**: Desktop Vitest 15 files / 61 tests 全量通过；TypeScript renderer/Electron、Vite、Python compileall、VitePress 通过；Electron/Xvfb 五档截图无横向溢出，历史页无重叠；生产 Electron 实测复制调用 0 ms、`×/✓` IPC 与结果/字幕浮层通过；Windows x64 目录打包曾实际执行 rcedit 图标写入，最后 CSS 细调后的重打包被执行权限用量上限拒绝。Windows UIAutomation 与 DJI/CABLE 硬件项需真机复跑；后端 auto-LLM 单测 45 秒无输出后 exit 124，不计为通过。
+- **验证**: Desktop Vitest 15 files / 61 tests 全量通过；TypeScript renderer/Electron、Vite、Python compileall、VitePress 通过；Electron/Xvfb 五档截图无横向溢出，历史页无重叠；Windows 最终包与当前关键构建文件哈希一致且 rcedit 图标写入成功，真机 E2E 全局 `passed: true`：任务栏/EXE 头像正确、复制 0.1 ms、UIAutomation 连续第二次注入 128.1 ms、`×/✓` IPC 均为 `0→1`、DJI→CABLE 硬件通路及 1.152 秒纯麦克风采集通过；后端 auto-LLM 接口测试 1 passed in 0.64s。
 - **Plan**: [链接到 plan 文件](plans/2026-06-30-desktop-asr-ui-polish.md)
 - **报告**: [桌面 ASR 交互与自适应 UI 验证报告](reports/2026-06-30-desktop-asr-ui-e2e-report.md)
 

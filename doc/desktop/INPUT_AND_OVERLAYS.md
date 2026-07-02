@@ -89,7 +89,9 @@ powershell.exe -ExecutionPolicy Bypass -File scripts/run_amadeus_windows_e2e.ps1
 4. 录音波形、Thinking、识别结果和字幕浮窗截图，验证录音 `×` / `✓`、结果复制/关闭与字幕设置/关闭 IPC；复制快速通道要求 renderer 调用低于 50 ms 且系统剪贴板内容一致。
 5. 直接调用生产 `AudioRelayMixer`：枚举 DJI MIC MINI、CABLE Input/Output，将 DJI 轨道常态连接到 `CABLE Input`，通过真实 `pushPcm16()` 叠加 997 Hz 测试音，再从 `CABLE Output` 采样 RMS/peak 证明 Cable 回环。
 
-结果位于 `%TEMP%/amadeus-e2e-<时间>/userData/e2e/result.json`；任何子项失败时脚本退出码为 1，并保留截图和 `audio-relay.json`。
+6. 正常模式启动最终包，从 `Amadeus.exe` 提取关联图标，并截取包含任务栏的全屏与底部区域，核对初始窗口工作区高度、完整侧栏、标题栏按钮及任务栏活动图标。
+
+结果位于 `%TEMP%/amadeus-e2e-<时间>/userData/e2e/result.json`，Windows Shell 证据位于同级 `visual-evidence/`；任何子项失败时脚本退出码为 1，并保留截图和 `audio-relay.json`。
 
 ---
 

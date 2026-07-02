@@ -56,7 +56,8 @@
 
 ## 执行结果与偏差
 
-- 代码、文档、61 项桌面测试、两套 TypeScript、Vite、VitePress、Python compileall 和 Linux/Xvfb 生产 Electron E2E 已完成。
-- Electron E2E 实际覆盖复制系统剪贴板、三档历史布局、录音浮层取消/提交 IPC、结果浮层和字幕浮层；Windows UIAutomation 与 DJI/CABLE 设备因当前平台不可用未计为通过。
-- Windows x64 交叉打包已实际完成一次 PNG→ICO 与 rcedit 图标写入。最后 CSS 细调后的重打包被执行权限用量上限拒绝，最终源码需在 Windows 构建机再执行一次 `npm run build:win`。
-- 后端 auto-LLM 目标测试在当前环境 45 秒无输出并由 `timeout` 结束；本次未修改后端逻辑，前端增强结果交付由完整 `runTranscription → deliverResult → injectText` 集成测试覆盖。
+- 代码、文档、61 项桌面测试、两套 TypeScript、Vite、VitePress、Python compileall、Linux/Xvfb Electron E2E 与 Windows 真机 E2E 均已完成。
+- 最终 Windows 包内 `dist/index.html`、`dist-electron/main.js`、`dist-electron/e2e.js` 与当前构建产物哈希一致；64,081-byte ICO 已由 rcedit 写入 `Amadeus.exe`。
+- Windows 真机报告全局 `passed: true`：三档历史布局无溢出/重叠，系统剪贴板调用 0.1 ms，真实 UIAutomation 连续第二次注入 128.1 ms，录音浮层取消/提交 IPC 均为 `0→1`，DJI MIC MINI 采集 1.152 秒且 gap/overlap 均为 0。
+- Windows Shell 视觉证据确认初始窗口覆盖 2560×1392 工作区高度、完整显示侧栏，任务栏按钮和 EXE 关联图标均为 `amadeus-icon.png` 对应头像。
+- 后端 `test_transcribe_auto_llm_success` 在解除受限环境对 aiosqlite 工作线程唤醒的限制后 0.64 秒通过；前端完整 `runTranscription → deliverResult → injectText` 集成测试确认最终注入增强文本而非 ASR 原文。
