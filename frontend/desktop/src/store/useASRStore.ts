@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { ModelInfo, TranscribeResponse } from '@/services/api'
+import type { ArchiveSummaryResult, ModelInfo, TranscribeResponse } from '@/services/api'
 
 export type AppPage = 'home' | 'realtime' | 'transcribe' | 'history' | 'summary' | 'models' | 'settings' | 'voice' | 'debug'
 export type TranscribeStatus = 'idle' | 'uploading' | 'processing' | 'polling' | 'done' | 'error' | 'cancelled'
@@ -25,6 +25,27 @@ export type AsrModelConfig = {
   device: string
   computeType: string
   extraJson: string
+}
+
+export type PromptCard = {
+  id: string
+  name: string
+  prompt: string
+}
+export type SummarySource = 'local' | 'server'
+
+export type SummaryWorkspace = {
+  source: SummarySource
+  date: string
+  userId: string
+  category: string
+  startTime: string
+  endTime: string
+  maxInputChars: number
+  result: ArchiveSummaryResult | null
+  loading: boolean
+  error: string
+  saveMessage: string
 }
 
 export interface UtteranceEntry {
@@ -94,7 +115,11 @@ export type Settings = {
   llmTargetLanguage: string
   llmStyle: string
   llmPolishPrompt: string
+  promptCards: PromptCard[]
+  activePromptCardId: string
   summaryPrompt: string
+  summaryPromptCards: PromptCard[]
+  activeSummaryPromptCardId: string
   llmAutoPolish: boolean
   llmAutoTranslate: boolean
   translationProvider: string
@@ -107,7 +132,8 @@ export type Settings = {
   passiveSummaryCategory: string
   passiveSummaryStartTime: string
   passiveSummaryEndTime: string
-  passiveSummaryAutoCloudSave: boolean
+  passiveSummarySource: SummarySource
+  passiveSummaryAutoLocalSave: boolean
   passiveSummaryLastRunAt: string
   agentPrompt: string
   agentMemory: string
@@ -257,6 +283,8 @@ ASR、TTS、LLM、CTC、CLAP、DASM、FastAPI、Electron、WebSocket、CUDA、NP
 
 输入文本：
 `,
+  promptCards: [],
+  activePromptCardId: 'asr-polish',
   summaryPrompt: `你是一个专业的语音工作流总结助手。你的任务是根据用户选择的一个时间段内的 ASR 文本记录，对这段语音内容进行结构化总结。
 
 输入是一组 ASR 记录，每条记录可能包含以下字段：
@@ -389,6 +417,8 @@ Unknown：无法判断状态时使用。
 如果没有明确决策，写“暂无明确决策”。
 
 输入数据：`,
+  summaryPromptCards: [],
+  activeSummaryPromptCardId: 'daily-work-summary',
   llmAutoPolish: false,
   llmAutoTranslate: false,
   translationProvider: 'deepseek',
@@ -401,7 +431,8 @@ Unknown：无法判断状态时使用。
   passiveSummaryCategory: '实时转录',
   passiveSummaryStartTime: '00:00',
   passiveSummaryEndTime: new Date().toTimeString().slice(0, 5),
-  passiveSummaryAutoCloudSave: false,
+  passiveSummarySource: 'local',
+  passiveSummaryAutoLocalSave: true,
   passiveSummaryLastRunAt: '',
   agentPrompt: [
     '【身份】你是 Amadeus 桌面语音 Agent，一个长期陪伴型虚拟主播 AI。你的名字是 "Amadeus"，你住在用户的电脑里，可以实时听到用户说的话、看到用户的屏幕、控制电脑执行任务。',
@@ -468,6 +499,7 @@ type ASRState = {
   settings: Settings
   models: ModelInfo[]
   history: HistoryItem[]
+  summaryWorkspace: SummaryWorkspace
   currentResult: TranscribeResponse | null
   activeTaskId: string | null
   error: string
@@ -478,6 +510,8 @@ type ASRState = {
   setRecordStatus: (status: RecordStatus) => void
   setLiveCaptionStatus: (status: LiveCaptionStatus) => void
   updateSettings: (settings: Partial<Settings>) => void
+  updateSummaryWorkspace: (workspace: Partial<SummaryWorkspace>) => void
+  resetSummaryWorkspace: () => void
   setModels: (models: ModelInfo[]) => void
   setCurrentResult: (result: TranscribeResponse | null) => void
   setActiveTaskId: (taskId: string | null) => void
@@ -489,8 +523,75 @@ type ASRState = {
   clearHistory: () => void
 }
 
+function localDateValue(date = new Date()) {
+  const offsetMs = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 10)
+}
+
+function localTimeValue(date = new Date()) {
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+}
+
+export function createSummaryWorkspace(date = new Date()): SummaryWorkspace {
+  return {
+    source: 'local',
+    date: localDateValue(date),
+    userId: 'dsm',
+    category: '实时转录',
+    startTime: '00:00',
+    endTime: localTimeValue(date),
+    maxInputChars: 24000,
+    result: null,
+    loading: false,
+    error: '',
+    saveMessage: '',
+  }
+}
+
+function createDefaultPromptCards(polishPrompt: string): PromptCard[] {
+  return [
+    {
+      id: 'asr-polish',
+      name: 'ASR 润色',
+      prompt: polishPrompt,
+    },
+    {
+      id: 'translate-en',
+      name: '翻译为英文',
+      prompt: '请把以下语音识别结果翻译成自然、准确的英文，保留专有名词、数字和代码，只输出译文。',
+    },
+    {
+      id: 'meeting-notes',
+      name: '会议纪要',
+      prompt: '请把以下语音识别结果整理成简洁的会议纪要，提取结论、待办和负责人，不补充原文没有的信息。',
+    },
+  ]
+}
+
+function createDefaultSummaryPromptCards(summaryPrompt: string): PromptCard[] {
+  return [
+    { id: 'daily-work-summary', name: '当日工作总结', prompt: summaryPrompt },
+    { id: 'todo-review', name: '待办与阻塞', prompt: '总结今天提到的 Todo、Doing 和 Blocked 事项，按优先级列出下一步，不补充原文没有的信息。' },
+    { id: 'decisions', name: '决策与结论', prompt: '只提取今天明确确认的决策、结论、完成依据和仍需确认的问题，使用简洁 Markdown。' },
+  ]
+}
+
+function normalizePromptCards(value: unknown, fallback: PromptCard[]) {
+  const cards = Array.isArray(value)
+    ? value
+      .filter((card): card is PromptCard => Boolean(card && typeof card.id === 'string' && typeof card.name === 'string' && typeof card.prompt === 'string'))
+      .map((card) => ({ id: card.id.trim().slice(0, 80), name: card.name.trim().slice(0, 60) || '未命名卡片', prompt: card.prompt }))
+      .filter((card) => card.id)
+      .slice(0, 40)
+    : []
+  return cards.length ? cards : fallback
+}
+
 function normalizeSettings(value: Partial<Settings> | undefined): Settings {
-  const legacy = (value || {}) as Partial<Settings> & { defaultEngine?: string }
+  const legacy = (value || {}) as Partial<Settings> & {
+    defaultEngine?: string
+    passiveSummaryAutoCloudSave?: boolean
+  }
   const merged = { ...DEFAULT_SETTINGS, ...legacy }
   delete (merged as unknown as Record<string, unknown>).enableDiarize
   merged.offlineEngine = legacy.offlineEngine || legacy.defaultEngine || DEFAULT_SETTINGS.offlineEngine
@@ -580,9 +681,21 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
   merged.llmPolishPrompt = typeof merged.llmPolishPrompt === 'string' && merged.llmPolishPrompt.trim()
     ? merged.llmPolishPrompt
     : DEFAULT_SETTINGS.llmPolishPrompt
+  merged.promptCards = normalizePromptCards(legacy.promptCards, createDefaultPromptCards(merged.llmPolishPrompt))
+  merged.activePromptCardId = merged.promptCards.some((card) => card.id === legacy.activePromptCardId)
+    ? String(legacy.activePromptCardId)
+    : merged.promptCards[0].id
+  const activePromptCard = merged.promptCards.find((card) => card.id === merged.activePromptCardId)
+  if (activePromptCard) merged.llmPolishPrompt = activePromptCard.prompt
   merged.summaryPrompt = typeof merged.summaryPrompt === 'string' && merged.summaryPrompt.trim()
     ? merged.summaryPrompt
     : DEFAULT_SETTINGS.summaryPrompt
+  merged.summaryPromptCards = normalizePromptCards(legacy.summaryPromptCards, createDefaultSummaryPromptCards(merged.summaryPrompt))
+  merged.activeSummaryPromptCardId = merged.summaryPromptCards.some((card) => card.id === legacy.activeSummaryPromptCardId)
+    ? String(legacy.activeSummaryPromptCardId)
+    : merged.summaryPromptCards[0].id
+  const activeSummaryPromptCard = merged.summaryPromptCards.find((card) => card.id === merged.activeSummaryPromptCardId)
+  if (activeSummaryPromptCard) merged.summaryPrompt = activeSummaryPromptCard.prompt
   merged.passiveSummaryFrequencyMin = Math.min(1440, Math.max(5, Number(merged.passiveSummaryFrequencyMin) || 60))
   merged.passiveSummaryUserId = merged.passiveSummaryUserId ?? 'dsm'
   merged.passiveSummaryCategory = ['', '一段语音转写', '实时转录'].includes(merged.passiveSummaryCategory)
@@ -590,7 +703,13 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
     : '实时转录'
   merged.passiveSummaryStartTime = merged.passiveSummaryStartTime || '00:00'
   merged.passiveSummaryEndTime = merged.passiveSummaryEndTime || new Date().toTimeString().slice(0, 5)
+  merged.passiveSummarySource = merged.passiveSummarySource === 'server' ? 'server' : 'local'
   merged.passiveSummaryLastRunAt = merged.passiveSummaryLastRunAt || ''
+  merged.passiveSummaryAutoLocalSave = typeof legacy.passiveSummaryAutoLocalSave === 'boolean'
+    ? legacy.passiveSummaryAutoLocalSave
+    : typeof legacy.passiveSummaryAutoCloudSave === 'boolean'
+      ? legacy.passiveSummaryAutoCloudSave
+      : true
   merged.agentPrompt = merged.agentPrompt || DEFAULT_SETTINGS.agentPrompt
   merged.agentMemory = merged.agentMemory || ''
   merged.agentAutoSpeak = typeof merged.agentAutoSpeak === 'boolean' ? merged.agentAutoSpeak : true
@@ -629,7 +748,20 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
   delete obsolete.streamingFinalEngine
   delete obsolete.selectedEngines
   delete obsolete.multiEngine
+  delete obsolete.passiveSummaryAutoCloudSave
   delete obsolete.mergeStrategy
+  return merged
+}
+
+function normalizeSummaryWorkspace(value: Partial<SummaryWorkspace> | undefined): SummaryWorkspace {
+  const fallback = createSummaryWorkspace()
+  const merged = { ...fallback, ...(value || {}) }
+  merged.source = merged.source === 'server' ? 'server' : 'local'
+  merged.maxInputChars = Math.min(120000, Math.max(4000, Number(merged.maxInputChars) || 24000))
+  merged.loading = false
+  merged.error = typeof merged.error === 'string' ? merged.error : ''
+  merged.saveMessage = typeof merged.saveMessage === 'string' ? merged.saveMessage : ''
+  merged.result = merged.result && typeof merged.result.summary === 'string' ? merged.result : null
   return merged
 }
 
@@ -641,9 +773,10 @@ export const useASRStore = create<ASRState>()(
       transcribeStatus: 'idle',
       recordStatus: 'idle',
       liveCaptionStatus: 'idle',
-      settings: DEFAULT_SETTINGS,
+      settings: normalizeSettings(DEFAULT_SETTINGS),
       models: [],
       history: [],
+      summaryWorkspace: createSummaryWorkspace(),
       currentResult: null,
       activeTaskId: null,
       error: '',
@@ -658,8 +791,22 @@ export const useASRStore = create<ASRState>()(
         if (Object.prototype.hasOwnProperty.call(patch, 'serverUrl') && !Object.prototype.hasOwnProperty.call(patch, 'backendConfirmed')) {
           patch.backendConfirmed = false
         }
+        if (Object.prototype.hasOwnProperty.call(patch, 'llmPolishPrompt') && !Object.prototype.hasOwnProperty.call(patch, 'promptCards')) {
+          patch.promptCards = state.settings.promptCards.map((card) => card.id === state.settings.activePromptCardId
+            ? { ...card, prompt: String(patch.llmPolishPrompt || '') }
+            : card)
+        }
+        if (Object.prototype.hasOwnProperty.call(patch, 'summaryPrompt') && !Object.prototype.hasOwnProperty.call(patch, 'summaryPromptCards')) {
+          patch.summaryPromptCards = state.settings.summaryPromptCards.map((card) => card.id === state.settings.activeSummaryPromptCardId
+            ? { ...card, prompt: String(patch.summaryPrompt || '') }
+            : card)
+        }
         return { settings: normalizeSettings({ ...state.settings, ...patch }) }
       }),
+      updateSummaryWorkspace: (summaryWorkspace) => set((state) => ({
+        summaryWorkspace: { ...state.summaryWorkspace, ...summaryWorkspace }
+      })),
+      resetSummaryWorkspace: () => set({ summaryWorkspace: createSummaryWorkspace() }),
       setModels: (models) => set({ models }),
       setCurrentResult: (currentResult) => set({ currentResult }),
       setActiveTaskId: (activeTaskId) => set({ activeTaskId }),
@@ -677,8 +824,12 @@ export const useASRStore = create<ASRState>()(
     }),
     {
       name: 'asr-desktop-store',
-      version: 35,
-      partialize: (state) => ({ settings: state.settings, history: state.history }),
+      version: 37,
+      partialize: (state) => ({
+        settings: state.settings,
+        history: state.history,
+        summaryWorkspace: { ...state.summaryWorkspace, loading: false },
+      }),
       migrate: (persisted, version) => {
         const state = persisted as Partial<ASRState>
         const settings = normalizeSettings(state.settings)
@@ -708,6 +859,7 @@ export const useASRStore = create<ASRState>()(
         return {
           ...state,
           settings,
+          summaryWorkspace: normalizeSummaryWorkspace(state.summaryWorkspace),
           history: Array.isArray(state.history) ? state.history.slice(0, 200) : []
         } as ASRState
       }

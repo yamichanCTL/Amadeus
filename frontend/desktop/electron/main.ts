@@ -23,6 +23,7 @@ import { LatestTaskQueue } from './latest-task-queue'
 import { runTextInjectionWithRecovery, TextInjectionCancelledError } from './text-inject-retry'
 import { closeAction } from './close-behavior'
 import { calculateInitialWindowBounds } from './window-layout'
+import { localArchiveDay, safeArchiveStem, writeTranscriptionArchive } from './archive-layout'
 
 type CaptionOverlayOptions = {
   fontSize: number
@@ -36,11 +37,19 @@ type CaptionOverlayOptions = {
 
 type ArchiveArgs = {
   archiveRoot?: string
+  archiveCategory?: string
   taskId: string
   filename: string
   audioBase64?: string
   audioExtension?: string
   metadata: Record<string, unknown>
+}
+
+type SummaryLogArgs = {
+  archiveRoot?: string
+  date: string
+  filename?: string
+  content: string
 }
 
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL)
@@ -689,28 +698,31 @@ async function writeUserId(rawUserId: string) {
   return { userId, path: target }
 }
 
-function safeStem(filename: string) {
-  const parsed = path.parse(filename)
-  return parsed.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 80) || 'audio'
-}
-
 async function archiveTranscription(args: ArchiveArgs) {
   const root = args.archiveRoot || (await defaultArchiveDir())
-  const day = new Date().toISOString().slice(0, 10)
-  const dir = path.join(root, day)
+  const day = localArchiveDay()
+  return writeTranscriptionArchive({
+    root,
+    category: args.archiveCategory || '离线语音识别',
+    day,
+    taskId: args.taskId,
+    filename: args.filename,
+    audioBase64: args.audioBase64,
+    audioExtension: args.audioExtension,
+    metadata: args.metadata,
+  })
+}
+
+async function saveSummaryLog(args: SummaryLogArgs) {
+  const root = args.archiveRoot || (await defaultArchiveDir())
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(args.date) ? args.date : new Date().toISOString().slice(0, 10)
+  const dir = path.join(root, 'summary-logs', day)
   await fs.mkdir(dir, { recursive: true })
-
-  const stem = `${args.taskId}_${safeStem(args.filename)}`
-  const paths: { audio?: string; json: string } = { json: path.join(dir, `${stem}.json`) }
-
-  if (args.audioBase64) {
-    const ext = args.audioExtension || path.extname(args.filename) || '.webm'
-    paths.audio = path.join(dir, `${stem}${ext}`)
-    await fs.writeFile(paths.audio, Buffer.from(args.audioBase64, 'base64'))
-  }
-
-  await fs.writeFile(paths.json, JSON.stringify({ archived_at: new Date().toISOString(), ...args.metadata }, null, 2), 'utf8')
-  return paths
+  const requested = safeArchiveStem(args.filename || `summary_${day}`)
+  const filename = requested.toLowerCase().endsWith('.md') ? requested : `${requested}.md`
+  const target = path.join(dir, filename)
+  await fs.writeFile(target, args.content, 'utf8')
+  return { saved: true, path: target }
 }
 
 function textInjectHelperScript() {
@@ -1141,6 +1153,7 @@ function registerIpc() {
     return { name: path.basename(filePath), size: stats.size, path: filePath }
   })
   ipcMain.handle('archive:transcription', (_event, args: ArchiveArgs) => archiveTranscription(args))
+  ipcMain.handle('archive:summaryLog', (_event, args: SummaryLogArgs) => saveSummaryLog(args))
   ipcMain.handle('shell:openExternal', (_event, url: string) => shell.openExternal(url))
   ipcMain.handle('theme:get', () => (nativeTheme.shouldUseDarkColors ? 'dark' : 'light'))
   ipcMain.handle('theme:set', (_event, theme: 'system' | 'light' | 'dark') => {
@@ -1175,8 +1188,7 @@ function registerIpc() {
     statusOverlay?.hide()
     return true
   })
-  ipcMain.on('statusOverlay:copyResult', (_event, text: string) => {
-    clipboard.writeText(text)
+  ipcMain.on('statusOverlay:copyResultDone', (_event, text: string) => {
     statusOverlay?.hide()
     mainWindow?.webContents.send('statusOverlay:resultCopied', text)
   })

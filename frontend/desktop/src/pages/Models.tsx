@@ -564,8 +564,7 @@ export function ModelsPage() {
     whisper_model: settings.whisperModel,
     enable_punctuation: settings.enablePunctuation,
     enable_hotwords: true,
-    allow_server_data_collection: settings.allowServerDataCollection,
-    archive_dir: settings.archiveDir || undefined
+    allow_server_data_collection: settings.allowServerDataCollection
   })
 
   const waitReferenceTranscribeTask = async (taskId: string) => {
@@ -661,7 +660,7 @@ export function ModelsPage() {
         </div>
         <div className="model-tabs">
           <button type="button" className={activeTab === 'asr' ? 'active' : ''} onClick={() => setActiveTab('asr')}>ASR 模型设置</button>
-          <button type="button" className={activeTab === 'llm' ? 'active' : ''} onClick={() => setActiveTab('llm')}>润色/翻译设置</button>
+          <button type="button" className={activeTab === 'llm' ? 'active' : ''} onClick={() => setActiveTab('llm')}>LLM 设置</button>
           <button type="button" className={activeTab === 'tts' ? 'active' : ''} onClick={() => setActiveTab('tts')}>TTS 模型设置</button>
         </div>
         {error && <p className="error">{error}</p>}
@@ -857,26 +856,6 @@ export function ModelsPage() {
               <div className="wide">
                 {renderProviderProbe(llmModels)}
               </div>
-              <label className="wide">
-                润色/翻译 Prompt
-                <textarea rows={5} value={settings.llmPolishPrompt} placeholder="例如：修正错字，或把结果翻译成英文" onChange={(event) => updateSettings({ llmPolishPrompt: event.target.value })} />
-              </label>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={settings.llmAutoPolish || settings.llmAutoTranslate}
-                  onChange={(event) => updateSettings({ llmAutoPolish: event.target.checked, llmAutoTranslate: false })}
-                />
-                转写完成后自动润色/翻译
-              </label>
-              <label>
-                目标语言
-                <input value={settings.llmTargetLanguage} onChange={(event) => updateSettings({ llmTargetLanguage: event.target.value })} />
-              </label>
-              <label>
-                风格补充
-                <input value={settings.llmStyle} placeholder="正式、简洁、会议纪要风格" onChange={(event) => updateSettings({ llmStyle: event.target.value })} />
-              </label>
             </div>
           </div>
         )}

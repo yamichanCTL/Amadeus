@@ -77,6 +77,10 @@ curl -X POST "http://localhost:8000/v1/models/fireredasr2/unload"
 - 两个模型在桌面模型管理中同时配置，不需要切换工作模式。
 - 离线结果可在返回前应用 `hot.txt` 热词和 `hot-rule.txt` 正则规则。
 
+## Qwen3-ASR 原始结果持久化
+
+`qwen-asr` 可能返回第三方 `ASRTranscription` 实例，而不是普通字典。Qwen adapter 会先将该对象转换为只含公开字段的 JSON-safe 快照；数据库 `create_transcript` 入口还会统一处理 Pydantic model、dataclass、映射、序列、日期、Path、`to_dict` 对象和未知对象字符串兜底。同步与 Celery 异步转写因此不会再在 `json.dumps(raw_results)` 阶段报 `Object of type ASRTranscription is not JSON serializable`。
+
 ## 引擎配置环境变量
 
 | 变量 | 说明 | 默认值 |

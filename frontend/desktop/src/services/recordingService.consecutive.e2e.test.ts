@@ -205,4 +205,23 @@ describe('consecutive offline ASR auto-fill latency', () => {
     expect(injectText).toHaveBeenCalledWith('自动润色后的回填结果')
     expect(injectText).not.toHaveBeenCalledWith('普通 ASR 结果')
   })
+
+  it('fills the in-app result before a stuck external injection finishes', async () => {
+    let releaseInjection: (() => void) | undefined
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: {
+      injectText: vi.fn(() => new Promise<boolean>((resolve) => { releaseInjection = () => resolve(true) })),
+      hideStatusOverlay: vi.fn(async () => true),
+      showStatusOverlay: vi.fn(async () => true),
+      archiveTranscription: vi.fn(async () => ({ json: '' })),
+      getDefaultArchiveDir: vi.fn(async () => ''),
+    } })
+    const service = new RecordingService()
+    const pending = service.runTranscription(new Blob(['wav'], { type: 'audio/wav' }), 'in-app.wav', true)
+
+    await vi.waitFor(() => expect(store.state.currentResult?.full_text).toBe('第1次识别'))
+    expect(store.state.transcribeStatus).toBe('done')
+
+    releaseInjection?.()
+    await pending
+  })
 })

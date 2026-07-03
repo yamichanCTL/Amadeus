@@ -295,6 +295,14 @@ export type ArchiveSummaryRequest = {
   prompt?: string
   style?: string
   max_input_chars?: number
+  records?: ArchiveSummaryRecord[]
+}
+
+export type ArchiveSummaryRecord = {
+  started_at?: string
+  ended_at?: string
+  category?: string
+  text: string
 }
 
 export type ArchiveSummaryResult = {

@@ -6,7 +6,7 @@
  * call the same start()/stop()/toggle() methods.
  */
 
-import { StreamingASRClient, speechRecorder, audioRelayMixer, captureSpeakerAudio } from './audio'
+import { StreamingASRClient, speechRecorder, audioRelayMixer, blobToBase64, captureSpeakerAudio, type StreamRecording } from './audio'
 import { useASRStore, type UtteranceEntry } from '@/store/useASRStore'
 import type { TranscribeResponse } from '@/services/api'
 
@@ -17,9 +17,10 @@ function formatTime(date: Date): string {
   return `${h}:${min}:${s}`
 }
 
-class LiveCaptionService {
+export class LiveCaptionService {
   private streamer: StreamingASRClient | null = null
   private finalized = true
+  private sessionTaskId = ''
 
   get isActive(): boolean {
     return this.streamer !== null
@@ -43,6 +44,7 @@ class LiveCaptionService {
     // Reset transient state
     state.setLiveUtterances([])
     this.finalized = false
+    this.sessionTaskId = `live_${Date.now()}`
     state.setLiveCaptionStatus('connecting')
 
     // Requirement 2a: show caption overlay immediately
@@ -80,6 +82,7 @@ class LiveCaptionService {
       }
       if (event.type === 'final') {
         this.finalizeUtterance(event.text)
+        this.syncCurrentResult()
         this.refreshCaptionOverlay()
         s.setLiveCaptionStatus('listening')
       }
@@ -89,7 +92,7 @@ class LiveCaptionService {
       }
       if (event.type === 'closed') {
         this.streamer = null
-        this.saveToHistory()
+        this.saveToHistory(event.recording)
       }
     })
 
@@ -126,7 +129,6 @@ class LiveCaptionService {
     s.stop()
     await window.electronAPI?.hideCaptionOverlay()
     window.electronAPI?.notifyLiveCaptionState(false)
-    this.saveToHistory()
   }
 
   async toggle(): Promise<void> {
@@ -181,18 +183,9 @@ class LiveCaptionService {
     })
   }
 
-  private saveToHistory(): void {
-    if (this.finalized) return
-    this.finalized = true
-
+  private buildCurrentResult(): TranscribeResponse {
     const s = useASRStore.getState()
-    s.setLiveCaptionStatus('idle')
-    s.updateSettings({ liveCaptionEnabled: false })
-
     const utterances = s.liveUtterances.filter((u) => u.text.trim())
-    if (!utterances.length) return
-
-    // Requirement 1: each utterance gets its own timestamp block
     const fullText = utterances
       .map((u) => {
         const start = formatTime(u.startedAt)
@@ -200,9 +193,8 @@ class LiveCaptionService {
         return `${start}  → ${end}\n${u.text}`
       })
       .join('\n\n')
-
-    const result: TranscribeResponse = {
-      task_id: `live_${Date.now()}`,
+    return {
+      task_id: this.sessionTaskId || `live_${Date.now()}`,
       status: 'success',
       full_text: fullText,
       segments: utterances.map((u) => ({
@@ -216,13 +208,68 @@ class LiveCaptionService {
       duration_sec: null,
       elapsed_sec: null,
     }
-    s.setCurrentResult(result)
-    s.addHistory({
-      ...result,
-      id: result.task_id,
-      created_at: new Date().toISOString(),
-      filename: 'live_caption.pcm',
-    })
+  }
+
+  private syncCurrentResult() {
+    const result = this.buildCurrentResult()
+    if (result.full_text) useASRStore.getState().setCurrentResult(result)
+  }
+
+  private saveToHistory(recording: StreamRecording | null): void {
+    if (this.finalized) return
+    this.finalized = true
+
+    const s = useASRStore.getState()
+    s.setLiveCaptionStatus('idle')
+    s.updateSettings({ liveCaptionEnabled: false })
+
+    const utterances = s.liveUtterances.filter((u) => u.text.trim())
+    const result = this.buildCurrentResult()
+    result.duration_sec = recording?.durationSec || null
+    if (utterances.length) {
+      s.setCurrentResult(result)
+      s.addHistory({
+        ...result,
+        id: result.task_id,
+        created_at: new Date().toISOString(),
+        filename: 'live_caption.wav',
+      })
+    }
+    const first = utterances[0]
+    const last = utterances[utterances.length - 1]
+    void (async () => {
+      const archived = await window.electronAPI?.archiveTranscription({
+        archiveRoot: s.settings.archiveDir || undefined,
+        archiveCategory: '实时识别',
+        taskId: result.task_id,
+        filename: 'live_caption.wav',
+        audioBase64: recording ? await blobToBase64(recording.blob) : undefined,
+        audioExtension: '.wav',
+        metadata: {
+          task_id: result.task_id,
+          filename: 'live_caption.wav',
+          full_text: result.full_text,
+          segments: result.segments,
+          language: result.language,
+          engine_used: result.engine_used,
+          duration_sec: result.duration_sec,
+          sample_rate: recording?.sampleRate,
+          samples: recording?.samples,
+          user_id: s.settings.userId || undefined,
+          category: '实时转录',
+          type: '实时转录',
+          spoken_at: {
+            start: first?.startedAt.toISOString() || new Date().toISOString(),
+            end: (last?.endedAt || new Date()).toISOString(),
+          },
+        },
+      })
+      if (!archived) return
+      const update = { archived_audio: archived.audio || '', archived_json: archived.json } as Partial<TranscribeResponse>
+      s.updateHistoryResult(result.task_id, update)
+      const current = useASRStore.getState().currentResult
+      if (current?.task_id === result.task_id) s.setCurrentResult({ ...current, ...update } as TranscribeResponse)
+    })().catch((archiveError) => console.warn(archiveError))
   }
 }
 

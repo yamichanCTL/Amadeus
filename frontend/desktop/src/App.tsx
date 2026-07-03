@@ -17,6 +17,8 @@ import { VoiceChangerPage } from '@/pages/VoiceChanger'
 import { DebugConsolePage } from '@/pages/DebugConsole'
 import { audioRelayMixer, runAudioRelayDeviceE2E, speechRecorder } from '@/services/audio'
 import { liveCaptionService } from '@/services/liveCaption'
+import { buildLocalSummaryRecords } from '@/services/summaryRecords'
+import { saveSummaryToLocalLog } from '@/services/summaryLog'
 
 const isE2EMode = new URLSearchParams(window.location.search).get('e2e') === '1'
 
@@ -259,6 +261,15 @@ export default function App() {
       running = true
       const attemptedAt = now.toISOString()
       try {
+        const records = latest.passiveSummarySource === 'server' ? undefined : buildLocalSummaryRecords(
+          useASRStore.getState().history,
+          {
+            date: localDateValue(now),
+            category: latest.passiveSummaryCategory,
+            startTime: latest.passiveSummaryStartTime,
+            endTime: latest.passiveSummaryEndTime,
+          }
+        )
         const summary = await api.summarizeArchive({
           date: localDateValue(now),
           user_id: latest.passiveSummaryUserId.trim() || undefined,
@@ -271,15 +282,10 @@ export default function App() {
           api_token: latest.llmApiToken,
           prompt: latest.summaryPrompt,
           style: latest.llmStyle || '工作纪要',
-          max_input_chars: 24000
+          max_input_chars: 24000,
+          records,
         })
-        if (latest.passiveSummaryAutoCloudSave) {
-          await api.saveArchiveSummary({
-            summary,
-            user_id: latest.passiveSummaryUserId.trim() || undefined,
-            category: '被动总结'
-          })
-        }
+        await saveSummaryToLocalLog(summary, latest.archiveDir)
       } catch (error) {
         console.warn('Passive summary failed', error)
       } finally {
@@ -299,6 +305,7 @@ export default function App() {
     settings.passiveSummaryFrequencyMin,
     settings.passiveSummaryStartTime,
     settings.passiveSummaryEndTime,
+    settings.passiveSummarySource,
     updateSettings
   ])
 

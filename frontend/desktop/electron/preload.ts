@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readFileBase64: (filePath: string) => ipcRenderer.invoke('fs:readFileBase64', filePath),
   fileInfo: (filePath: string) => ipcRenderer.invoke('fs:fileInfo', filePath),
   archiveTranscription: (args: unknown) => ipcRenderer.invoke('archive:transcription', args),
+  saveSummaryLog: (args: unknown) => ipcRenderer.invoke('archive:summaryLog', args),
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   getTheme: () => ipcRenderer.invoke('theme:get'),
   setTheme: (theme: string) => ipcRenderer.invoke('theme:set', theme),
@@ -32,7 +33,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   captureTextTarget: () => ipcRenderer.invoke('text:captureTarget'),
   injectText: (text: string) => ipcRenderer.invoke('text:inject', text),
   textToClipboard: (text: string) => {
-    ipcRenderer.send('text:toClipboard', text)
+    const write = globalThis.navigator?.clipboard?.writeText(text)
+    if (write) void write.catch(() => ipcRenderer.send('text:toClipboard', text))
+    else ipcRenderer.send('text:toClipboard', text)
     return true
   },
   showStatusOverlay: (status: string, level = 0, message = '') => ipcRenderer.invoke('statusOverlay:show', status, level, message),

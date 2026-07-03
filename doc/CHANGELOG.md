@@ -4,6 +4,24 @@
 > **子文档**:
 > - [桌面端文档](desktop/README.md)
 
+## [2026-07-04] 修复桌面归档、总结来源、结果回填与 Qwen3-ASR 持久化
+
+- **类型**: feat / fix / refactor / test / docs
+- **描述**: 实时识别现在收集实际发送的 PCM 并归档 WAV；本机识别归档按媒体类型、识别类别和日期分层。主动/被动总结显式选择本机记录或服务端归档，复用可命名、编辑和新增的 Prompt 卡片，且每次生成后自动写入唯一 Markdown 日志。离线与实时结果优先回填软件内结果区，弹窗复制从主进程同步路径移出；模型管理删除重复 LLM 后处理选项，字幕预览随设置实时更新。后端统一把 Qwen3-ASR 第三方结果转换为 JSON-safe 数据后再持久化。
+- **影响范围**: `frontend/desktop/{electron,src}`、`backend/app/{core,db}`、目标测试与 `doc/{desktop,asrapp/backend}`
+- **验证**: Desktop Vitest 29 files / 94 tests；renderer/Electron TypeScript、Vite 生产构建（82 modules）、Qwen JSON 定向 pytest 4 passed、Python compileall、VitePress 与 `git diff --check` 通过。当前环境的 Electron 截图执行因审批额度拒绝，未计为当前 UI 截图通过。
+- **Plan**: [链接到 plan 文件](plans/2026-07-04-desktop-archive-summary-autofill-qwen-fixes.md)
+- **报告**: [桌面归档、总结来源、结果回填与 Qwen3-ASR 验证报告](reports/2026-07-04-desktop-archive-summary-autofill-qwen-report.md)
+
+## [2026-07-03] 桌面总结持久化、Prompt 卡片与分页设置
+
+- **类型**: feat / fix / refactor / test / docs
+- **描述**: 当日总结表单与结果提升为持久 store 状态并安全渲染 Markdown；模型管理页签更名为“LLM 设置”并移除重复 Prompt；语音识别页新增可选择、命名、编辑、保存、新增和删除的 Prompt 卡片；设置页按四类分页，默认开启桌面字幕；前端目录只用于本机保存且不再发送 `archive_dir`；隐私关闭时把最小化本机记录临时发送后端总结，主动/被动结果写入本机 `summary-logs`。
+- **影响范围**: `frontend/desktop/{src,electron,scripts}`、`backend/app/{schemas/llm.py,core/llm.py}`、目标测试、`doc/desktop/`、`doc/asrapp/backend/API.md`
+- **验证**: Desktop Vitest 22 files / 79 tests；renderer/Electron TypeScript、Vite build、Python compileall、后端本机 records 纯函数与四页 Electron 截图通过；后端 API pytest fixture 75 秒无输出后中止，未计为通过。
+- **Plan**: [链接到 plan 文件](plans/2026-07-03-desktop-summary-prompt-cards-settings-pages.md)
+- **报告**: [总结持久化、Prompt 卡片与分页设置验证报告](reports/2026-07-03-summary-prompt-cards-settings-pages-report.md)
+
 ## [2026-07-02] 提高初始窗口上限并保持居中
 
 - **类型**: fix / test / docs

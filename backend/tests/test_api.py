@@ -574,6 +574,52 @@ async def test_archive_summary_uses_compact_transcript(async_client: AsyncClient
 
 
 @pytest.mark.asyncio
+async def test_archive_summary_accepts_explicit_local_records_without_server_archive(
+    async_client: AsyncClient,
+    fake_llm,
+) -> None:
+    resp = await async_client.post(
+        "/v1/llm/archive-summary",
+        json={
+            "date": "2026-07-03",
+            "user_id": "local-only-user",
+            "category": "实时转录",
+            "provider": "deepseek",
+            "model": "demo-model",
+            "base_url": "https://llm.test/v1",
+            "api_token": "secret-token",
+            "prompt": "总结本机记录",
+            "records": [
+                {
+                    "started_at": "2026-07-03T09:10:00+08:00",
+                    "ended_at": "2026-07-03T09:11:00+08:00",
+                    "category": "实时转录",
+                    "text": "这是只保存在用户电脑上的实时记录",
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["source_count"] == 1
+    prompt = fake_llm.calls[0]["json"]["messages"][1]["content"]
+    assert "这是只保存在用户电脑上的实时记录" in prompt
+    assert "local-only-user" not in prompt
+    assert "secret-token" not in prompt
+
+    rejected = await async_client.post(
+        "/v1/llm/archive-summary",
+        json={
+            "date": "2026-07-03",
+            "model": "demo-model",
+            "base_url": "https://llm.test/v1",
+            "api_token": "secret-token",
+            "records": [{"text": "本机记录", "audio_path": "/private/audio.wav"}],
+        },
+    )
+    assert rejected.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_archive_summary_streams_deltas(async_client: AsyncClient, fake_llm) -> None:
     from datetime import datetime, timezone
     import json

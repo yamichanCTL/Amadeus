@@ -12,11 +12,19 @@ export type CaptionOverlayOptions = {
 
 export type ArchiveTranscriptionArgs = {
   archiveRoot?: string
+  archiveCategory?: string
   taskId: string
   filename: string
   audioBase64?: string
   audioExtension?: string
   metadata: Record<string, unknown>
+}
+
+export type SummaryLogArgs = {
+  archiveRoot?: string
+  date: string
+  filename?: string
+  content: string
 }
 
 declare global {
@@ -44,6 +52,7 @@ declare global {
       readFileBase64: (path: string) => Promise<string>
       fileInfo: (path: string) => Promise<{ name: string; size: number; path: string }>
       archiveTranscription: (args: ArchiveTranscriptionArgs) => Promise<{ audio?: string; json: string }>
+      saveSummaryLog: (args: SummaryLogArgs) => Promise<{ saved: boolean; path: string }>
       openExternal: (url: string) => Promise<void>
       getTheme: () => Promise<'dark' | 'light'>
       setTheme: (theme: 'system' | 'light' | 'dark') => Promise<boolean>

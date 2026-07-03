@@ -44,7 +44,6 @@ export function buildTranscribeOptions(): TranscribeOptions {
     enable_punctuation: settings.enablePunctuation,
     enable_hotwords: true,
     allow_server_data_collection: settings.allowServerDataCollection,
-    archive_dir: settings.archiveDir || undefined,
     user_id: settings.userId || undefined,
   }
   if ((settings.llmAutoPolish || settings.llmAutoTranslate) && settings.llmModel.trim() && settings.llmBaseUrl.trim() && settings.llmApiToken.trim()) {
@@ -249,6 +248,11 @@ export class RecordingService {
       if (isAsyncResponse(response)) s1.setActiveTaskId(response.task_id)
       const result = isAsyncResponse(response) ? await this.pollTask(api, response.task_id, controller.signal) : response
       useASRStore.getState().setActiveTaskId(null)
+      // Publish to the Amadeus result panel before any cross-application text
+      // injection or clipboard work. Windows UIAutomation may stall, but the
+      // result inside this software must already be visible and copyable.
+      const persistencePromise = this.persistResult(result, filename, blob)
+      recordTelemetryStage(trace, '软件结果已回填')
       recordTelemetryStage(trace, '自动回填开始')
       const deliveryPromise = this.deliverResult(result, autoInject, myId).then(() => {
         recordTelemetryStage(trace, '自动回填完成')
@@ -278,9 +282,7 @@ export class RecordingService {
           recordTelemetryStage(trace, label, { durationMs, backendMs: durationMs, offsetMs: backendCursorMs })
         }
       }
-      // Run persist and delivery in parallel — persist updates local state,
-      // delivery injects text to foreground window. They don't depend on each other.
-      await Promise.all([this.persistResult(result, filename, blob), deliveryPromise])
+      await Promise.all([persistencePromise, deliveryPromise])
       recordTelemetryStage(trace, '前端归档与展示')
       finishTelemetryTrace(trace, `${result.full_text.length} 字`)
     } catch (transcribeError) {
@@ -393,6 +395,7 @@ export class RecordingService {
       const archiveRoot = archiveDir || (await window.electronAPI?.getDefaultArchiveDir()) || ''
       const archived = await window.electronAPI?.archiveTranscription({
         archiveRoot,
+        archiveCategory: '离线语音识别',
         taskId: result.task_id,
         filename,
         audioBase64: await blobToBase64(blob),
@@ -409,7 +412,14 @@ export class RecordingService {
           elapsed_sec: result.elapsed_sec,
           timing: result.timing,
           client_timing: result.client_timing,
-          user_id: useASRStore.getState().settings.userId || undefined
+          user_id: useASRStore.getState().settings.userId || undefined,
+          category: '一段语音转写',
+          type: '一段语音转写',
+          llm_outputs: result.llm_outputs,
+          labels: {
+            asr: result.full_text,
+            ai_polished: result.llm_outputs?.polish?.text || result.llm_outputs?.translate?.text || undefined,
+          },
         }
       })
       const archived_audio = archived?.audio || ''

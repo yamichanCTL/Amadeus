@@ -1,7 +1,11 @@
-import { useMemo, useState } from 'react'
-import { ASRApi, type ArchiveSummaryResult } from '@/services/api'
+import { useMemo } from 'react'
+import { MarkdownContent } from '@/components/MarkdownContent'
+import { PromptCardEditor } from '@/components/PromptCardEditor'
+import { ASRApi } from '@/services/api'
 import { saveText } from '@/services/export'
 import { getProviderPreset } from '@/services/llmProviders'
+import { saveSummaryToLocalLog, summaryLogFilename } from '@/services/summaryLog'
+import { buildLocalSummaryRecords } from '@/services/summaryRecords'
 import { useASRStore } from '@/store/useASRStore'
 
 function localDateValue(date = new Date()) {
@@ -29,33 +33,31 @@ function formatStat(value: number) {
 
 export function SummaryPage() {
   const settings = useASRStore((state) => state.settings)
+  const history = useASRStore((state) => state.history)
+  const workspace = useASRStore((state) => state.summaryWorkspace)
   const setPage = useASRStore((state) => state.setPage)
   const updateSettings = useASRStore((state) => state.updateSettings)
-  const [date, setDate] = useState(localDateValue())
-  const [userId, setUserId] = useState('dsm')
-  const [category, setCategory] = useState('实时转录')
-  const initialTimeRange = useMemo(() => defaultSummaryTimeRange(), [])
-  const [startTime, setStartTime] = useState(initialTimeRange.startTime)
-  const [endTime, setEndTime] = useState(initialTimeRange.endTime)
-  const [maxInputChars, setMaxInputChars] = useState(24000)
-  const [summary, setSummary] = useState<ArchiveSummaryResult | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [saveMessage, setSaveMessage] = useState('')
+  const updateWorkspace = useASRStore((state) => state.updateSummaryWorkspace)
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
   const providerPreset = getProviderPreset(settings.llmProvider)
+  const { source, date, userId, category, startTime, endTime, maxInputChars, result, loading, error, saveMessage } = workspace
 
   const canRun = Boolean(settings.llmModel.trim() && settings.llmBaseUrl.trim() && settings.llmApiToken.trim())
+  const localRecords = useMemo(() => buildLocalSummaryRecords(history, {
+    date,
+    category,
+    startTime,
+    endTime,
+  }), [category, date, endTime, history, startTime])
 
   const runSummary = async () => {
     if (!canRun) {
-      setError('请先在模型管理中填写大模型厂商、模型和 API Token')
+      updateWorkspace({ error: '请先在模型管理的 LLM 设置中填写厂商、模型和 API Token' })
       return
     }
-    setLoading(true)
-    setError('')
+    updateWorkspace({ loading: true, error: '', saveMessage: '' })
     try {
-      const result = await api.summarizeArchive({
+      const summary = await api.summarizeArchive({
         date,
         user_id: userId.trim() || undefined,
         category: category.trim() || undefined,
@@ -67,38 +69,30 @@ export function SummaryPage() {
         api_token: settings.llmApiToken,
         prompt: settings.summaryPrompt,
         style: settings.llmStyle || '工作纪要',
-        max_input_chars: maxInputChars
+        max_input_chars: maxInputChars,
+        records: source === 'local' ? localRecords : undefined,
       })
-      setSummary(result)
-      setSaveMessage('')
+      updateWorkspace({ result: summary, loading: false })
+      try {
+        const saved = await saveSummaryToLocalLog(summary, settings.archiveDir)
+        updateWorkspace({
+          saveMessage: saved ? `已自动保存总结日志：${saved.path}` : '总结已生成；浏览器环境未写入 Electron 日志目录',
+        })
+      } catch (saveError) {
+        updateWorkspace({ error: saveError instanceof Error ? `总结已生成，但自动保存失败：${saveError.message}` : '总结已生成，但自动保存失败' })
+      }
     } catch (summaryError) {
-      setError(summaryError instanceof Error ? summaryError.message : '当日总结失败')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const summaryFilename = () => `summary_${date}_${startTime || 'start'}_${endTime || 'end'}.md`
-
-  const saveLocal = async () => {
-    if (!summary) return
-    const ok = await saveText(summary.summary, summaryFilename())
-    if (ok) setSaveMessage('已保存到本地')
-  }
-
-  const saveCloud = async () => {
-    if (!summary) return
-    setError('')
-    try {
-      const result = await api.saveArchiveSummary({
-        summary,
-        user_id: userId.trim() || undefined,
-        category: '当日总结'
+      updateWorkspace({
+        loading: false,
+        error: summaryError instanceof Error ? summaryError.message : '当日总结失败',
       })
-      setSaveMessage(`云端已保存：${result.path}`)
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : '云端保存失败')
     }
+  }
+
+  const saveAs = async () => {
+    if (!result) return
+    const ok = await saveText(result.summary, summaryLogFilename(result))
+    if (ok) updateWorkspace({ saveMessage: '已另存为 Markdown 文件', error: '' })
   }
 
   return (
@@ -106,7 +100,7 @@ export function SummaryPage() {
       <header className="page-heading">
         <div>
           <h1>当日总结</h1>
-          <p>按日期、用户与时间段汇总归档 ASR 文本。</p>
+          <p>从本机记录或服务端归档提取指定时间段，返回 Markdown 总结。</p>
         </div>
         <button type="button" onClick={() => setPage('models')}>模型管理</button>
       </header>
@@ -119,16 +113,23 @@ export function SummaryPage() {
           </div>
           <div className="summary-form">
             <label>
+              文本来源
+              <select value={source} onChange={(event) => updateWorkspace({ source: event.target.value as typeof source, result: null })}>
+                <option value="local">本机记录</option>
+                <option value="server">服务端归档</option>
+              </select>
+            </label>
+            <label>
               日期
-              <input type="date" value={date} onChange={(event) => setDate(event.target.value)} />
+              <input type="date" value={date} onChange={(event) => updateWorkspace({ date: event.target.value, result: null })} />
             </label>
             <label>
               用户
-              <input value={userId} placeholder="留空为全部用户" onChange={(event) => setUserId(event.target.value)} />
+              <input value={userId} placeholder="留空为全部用户" onChange={(event) => updateWorkspace({ userId: event.target.value })} />
             </label>
             <label>
               总结类型
-              <select value={category} onChange={(event) => setCategory(event.target.value)}>
+              <select value={category} onChange={(event) => updateWorkspace({ category: event.target.value, result: null })}>
                 {SUMMARY_CATEGORY_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
@@ -136,34 +137,29 @@ export function SummaryPage() {
             </label>
             <label>
               开始时间
-              <input type="time" value={startTime} onChange={(event) => setStartTime(event.target.value)} />
+              <input type="time" value={startTime} onChange={(event) => updateWorkspace({ startTime: event.target.value, result: null })} />
             </label>
             <label>
               结束时间
-              <input type="time" value={endTime} onChange={(event) => setEndTime(event.target.value)} />
+              <input type="time" value={endTime} onChange={(event) => updateWorkspace({ endTime: event.target.value, result: null })} />
             </label>
             <label>
               输入上限
-              <input
-                type="number"
-                min={4000}
-                max={120000}
-                step={1000}
-                value={maxInputChars}
-                onChange={(event) => setMaxInputChars(Number(event.target.value))}
-              />
+              <input type="number" min={4000} max={120000} step={1000} value={maxInputChars} onChange={(event) => updateWorkspace({ maxInputChars: Number(event.target.value) })} />
             </label>
           </div>
-          <label className="polish-prompt-field">
-            总结 Prompt
-            <textarea
-              rows={5}
-              value={settings.summaryPrompt}
-              placeholder="说明总结重点、格式或希望回答的问题"
-              onChange={(event) => updateSettings({ summaryPrompt: event.target.value })}
-            />
-            <small>Prompt 会放在时间范围和 ASR 原文之前，主动与被动总结共用。</small>
-          </label>
+          <PromptCardEditor
+            title="总结 Prompt 卡片"
+            description="点击卡片立即切换主动与被动总结使用的 Prompt。"
+            cards={settings.summaryPromptCards}
+            activeCardId={settings.activeSummaryPromptCardId}
+            onChange={({ cards, activeCardId, prompt }) => updateSettings({ summaryPromptCards: cards, activeSummaryPromptCardId: activeCardId, summaryPrompt: prompt })}
+          />
+          <div className="summary-source-note">
+            <span>{source === 'local' ? '本机记录' : '服务端归档'}</span>
+            <strong>{source === 'local' ? `${localRecords.length} 条本机记录待发送` : '只查询服务端已经留存的归档'}</strong>
+            <small>{source === 'local' ? '临时发送时间、类别和文本，不发送音频、路径或设备信息。' : '如果服务端从未保存过音频/JSON，请切换为“本机记录”。'}</small>
+          </div>
           <div className="summary-provider">
             <span>模型</span>
             <strong>{settings.llmModel || providerPreset.modelPlaceholder}</strong>
@@ -179,38 +175,23 @@ export function SummaryPage() {
           <div className="section-head compact">
             <h2>总结结果</h2>
             <div className="result-actions">
-              <button type="button" disabled={!summary} onClick={() => window.electronAPI?.textToClipboard(summary?.summary || '')}>复制</button>
-              <button type="button" disabled={!summary} onClick={() => void saveLocal()}>本地保存</button>
-              <button type="button" disabled={!summary} onClick={() => void saveCloud()}>云端保存</button>
+              <button type="button" disabled={!result} onClick={() => window.electronAPI?.textToClipboard(result?.summary || '')}>复制</button>
+              <button type="button" disabled={!result} onClick={() => void saveAs()}>另存为</button>
             </div>
           </div>
           {saveMessage && <p className="status-message">{saveMessage}</p>}
-          {summary ? (
+          {result ? (
             <>
               <div className="summary-stats">
-                <article>
-                  <span>记录数</span>
-                  <strong>{formatStat(summary.source_count)}</strong>
-                </article>
-                <article>
-                  <span>估算输入</span>
-                  <strong>{formatStat(summary.estimated_input_tokens)}</strong>
-                </article>
-                <article>
-                  <span>分块</span>
-                  <strong>{summary.chunk_count}</strong>
-                </article>
-                <article>
-                  <span>范围</span>
-                  <strong>{summary.time_range || '全天'}</strong>
-                </article>
+                <article><span>记录数</span><strong>{formatStat(result.source_count)}</strong></article>
+                <article><span>估算输入</span><strong>{formatStat(result.estimated_input_tokens)}</strong></article>
+                <article><span>分块</span><strong>{result.chunk_count}</strong></article>
+                <article><span>范围</span><strong>{result.time_range || '全天'}</strong></article>
               </div>
-              {summary.truncated && <p className="summary-warning">输入已达到上限，结果只覆盖前 {formatStat(summary.input_chars)} 字。</p>}
-              <pre className="summary-markdown">{summary.summary}</pre>
+              {result.truncated && <p className="summary-warning">输入已达到上限，结果只覆盖前 {formatStat(result.input_chars)} 字。</p>}
+              <MarkdownContent content={result.summary} />
             </>
-          ) : (
-            <p className="empty">选择日期后生成当日归档总结。</p>
-          )}
+          ) : <p className="empty">选择日期后生成当日总结；切换页面不会丢失这里的状态。</p>}
         </section>
       </div>
 
@@ -221,23 +202,12 @@ export function SummaryPage() {
         </div>
         <div className="summary-form passive-summary-form">
           <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={settings.passiveSummaryEnabled}
-              onChange={(event) => updateSettings({ passiveSummaryEnabled: event.target.checked })}
-            />
-            自动按频率总结当日归档
+            <input type="checkbox" checked={settings.passiveSummaryEnabled} onChange={(event) => updateSettings({ passiveSummaryEnabled: event.target.checked })} />
+            启用被动总结
           </label>
           <label>
             频率（分钟）
-            <input
-              type="number"
-              min={5}
-              max={1440}
-              step={5}
-              value={settings.passiveSummaryFrequencyMin}
-              onChange={(event) => updateSettings({ passiveSummaryFrequencyMin: Number(event.target.value) })}
-            />
+            <input type="number" min={5} max={1440} step={5} value={settings.passiveSummaryFrequencyMin} onChange={(event) => updateSettings({ passiveSummaryFrequencyMin: Number(event.target.value) })} />
           </label>
           <label>
             用户
@@ -246,9 +216,14 @@ export function SummaryPage() {
           <label>
             总结类型
             <select value={settings.passiveSummaryCategory} onChange={(event) => updateSettings({ passiveSummaryCategory: event.target.value })}>
-              {SUMMARY_CATEGORY_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
+              {SUMMARY_CATEGORY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <label>
+            文本来源
+            <select value={settings.passiveSummarySource} onChange={(event) => updateSettings({ passiveSummarySource: event.target.value as typeof settings.passiveSummarySource })}>
+              <option value="local">本机记录</option>
+              <option value="server">服务端归档</option>
             </select>
           </label>
           <label>
@@ -259,19 +234,11 @@ export function SummaryPage() {
             结束时间
             <input type="time" value={settings.passiveSummaryEndTime} onChange={(event) => updateSettings({ passiveSummaryEndTime: event.target.value })} />
           </label>
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={settings.passiveSummaryAutoCloudSave}
-              onChange={(event) => updateSettings({ passiveSummaryAutoCloudSave: event.target.checked })}
-            />
-            自动云端保存
-          </label>
         </div>
-        <p className="muted-note">
-          最近执行：{settings.passiveSummaryLastRunAt ? new Date(settings.passiveSummaryLastRunAt).toLocaleString() : '尚未执行'}
-        </p>
+        <p className="muted-note">每次总结完成后都会自动保存到本机总结日志。最近执行：{settings.passiveSummaryLastRunAt ? new Date(settings.passiveSummaryLastRunAt).toLocaleString() : '尚未执行'}</p>
       </section>
     </div>
   )
 }
+
+export { localDateValue }

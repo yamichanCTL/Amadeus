@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AudioPlayer } from '@/components/AudioPlayer'
 import { DropZone, type LocalAudioFile } from '@/components/DropZone'
 import { RecordButton } from '@/components/RecordButton'
+import { PromptCardEditor } from '@/components/PromptCardEditor'
 import { ASRApi, type LLMOperation, type TranscribeResponse } from '@/services/api'
 import { liveCaptionService } from '@/services/liveCaption'
 import { recordingService, selectDeliveryText } from '@/services/recordingService'
@@ -217,7 +218,7 @@ export function TranscribePage() {
                 </article>
                 {(currentResult.llm_outputs?.polish?.text || currentResult.llm_outputs?.translate?.text) && (
                   <article>
-                    <time>润色/翻译</time>
+                    <time>LLM 处理</time>
                     <p>{currentResult.llm_outputs?.polish?.text || currentResult.llm_outputs?.translate?.text}</p>
                   </article>
                 )}
@@ -229,7 +230,7 @@ export function TranscribePage() {
               <div className="preview-actions">
                 <button type="button" disabled={!currentResult} onClick={copyDisplayedResult}>{copied ? '已复制' : '复制结果'}</button>
                 <button type="button" disabled={!currentResult || llmStatus !== 'idle'} onClick={() => void processCurrentText()}>
-                  {llmStatus !== 'idle' ? '处理中' : '润色/翻译'}
+                  {llmStatus !== 'idle' ? '处理中' : '使用当前 Prompt'}
                 </button>
               </div>
               {currentResult && <AudioPlayer item={currentResult} />}
@@ -263,20 +264,17 @@ export function TranscribePage() {
                 }}
               >
                 <span>AI</span>
-                <strong>润色/翻译</strong>
+                <strong>LLM 处理</strong>
                 <small>{settings.llmAutoPolish || settings.llmAutoTranslate ? settings.llmModel || '已开启' : '点击开启'}</small>
               </button>
             </div>
-            <label className="polish-prompt-field">
-              润色/翻译 Prompt
-              <textarea
-                rows={4}
-                value={settings.llmPolishPrompt}
-                onChange={(event) => updateSettings({ llmPolishPrompt: event.target.value })}
-                placeholder="例如：修正错字，或把结果翻译成英文"
-              />
-              <small>同一个模型通过 Prompt 完成润色或翻译；自动增强和手动“润色/翻译”共用此配置。</small>
-            </label>
+            <PromptCardEditor
+              title="LLM Prompt 卡片"
+              description="点击卡片立即切换自动与手动处理使用的 Prompt。"
+              cards={settings.promptCards}
+              activeCardId={settings.activePromptCardId}
+              onChange={({ cards, activeCardId, prompt }) => updateSettings({ promptCards: cards, activePromptCardId: activeCardId, llmPolishPrompt: prompt })}
+            />
           </section>
         </aside>
       </div>

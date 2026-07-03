@@ -173,6 +173,30 @@ curl -X POST "http://localhost:8000/v1/models/whisper/load" \
 | `/v1/voice/convert` | POST | 语音转换 |
 | `/v1/voice/list` | GET | 列出可用声音 |
 | `/v1/records` | GET | 历史转录查询 |
+| `/v1/llm/archive-summary` | POST | 总结服务端归档或客户端显式本机记录 |
+
+`POST /v1/llm/archive-summary` 可选接收 `records`。一旦提供该字段（包括空数组），后端只使用显式记录，不回退读取服务端归档：
+
+```json
+{
+  "date": "2026-07-03",
+  "category": "实时转录",
+  "model": "deepseek-chat",
+  "base_url": "https://api.deepseek.com",
+  "api_token": "仅用于本次 LLM 请求",
+  "prompt": "提取今天的结论和待办",
+  "records": [
+    {
+      "started_at": "2026-07-03T09:10:00+08:00",
+      "ended_at": "2026-07-03T09:11:00+08:00",
+      "category": "实时转录",
+      "text": "只保存在用户电脑上的识别文本"
+    }
+  ]
+}
+```
+
+`records` 最多 2000 条，单条文本最多 100000 字符。schema 不接受音频、路径或任意 metadata 字段进入总结构造；最终 LLM 输入只含时间前缀和文本。
 
 ---
 

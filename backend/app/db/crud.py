@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import ASRTask, TaskStatus, Transcript, User
+from app.core.json_utils import json_safe
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -160,11 +161,11 @@ async def create_transcript(
     transcript = Transcript(
         task_id=task_id,
         full_text=full_text,
-        segments=json.dumps(segments, ensure_ascii=False) if segments else None,
+        segments=json.dumps(json_safe(segments), ensure_ascii=False) if segments else None,
         language=language,
         engine_used=engine_used,
         confidence=confidence,
-        raw_results=json.dumps(raw_results, ensure_ascii=False) if raw_results else None,
+        raw_results=json.dumps(json_safe(raw_results), ensure_ascii=False) if raw_results else None,
     )
     db.add(transcript)
     await db.flush()

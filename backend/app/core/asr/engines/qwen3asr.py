@@ -12,6 +12,7 @@ import soundfile as sf
 
 from app.config import get_settings
 from app.core.asr.base import ASRResult, BaseASREngine, EngineOptions, Segment
+from app.core.json_utils import json_safe
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -122,7 +123,7 @@ class Qwen3ASREngine(BaseASREngine):
                 "model_name": self._model_name,
                 "model_dir": str(self._model_dir),
                 "device": self._device,
-                "result": raw,
+                "result": json_safe(raw),
             },
         )
 

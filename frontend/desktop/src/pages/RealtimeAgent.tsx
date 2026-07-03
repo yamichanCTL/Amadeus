@@ -345,7 +345,6 @@ export function RealtimeAgentPage() {
       enable_punctuation: true,
       enable_hotwords: true,
       allow_server_data_collection: settings.allowServerDataCollection,
-      archive_dir: settings.archiveDir || undefined,
       user_id: settings.userId || undefined
     }
   }

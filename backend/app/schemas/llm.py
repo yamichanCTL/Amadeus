@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 LLMOperation = Literal["polish", "translate"]
@@ -178,6 +178,23 @@ class LLMSpeechRequest(BaseModel):
         return value
 
 
+class ArchiveSummaryRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    started_at: str | None = None
+    ended_at: str | None = None
+    category: str | None = Field(None, max_length=96)
+    text: str = Field(..., min_length=1, max_length=100000)
+
+    @field_validator("text")
+    @classmethod
+    def record_text_non_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
 class ArchiveSummaryRequest(BaseModel):
     date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
     user_id: str | None = None
@@ -191,6 +208,7 @@ class ArchiveSummaryRequest(BaseModel):
     prompt: str | None = None
     style: str | None = "工作纪要"
     max_input_chars: int = Field(24000, ge=4000, le=120000)
+    records: list[ArchiveSummaryRecord] | None = Field(None, max_length=2000)
 
     @field_validator("model", "base_url", "api_token")
     @classmethod

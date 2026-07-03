@@ -10,6 +10,7 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator
+from datetime import datetime
 
 import httpx
 
@@ -448,6 +449,8 @@ async def summarize_archive_stream(request: ArchiveSummaryRequest) -> AsyncItera
 
 
 def _summary_transcript(request: ArchiveSummaryRequest) -> tuple[str, int, int, bool]:
+    if request.records is not None:
+        return _summary_transcript_from_records(request)
     return build_summary_transcript(
         user_id=request.user_id,
         date=request.date,
@@ -456,6 +459,49 @@ def _summary_transcript(request: ArchiveSummaryRequest) -> tuple[str, int, int, 
         end_time=request.end_time,
         max_chars=request.max_input_chars,
     )
+
+
+def _summary_transcript_from_records(request: ArchiveSummaryRequest) -> tuple[str, int, int, bool]:
+    """Compact client-local records without accepting paths or arbitrary metadata."""
+
+    lines: list[tuple[datetime | None, str]] = []
+    for record in request.records or []:
+        if request.category and record.category and record.category != request.category:
+            continue
+        started_at = _parse_client_datetime(record.started_at)
+        ended_at = _parse_client_datetime(record.ended_at) or started_at
+        prefix = _client_time_prefix(started_at, ended_at)
+        lines.append((started_at, f"{prefix} {record.text.strip()}"))
+
+    lines.sort(key=lambda entry: entry[0].timestamp() if entry[0] else 0)
+    selected: list[str] = []
+    used_chars = 0
+    truncated = False
+    for _, line in lines:
+        next_size = used_chars + len(line) + 1
+        if next_size > request.max_input_chars:
+            truncated = True
+            break
+        selected.append(line)
+        used_chars = next_size
+    return "\n".join(selected), len(lines), used_chars, truncated
+
+
+def _parse_client_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _client_time_prefix(started_at: datetime | None, ended_at: datetime | None) -> str:
+    if not started_at:
+        return "[--:--:--]"
+    start = started_at.astimezone().strftime("%H:%M:%S")
+    end = (ended_at or started_at).astimezone().strftime("%H:%M:%S")
+    return f"[{start}-{end}]"
 
 
 def _summary_user_prompt(request: ArchiveSummaryRequest, final_input: str) -> str:

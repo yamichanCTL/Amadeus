@@ -25,6 +25,8 @@ export function SettingsPage() {
   // 满足「未设置不通信」。草稿随已确认地址初始化。
   const [draftServerUrl, setDraftServerUrl] = useState(settings.serverUrl)
   const [serverUrlStatus, setServerUrlStatus] = useState('')
+  const [activeSection, setActiveSection] = useState<'general' | 'audio' | 'recognition' | 'privacy'>('general')
+  const [captionPreviewOpen, setCaptionPreviewOpen] = useState(false)
 
   // 当已确认的后端地址在外部变化时（如迁移清空），同步草稿。
   useEffect(() => { setDraftServerUrl(settings.serverUrl) }, [settings.serverUrl])
@@ -168,15 +170,33 @@ export function SettingsPage() {
     }
   }
 
-  const previewCaption = () => window.electronAPI?.showCaptionOverlay('20:12:41  → 20:13:24\nAmadeus 字幕预览', {
-    fontSize: settings.captionFontSize,
-    color: settings.captionFontColor,
-    backgroundOpacity: settings.captionBackgroundOpacity,
-    width: settings.captionBoxWidth,
-    height: settings.captionBoxHeight,
-    x: settings.captionBoxX,
-    y: settings.captionBoxY,
-  })
+  const previewCaption = () => setCaptionPreviewOpen(true)
+  const hideCaptionPreview = () => {
+    setCaptionPreviewOpen(false)
+    window.electronAPI?.hideCaptionOverlay()
+  }
+
+  useEffect(() => {
+    if (!captionPreviewOpen) return
+    void window.electronAPI?.showCaptionOverlay('20:12:41  → 20:13:24\nAmadeus 字幕预览', {
+      fontSize: settings.captionFontSize,
+      color: settings.captionFontColor,
+      backgroundOpacity: settings.captionBackgroundOpacity,
+      width: settings.captionBoxWidth,
+      height: settings.captionBoxHeight,
+      x: settings.captionBoxX,
+      y: settings.captionBoxY,
+    })
+  }, [
+    captionPreviewOpen,
+    settings.captionBackgroundOpacity,
+    settings.captionBoxHeight,
+    settings.captionBoxWidth,
+    settings.captionBoxX,
+    settings.captionBoxY,
+    settings.captionFontColor,
+    settings.captionFontSize,
+  ])
 
   const chooseArchiveDir = async () => {
     const dir = await window.electronAPI?.openDirectoryDialog()
@@ -219,231 +239,135 @@ export function SettingsPage() {
     })
   }
 
+  const levelBar = (label: string, value: number) => (
+    <div className="audio-level-row">
+      <small>{label}</small>
+      <div><i style={{ width: `${Math.round(value * 100)}%` }} /></div>
+      <small>{Math.round(value * 100)}%</small>
+    </div>
+  )
+
   return (
     <div className="page settings-page">
-      <section className="panel settings-grid">
-        <h1>设置</h1>
-        <label className="wide">
-          用户 ID
-          <div className="inline-control">
-            <input value={settings.userId} maxLength={128} onChange={(event) => updateSettings({ userId: event.target.value, passiveSummaryUserId: event.target.value })} onBlur={() => void saveUserId()} placeholder="用于本机识别归档，例如 dsm" />
-            <button type="button" onClick={() => void saveUserId()}>保存</button>
-          </div>
-          <small>{userIdStatus || '保存在 Electron 应用数据目录的 archive/userid，并用于文件和实时识别归档。'}</small>
-        </label>
-        <label>
-          后端地址
-          <div className="inline-control">
-            <input
-              value={draftServerUrl}
-              onChange={(event) => setDraftServerUrl(event.target.value)}
-              onKeyDown={(event) => { if (event.key === 'Enter') void confirmServerUrl() }}
-              placeholder="http://your-server-ip:18000"
-            />
-            <button type="button" onClick={() => void confirmServerUrl()}>确认</button>
-          </div>
-          <small>{serverUrlStatus || '填写后点击「确认」才保存并开始通信；未确认前不会连接任何后端。实时 ASR+TTS 的 WebSocket 也连向此地址的 /v1/tts/higgs/stream 路由。'}</small>
-          {settings.backendConfirmed && settings.serverUrl && <small className="soft-badge">已确认：{settings.serverUrl}</small>}
-        </label>
-        <label>
-          Higgs TTS 地址
-          <input value={settings.higgsTtsBaseUrl} onChange={(event) => updateSettings({ higgsTtsBaseUrl: event.target.value })} placeholder="http://127.0.0.1:8002" />
-          <small>浏览器不直连 TTS。此地址随 WebSocket config 发送给后端，后端在服务器内部调用 127.0.0.1:TTS端口 完成语音合成。</small>
-        </label>
-        <label>
-          主题
-          <select value={settings.theme} onChange={(event) => updateSettings({ theme: event.target.value as typeof settings.theme })}>
-            <option value="windows">跟随 Windows</option>
-            <option value="system">跟随系统</option>
-            <option value="light">浅色</option>
-            <option value="dark">深色</option>
-          </select>
-        </label>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={settings.autoLaunchEnabled}
-            onChange={(event) => {
-              const enabled = event.target.checked
-              updateSettings({ autoLaunchEnabled: enabled })
-              window.electronAPI?.setAutoLaunch(enabled)
-            }}
-          />
-          开机自动启动 Amadeus
-        </label>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={settings.keepRunningInBackground}
-            onChange={(event) => updateSettings({ keepRunningInBackground: event.target.checked })}
-          />
-          关闭窗口后保留后台运行
-        </label>
-        <label>
-          音频输入
-          <div className="inline-control">
-            <select value={settings.audioInputDeviceId} onChange={(event) => changeAudioInput(event.target.value)}>
-              <option value="">跟随系统</option>
-              <option value="__speaker_loopback__">扬声器（系统音频输出）</option>
-              {devices.map((device) => (
-                <option key={device.deviceId} value={device.deviceId}>{device.label || device.deviceId}</option>
-              ))}
-            </select>
-            <button type="button" disabled={testingMicrophone} onClick={() => void testMicrophone()}>
-              {testingMicrophone ? '测试中' : '测试输入'}
-            </button>
-          </div>
-          {microphoneTest && <small>{microphoneTest}</small>}
-          <small>同时影响实时字幕和快捷识别（{settings.triggerKey === 'AltRight' ? '右 Alt' : settings.triggerKey}）的音频来源。选择扬声器可录制系统播放的声音。</small>
-        </label>
-        <label className="wide">
-          虚拟麦克风输出 / TTS 叠加
-          <div className="inline-control">
-            <select value={settings.audioOutputDeviceId} onChange={(event) => void changeOutputDevice(event.target.value)}>
-              <option value="">系统默认输出</option>
-              {outputDevices.map((device) => (
-                <option key={device.deviceId} value={device.deviceId}>{device.label || device.deviceId}</option>
-              ))}
-            </select>
-            <button type="button" onClick={() => void listAudioOutputDevices().then(setOutputDevices)}>刷新</button>
-            <button type="button" onClick={() => void testAudioOutputDevice(settings.audioOutputDeviceId || undefined).then(() => setRouteStatus('指定输出设备测试音播放完成')).catch((error) => setRouteStatus(error instanceof Error ? error.message : '输出测试失败'))}>测试</button>
-          </div>
-          <small>VB-Audio 用法：这里选择播放端点 CABLE Input；Windows 默认麦克风选择录音端点 CABLE Output。{routeStatus}</small>
-        </label>
-        <label className="wide check route-toggle">
-          <input type="checkbox" checked={settings.audioRelayEnabled} onChange={() => void toggleAudioRelay()} />
-          常态透传已选真实麦克风；播放 TTS 或音效时叠加到同一个虚拟输出
-        </label>
-        {settings.audioRelayEnabled && (
-          <label className="wide debug-monitor-label">
-            <div className="field-header">
-              <span>🔊 通路测试：真实麦克风 → 虚拟麦克风 → 默认扬声器</span>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <small style={{ minWidth: 56 }}>输入电平</small>
-                <div style={{
-                  flex: 1, height: 10, borderRadius: 4,
-                  background: `var(--bg-subtle, #e5e7eb)`,
-                  overflow: 'hidden',
-                }}>
-                  <div style={{
-                    height: '100%', borderRadius: 4,
-                    width: `${Math.round(inputLevel * 100)}%`,
-                    background: inputLevel > 0.8 ? '#ef4444' : inputLevel > 0.3 ? '#22c55e' : '#3b82f6',
-                    transition: 'width 60ms linear',
-                  }} />
-                </div>
-                <small style={{ minWidth: 36, textAlign: 'right' }}>{Math.round(inputLevel * 100)}%</small>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <small style={{ minWidth: 56 }}>监听电平</small>
-                <div style={{
-                  flex: 1, height: 10, borderRadius: 4,
-                  background: `var(--bg-subtle, #e5e7eb)`,
-                  overflow: 'hidden',
-                }}>
-                  <div style={{
-                    height: '100%', borderRadius: 4,
-                    width: `${Math.round(monitorLevel * 100)}%`,
-                    background: monitorLevel > 0.8 ? '#ef4444' : monitorLevel > 0.3 ? '#22c55e' : '#3b82f6',
-                    transition: 'width 60ms linear',
-                  }} />
-                </div>
-                <small style={{ minWidth: 36, textAlign: 'right' }}>{Math.round(monitorLevel * 100)}%</small>
-              </div>
+      <header className="page-heading">
+        <div><h1>设置</h1><p>按功能分页管理应用、音频、识别字幕和数据隐私。</p></div>
+      </header>
+      <nav className="settings-tabs" aria-label="设置分类">
+        {([
+          ['general', '常规'],
+          ['audio', '音频'],
+          ['recognition', '识别与字幕'],
+          ['privacy', '数据与隐私'],
+        ] as const).map(([id, label]) => (
+          <button key={id} type="button" className={activeSection === id ? 'active' : ''} onClick={() => setActiveSection(id)}>{label}</button>
+        ))}
+      </nav>
+
+      {activeSection === 'general' && (
+        <section className="panel settings-section">
+          <div className="section-head"><div><h2>常规</h2><p>账户标识、后端入口和应用启动行为。</p></div></div>
+          <div className="settings-section-grid">
+            <label className="wide">用户 ID
               <div className="inline-control">
-                <button type="button" onClick={() => void toggleMonitor()}>
-                  {monitoring ? '停止监听' : '开始监听'}
-                </button>
+                <input value={settings.userId} maxLength={128} onChange={(event) => updateSettings({ userId: event.target.value, passiveSummaryUserId: event.target.value })} onBlur={() => void saveUserId()} placeholder="用于本机识别归档，例如 dsm" />
+                <button type="button" onClick={() => void saveUserId()}>保存</button>
               </div>
-              {monitorError && <small style={{ color: '#ef4444' }}>{monitorError}</small>}
-              <small>
-                点击"开始监听"后，真实麦克风的声音会从默认扬声器持续播出，用于验证通路是否正常。
-                再次点击"停止监听"结束。虚拟麦克风输出不受影响。请确保 Windows 默认播放设备是真实扬声器而非 CABLE Input，避免反馈。
-              </small>
+              <small>{userIdStatus || '保存在本机应用数据目录，并用于本机记录归档。'}</small>
+            </label>
+            <label className="wide">后端地址
+              <div className="inline-control">
+                <input value={draftServerUrl} onChange={(event) => setDraftServerUrl(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void confirmServerUrl() }} placeholder="http://your-server-ip:18000" />
+                <button type="button" onClick={() => void confirmServerUrl()}>确认</button>
+              </div>
+              <small>{serverUrlStatus || '输入只保存为草稿；点击确认后才开始连接后端。'}</small>
+              {settings.backendConfirmed && settings.serverUrl && <small className="soft-badge">已确认：{settings.serverUrl}</small>}
+            </label>
+            <label>主题
+              <select value={settings.theme} onChange={(event) => updateSettings({ theme: event.target.value as typeof settings.theme })}>
+                <option value="windows">跟随 Windows</option><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option>
+              </select>
+            </label>
+            <div className="settings-toggle-stack">
+              <label className="check"><input type="checkbox" checked={settings.autoLaunchEnabled} onChange={(event) => { const enabled = event.target.checked; updateSettings({ autoLaunchEnabled: enabled }); window.electronAPI?.setAutoLaunch(enabled) }} />开机自动启动 Amadeus</label>
+              <label className="check"><input type="checkbox" checked={settings.keepRunningInBackground} onChange={(event) => updateSettings({ keepRunningInBackground: event.target.checked })} />关闭窗口后保留后台运行</label>
             </div>
-          </label>
-        )}
-        <label>
-          结果输出
-          <select value={settings.injectMode} onChange={(event) => updateSettings({ injectMode: event.target.value as typeof settings.injectMode })}>
-            <option value="inject">自动粘贴</option>
-            <option value="copy">复制到剪贴板</option>
-            <option value="none">不输出</option>
-          </select>
-        </label>
-        <label>
-          触发类型
-          <select value={settings.triggerType} onChange={(event) => updateSettings({ triggerType: event.target.value as typeof settings.triggerType })}>
-            <option value="mouse">鼠标按键</option>
-            <option value="keyboard">键盘快捷键</option>
-          </select>
-        </label>
-        <label>
-          触发键
-          {settings.triggerType === 'mouse' ? (
-            <TriggerCapture value={settings.triggerKey} onChange={(value) => updateSettings({ triggerKey: value })} />
-          ) : (
-            <HotkeyCapture value={settings.triggerKey} onChange={(value) => updateSettings({ triggerKey: value })} />
-          )}
-          {settings.triggerType === 'keyboard' && settings.triggerKey === 'AltRight' && <small>默认：右 Alt；Windows 支持全局触发，其他平台需保持应用获得键盘事件。</small>}
-        </label>
-        <label>
-          切片秒数
-          <input type="number" min={2} max={15} value={settings.liveCaptionChunkSec} onChange={(event) => updateSettings({ liveCaptionChunkSec: Number(event.target.value) })} />
-        </label>
-        <label>
-          字幕字号
-          <input type="number" min={12} max={48} value={settings.captionFontSize} onChange={(event) => updateSettings({ captionFontSize: Number(event.target.value) })} />
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={settings.showDesktopCaptions} onChange={(event) => updateSettings({ showDesktopCaptions: event.target.checked })} />
-          实时识别时显示桌面字幕框
-        </label>
-        <label>
-          字幕宽度
-          <input type="range" min={320} max={1200} step={10} value={settings.captionBoxWidth} onChange={(event) => updateSettings({ captionBoxWidth: Number(event.target.value) })} />
-          <small>{settings.captionBoxWidth}px</small>
-        </label>
-        <label>
-          字幕高度
-          <input type="range" min={96} max={500} step={4} value={settings.captionBoxHeight} onChange={(event) => updateSettings({ captionBoxHeight: Number(event.target.value) })} />
-          <small>{settings.captionBoxHeight}px</small>
-        </label>
-        <label>
-          字幕颜色
-          <input type="color" value={settings.captionFontColor} onChange={(event) => updateSettings({ captionFontColor: event.target.value })} />
-        </label>
-        <label>
-          背景透明度
-          <input type="range" min={0} max={1} step={0.01} value={settings.captionBackgroundOpacity} onChange={(event) => updateSettings({ captionBackgroundOpacity: Number(event.target.value) })} />
-        </label>
-        <div className="wide caption-settings-actions">
-          <button type="button" onClick={() => void previewCaption()}>预览字幕框</button>
-          <button type="button" onClick={() => window.electronAPI?.hideCaptionOverlay()}>隐藏字幕框</button>
-          <button type="button" onClick={() => updateSettings({ captionBoxX: null, captionBoxY: null })}>恢复默认位置</button>
-        </div>
-        <label>
-          超时秒数
-          <input type="number" min={0} value={settings.timeoutSec} onChange={(event) => updateSettings({ timeoutSec: Number(event.target.value) })} />
-        </label>
-        <label className="wide">
-          归档目录
-          <div className="path-picker">
-            <input value={settings.archiveDir} placeholder="默认使用应用数据目录/archive" onChange={(event) => updateSettings({ archiveDir: event.target.value })} />
-            <button type="button" onClick={chooseArchiveDir}>选择</button>
           </div>
-        </label>
-        <label className="check wide">
-          <input
-            type="checkbox"
-            checked={settings.allowServerDataCollection}
-            onChange={(event) => updateSettings({ allowServerDataCollection: event.target.checked })}
-          />
-          允许服务端保存调试数据
-        </label>
-      </section>
+        </section>
+      )}
+
+      {activeSection === 'audio' && (
+        <section className="panel settings-section">
+          <div className="section-head"><div><h2>音频</h2><p>选择物理输入、系统回环和虚拟麦克风输出。</p></div></div>
+          <div className="settings-section-grid">
+            <label>音频输入
+              <div className="inline-control">
+                <select value={settings.audioInputDeviceId} onChange={(event) => changeAudioInput(event.target.value)}>
+                  <option value="">跟随系统</option><option value="__speaker_loopback__">扬声器（系统音频输出）</option>
+                  {devices.map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label || device.deviceId}</option>)}
+                </select>
+                <button type="button" disabled={testingMicrophone} onClick={() => void testMicrophone()}>{testingMicrophone ? '测试中' : '测试输入'}</button>
+              </div>
+              <small>{microphoneTest || '影响实时字幕和快捷识别的音频来源。'}</small>
+            </label>
+            <label>虚拟麦克风输出 / TTS 叠加
+              <div className="inline-control">
+                <select value={settings.audioOutputDeviceId} onChange={(event) => void changeOutputDevice(event.target.value)}>
+                  <option value="">系统默认输出</option>{outputDevices.map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label || device.deviceId}</option>)}
+                </select>
+                <button type="button" onClick={() => void listAudioOutputDevices().then(setOutputDevices)}>刷新</button>
+                <button type="button" onClick={() => void testAudioOutputDevice(settings.audioOutputDeviceId || undefined).then(() => setRouteStatus('指定输出设备测试音播放完成')).catch((error) => setRouteStatus(error instanceof Error ? error.message : '输出测试失败'))}>测试</button>
+              </div>
+              <small>{routeStatus}</small>
+            </label>
+            <label className="wide check route-toggle"><input type="checkbox" checked={settings.audioRelayEnabled} onChange={() => void toggleAudioRelay()} />常态透传真实麦克风，并将 TTS / 音效叠加到同一个虚拟输出</label>
+            {settings.audioRelayEnabled && <div className="wide audio-monitor-card">
+              <strong>通路测试</strong>{levelBar('输入电平', inputLevel)}{levelBar('监听电平', monitorLevel)}
+              <div className="inline-control"><button type="button" onClick={() => void toggleMonitor()}>{monitoring ? '停止监听' : '开始监听'}</button></div>
+              {monitorError && <small className="error">{monitorError}</small>}
+            </div>}
+          </div>
+        </section>
+      )}
+
+      {activeSection === 'recognition' && (
+        <section className="panel settings-section">
+          <div className="section-head"><div><h2>识别与字幕</h2><p>配置快捷识别输出和桌面字幕框。</p></div></div>
+          <div className="settings-subgrid">
+            <article className="settings-card"><h3>识别与触发</h3>
+              <label>结果输出<select value={settings.injectMode} onChange={(event) => updateSettings({ injectMode: event.target.value as typeof settings.injectMode })}><option value="inject">自动粘贴</option><option value="copy">复制到剪贴板</option><option value="none">不输出</option></select></label>
+              <label>触发类型<select value={settings.triggerType} onChange={(event) => updateSettings({ triggerType: event.target.value as typeof settings.triggerType })}><option value="mouse">鼠标按键</option><option value="keyboard">键盘快捷键</option></select></label>
+              <label>触发键{settings.triggerType === 'mouse' ? <TriggerCapture value={settings.triggerKey} onChange={(value) => updateSettings({ triggerKey: value })} /> : <HotkeyCapture value={settings.triggerKey} onChange={(value) => updateSettings({ triggerKey: value })} />}</label>
+              <label>超时秒数<input type="number" min={0} value={settings.timeoutSec} onChange={(event) => updateSettings({ timeoutSec: Number(event.target.value) })} /></label>
+            </article>
+            <article className="settings-card"><h3>桌面字幕</h3>
+              <label className="check featured-toggle"><input type="checkbox" checked={settings.showDesktopCaptions} onChange={(event) => updateSettings({ showDesktopCaptions: event.target.checked })} />实时识别时显示桌面字幕框</label>
+              <label>切片秒数<input type="number" min={2} max={15} value={settings.liveCaptionChunkSec} onChange={(event) => updateSettings({ liveCaptionChunkSec: Number(event.target.value) })} /></label>
+              <label>字幕字号<input type="number" min={12} max={48} value={settings.captionFontSize} onChange={(event) => updateSettings({ captionFontSize: Number(event.target.value) })} /></label>
+              <label>字幕颜色<input type="color" value={settings.captionFontColor} onChange={(event) => updateSettings({ captionFontColor: event.target.value })} /></label>
+              <label>字幕宽度<input type="range" min={320} max={1200} step={10} value={settings.captionBoxWidth} onChange={(event) => updateSettings({ captionBoxWidth: Number(event.target.value) })} /><small>{settings.captionBoxWidth}px</small></label>
+              <label>字幕高度<input type="range" min={96} max={500} step={4} value={settings.captionBoxHeight} onChange={(event) => updateSettings({ captionBoxHeight: Number(event.target.value) })} /><small>{settings.captionBoxHeight}px</small></label>
+              <label>背景透明度<input type="range" min={0} max={1} step={0.01} value={settings.captionBackgroundOpacity} onChange={(event) => updateSettings({ captionBackgroundOpacity: Number(event.target.value) })} /></label>
+              <div className="caption-settings-actions"><button type="button" onClick={previewCaption}>{captionPreviewOpen ? '预览已实时同步' : '预览字幕框'}</button><button type="button" onClick={hideCaptionPreview}>隐藏</button><button type="button" onClick={() => updateSettings({ captionBoxX: null, captionBoxY: null })}>恢复位置</button></div>
+            </article>
+          </div>
+        </section>
+      )}
+
+      {activeSection === 'privacy' && (
+        <section className="panel settings-section">
+          <div className="section-head"><div><h2>数据与隐私</h2><p>本机目录与服务端留存是两个独立开关。</p></div></div>
+          <div className="settings-section-grid">
+            <label className="wide">本机数据保存目录
+              <div className="path-picker"><input value={settings.archiveDir} readOnly placeholder="默认使用应用数据目录/archive" /><button type="button" onClick={chooseArchiveDir}>选择目录</button></div>
+              <small>只能选择 Electron 本机保存目录。音频与 JSON 分别写入 `wav|json/识别类型/日期`，总结写入 `summary-logs/日期`；此路径不会发送给后端。</small>
+            </label>
+            <div className="wide privacy-card">
+              <label className="check"><input type="checkbox" checked={settings.allowServerDataCollection} onChange={(event) => updateSettings({ allowServerDataCollection: event.target.checked })} />允许服务端保存调试数据</label>
+              <p>{settings.allowServerDataCollection ? '服务端可以保存调试音频和 JSON；当日总结查询服务端归档。' : '服务端不留存调试数据；生成当日总结时仅临时发送本机记录中的时间、类别和文本。'}</p>
+            </div>
+          </div>
+        </section>
+      )}
     </div>
   )
 }

@@ -403,7 +403,7 @@ function levelFromPcm16(pcm: Int16Array) {
   return Math.min(1, Math.max(peak * 0.7, rms * 4))
 }
 
-function encodePcm16Wav(pcm: Int16Array, sampleRate: number) {
+export function encodePcm16Wav(pcm: Int16Array, sampleRate: number) {
   const headerBytes = 44
   const dataBytes = pcm.length * 2
   const buffer = new ArrayBuffer(headerBytes + dataBytes)
@@ -1100,6 +1100,52 @@ async function preflightHealthCheck(wsUrl: string, timeoutMs: number = 5000): Pr
 type PcmCallback = (pcm: Int16Array, sampleRate: number) => void
 const MAX_WS_AUDIO_BUFFER_BYTES = 64 * 1024
 
+export type StreamRecording = {
+  blob: Blob
+  sampleRate: number
+  samples: number
+  durationSec: number
+}
+
+export class PcmRecordingBuffer {
+  private chunks: Int16Array[] = []
+  private sampleRate = 0
+
+  append(pcm: Int16Array, sampleRate: number) {
+    if (!pcm.length) return
+    if (!this.sampleRate) this.sampleRate = Number(sampleRate) || 16000
+    this.chunks.push(pcm.slice())
+  }
+
+  finish(): StreamRecording | null {
+    const samples = this.chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+    const sampleRate = this.sampleRate || 16000
+    if (!samples) {
+      this.clear()
+      return null
+    }
+    const pcm = new Int16Array(samples)
+    let offset = 0
+    for (const chunk of this.chunks) {
+      pcm.set(chunk, offset)
+      offset += chunk.length
+    }
+    const recording = {
+      blob: new Blob([encodePcm16Wav(pcm, sampleRate)], { type: 'audio/wav' }),
+      sampleRate,
+      samples,
+      durationSec: samples / sampleRate,
+    }
+    this.clear()
+    return recording
+  }
+
+  clear() {
+    this.chunks = []
+    this.sampleRate = 0
+  }
+}
+
 const pcmCaptureWorkletSource = `
 class AmadeusPcmCaptureProcessor extends AudioWorkletProcessor {
   constructor() {
@@ -1314,7 +1360,7 @@ type StreamEvent =
   | { type: 'speech_start' }
   | { type: 'speech_end' }
   | { type: 'error'; message: string }
-  | { type: 'closed'; intentional: boolean }
+  | { type: 'closed'; intentional: boolean; recording: StreamRecording | null }
 
 export class StreamingASRClient {
   private ws: WebSocket | null = null
@@ -1330,6 +1376,7 @@ export class StreamingASRClient {
   private utteranceTrace: TelemetryTrace | null = null
   private stoppedByUser = false
   private closedEmitted = false
+  private recordingBuffer = new PcmRecordingBuffer()
 
   constructor(serverUrl: string, onEvent: (event: StreamEvent) => void) {
     this.urls = buildWsUrlCandidates(serverUrl, '/v1/stream')
@@ -1347,6 +1394,7 @@ export class StreamingASRClient {
     this.startedAt = performance.now()
     this.stoppedByUser = false
     this.closedEmitted = false
+    this.recordingBuffer.clear()
     this.releasePendingInput()
     this.pendingInputStream = config.inputStream || null
     this.sessionTrace = startTelemetryTrace('websocket', '实时 ASR 会话', config.engine || 'x-asr')
@@ -1415,7 +1463,8 @@ export class StreamingASRClient {
     const startPcmCapture = () => {
       if (captureStarted || this.stoppedByUser) return
       captureStarted = true
-      this.pcmStreamer = new PcmStreamer((pcm) => {
+      this.pcmStreamer = new PcmStreamer((pcm, sampleRate) => {
+        this.recordingBuffer.append(pcm, sampleRate)
         if (this.ws?.readyState === WebSocket.OPEN && this.ws.bufferedAmount < MAX_WS_AUDIO_BUFFER_BYTES) {
           this.ws.send(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength))
         }
@@ -1432,7 +1481,7 @@ export class StreamingASRClient {
     const emitClosed = () => {
       if (this.closedEmitted) return
       this.closedEmitted = true
-      this.onEvent({ type: 'closed', intentional: this.stoppedByUser })
+      this.onEvent({ type: 'closed', intentional: this.stoppedByUser, recording: this.recordingBuffer.finish() })
     }
     const attachConnectedHandlers = (ws: WebSocket, wsUrl: string) => {
       ws.onmessage = handleMessage
@@ -1543,7 +1592,7 @@ export class StreamingASRClient {
     if (ws && ws.readyState !== WebSocket.CLOSED) ws.close(1000, 'client stop')
     if (!this.closedEmitted) {
       this.closedEmitted = true
-      this.onEvent({ type: 'closed', intentional: true })
+      this.onEvent({ type: 'closed', intentional: true, recording: this.recordingBuffer.finish() })
     }
   }
 
