@@ -270,7 +270,7 @@ export default function App() {
             endTime: latest.passiveSummaryEndTime,
           }
         )
-        const summary = await api.summarizeArchive({
+        const summary = await api.streamArchiveSummary({
           date: localDateValue(now),
           user_id: latest.passiveSummaryUserId.trim() || undefined,
           category: latest.passiveSummaryCategory.trim() || undefined,
@@ -284,7 +284,7 @@ export default function App() {
           style: latest.llmStyle || '工作纪要',
           max_input_chars: 24000,
           records,
-        })
+        }, () => undefined)
         await saveSummaryToLocalLog(summary, latest.archiveDir)
       } catch (error) {
         console.warn('Passive summary failed', error)

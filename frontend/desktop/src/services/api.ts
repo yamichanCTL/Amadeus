@@ -319,6 +319,13 @@ export type ArchiveSummaryResult = {
   time_range?: string | null
 }
 
+export type ArchiveSummaryStreamEvent =
+  | ({ type: 'meta' } & Pick<ArchiveSummaryResult, 'source_count' | 'input_chars' | 'estimated_input_tokens' | 'date' | 'time_range'>)
+  | { type: 'status'; message: string }
+  | { type: 'delta'; text: string }
+  | { type: 'done'; result: ArchiveSummaryResult }
+  | { type: 'error'; message: string }
+
 export type ArchiveSummarySaveRequest = {
   summary: ArchiveSummaryResult
   user_id?: string
@@ -801,6 +808,51 @@ export class ASRApi {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     }).then((res) => parseResponse<ArchiveSummaryResult>(res))
+  }
+
+  async streamArchiveSummary(
+    payload: ArchiveSummaryRequest,
+    onEvent: (event: ArchiveSummaryStreamEvent) => void | Promise<void>,
+    signal?: AbortSignal,
+  ) {
+    const response = await fetch(this.url('/v1/llm/archive-summary/stream'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal,
+    })
+    if (!response.ok) {
+      const text = await response.text()
+      const data = text ? JSON.parse(text) : null
+      throw new Error(data?.detail || data?.message || response.statusText)
+    }
+    if (!response.body) throw new Error('当前运行环境不支持流式响应')
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    const finalResult: { current: ArchiveSummaryResult | null } = { current: null }
+
+    const consume = async (line: string) => {
+      if (!line.trim()) return
+      const event = JSON.parse(line) as ArchiveSummaryStreamEvent
+      await onEvent(event)
+      if (event.type === 'error') throw new Error(event.message)
+      if (event.type === 'done') finalResult.current = event.result
+    }
+
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) await consume(line)
+    }
+    buffer += decoder.decode()
+    await consume(buffer)
+    if (!finalResult.current) throw new Error('流式总结缺少完成事件')
+    return finalResult.current
   }
 
   saveArchiveSummary(payload: ArchiveSummarySaveRequest) {

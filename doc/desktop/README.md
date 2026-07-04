@@ -16,6 +16,7 @@
 > - [润色归档、Both 总结与紧凑窗口验证报告](../reports/2026-07-02-archive-polish-both-summary-compact-window-report.md)
 > - [总结持久化、Prompt 卡片与分页设置验证报告](../reports/2026-07-03-summary-prompt-cards-settings-pages-report.md)
 > - [桌面归档、总结来源、结果回填与 Qwen3-ASR 验证报告](../reports/2026-07-04-desktop-archive-summary-autofill-qwen-report.md)
+> - [总结全流式、同目录归档、ASR 回填与关闭选择验证报告](../reports/2026-07-04-summary-stream-archive-close-dialog-report.md)
 
 ## 范围
 
@@ -45,4 +46,5 @@
 - [总结、隐私、模型、退出与输入验证报告](../reports/2026-07-02-desktop-summary-privacy-model-exit-input-report.md)
 - [润色归档、Both 总结与紧凑窗口验证报告](../reports/2026-07-02-archive-polish-both-summary-compact-window-report.md)
 - [桌面归档、总结来源、结果回填与 Qwen3-ASR 验证报告](../reports/2026-07-04-desktop-archive-summary-autofill-qwen-report.md)
+- [总结全流式、同目录归档、ASR 回填与关闭选择验证报告](../reports/2026-07-04-summary-stream-archive-close-dialog-report.md)
 - [ASRAPP Frontend 桌面端](../asrapp/frontend/DESKTOP.md)

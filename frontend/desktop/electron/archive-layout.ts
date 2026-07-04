@@ -33,16 +33,15 @@ export function buildTranscriptionArchivePaths(args: {
   const category = safeArchivePart(args.category, '离线语音识别', 48)
   const day = /^\d{4}-\d{2}-\d{2}$/.test(args.day) ? args.day : 'unknown-date'
   const stem = `${safeArchivePart(args.taskId, 'task')}_${safeArchiveStem(args.filename)}`
-  const jsonDir = path.join(args.root, 'json', category, day)
-  const audioDir = path.join(args.root, 'wav', category, day)
+  const recordDir = path.join(args.root, category, day)
   const requestedExtension = String(args.audioExtension || path.extname(args.filename) || '.wav')
   const normalizedExtension = requestedExtension.startsWith('.') ? requestedExtension : `.${requestedExtension}`
   const extension = /^\.[A-Za-z0-9]{1,10}$/.test(normalizedExtension) ? normalizedExtension.toLowerCase() : '.wav'
   return {
-    jsonDir,
-    audioDir,
-    json: path.join(jsonDir, `${stem}.json`),
-    audio: args.hasAudio ? path.join(audioDir, `${stem}${extension}`) : undefined,
+    jsonDir: recordDir,
+    audioDir: recordDir,
+    json: path.join(recordDir, `${stem}.json`),
+    audio: args.hasAudio ? path.join(recordDir, `${stem}${extension}`) : undefined,
   }
 }
 
@@ -66,7 +65,6 @@ export async function writeTranscriptionArchive(args: {
     hasAudio: Boolean(args.audioBase64),
   })
   await fs.mkdir(layout.jsonDir, { recursive: true })
-  if (layout.audio) await fs.mkdir(layout.audioDir, { recursive: true })
   if (args.audioBase64 && layout.audio) await fs.writeFile(layout.audio, Buffer.from(args.audioBase64, 'base64'))
   await fs.writeFile(layout.json, JSON.stringify({ archived_at: new Date().toISOString(), ...args.metadata }, null, 2), 'utf8')
   return { audio: layout.audio, json: layout.json }

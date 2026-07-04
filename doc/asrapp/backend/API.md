@@ -174,6 +174,7 @@ curl -X POST "http://localhost:8000/v1/models/whisper/load" \
 | `/v1/voice/list` | GET | 列出可用声音 |
 | `/v1/records` | GET | 历史转录查询 |
 | `/v1/llm/archive-summary` | POST | 总结服务端归档或客户端显式本机记录 |
+| `/v1/llm/archive-summary/stream` | POST | 以 NDJSON 流式总结归档或显式本机记录 |
 
 `POST /v1/llm/archive-summary` 可选接收 `records`。一旦提供该字段（包括空数组），后端只使用显式记录，不回退读取服务端归档：
 
@@ -197,6 +198,16 @@ curl -X POST "http://localhost:8000/v1/models/whisper/load" \
 ```
 
 `records` 最多 2000 条，单条文本最多 100000 字符。schema 不接受音频、路径或任意 metadata 字段进入总结构造；最终 LLM 输入只含时间前缀和文本。
+
+桌面端使用 `/v1/llm/archive-summary/stream`。请求体与同步端点相同，响应为 `application/x-ndjson`，事件顺序如下：
+
+- `meta`：记录数、输入字符数、估算 token、日期和时间范围；
+- `status`：多分块压缩与最终生成阶段；
+- `delta`：可立即追加显示的模型文本；
+- `done`：完整 `ArchiveSummaryResult`，客户端收到后才自动保存；
+- `error`：流式请求失败原因。
+
+响应设置 `Cache-Control: no-cache, no-transform`、`X-Accel-Buffering: no` 和 `Content-Encoding: identity`，避免代理或压缩层把增量事件缓冲到末尾。多分块压缩与最终生成都消费 provider 的流式响应。
 
 ---
 

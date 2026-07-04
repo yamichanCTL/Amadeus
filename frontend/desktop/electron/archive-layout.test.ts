@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { buildTranscriptionArchivePaths, localArchiveDay, writeTranscriptionArchive } from './archive-layout'
 
 describe('transcription archive layout', () => {
-  it('uses media/category/day directory levels for realtime audio and JSON', () => {
+  it('keeps realtime audio and JSON together under category/day', () => {
     const result = buildTranscriptionArchivePaths({
       root: path.join('D:', 'Amadeus'),
       category: '实时识别',
@@ -16,8 +16,9 @@ describe('transcription archive layout', () => {
       hasAudio: true,
     })
 
-    expect(result.audio).toBe(path.join('D:', 'Amadeus', 'wav', '实时识别', '2026-07-02', 'live_123_live_caption.wav'))
-    expect(result.json).toBe(path.join('D:', 'Amadeus', 'json', '实时识别', '2026-07-02', 'live_123_live_caption.json'))
+    expect(result.audio).toBe(path.join('D:', 'Amadeus', '实时识别', '2026-07-02', 'live_123_live_caption.wav'))
+    expect(result.json).toBe(path.join('D:', 'Amadeus', '实时识别', '2026-07-02', 'live_123_live_caption.json'))
+    expect(path.dirname(result.audio!)).toBe(path.dirname(result.json))
   })
 
   it('sanitizes a caller-provided category instead of allowing nested paths', () => {
@@ -40,18 +41,19 @@ describe('transcription archive layout', () => {
       root: '/archive', category: '实时识别', day: '2026-07-04', taskId: 'task',
       filename: 'recording.wav', audioExtension: '../../escape', hasAudio: true,
     })
-    expect(result.audio).toBe(path.join('/archive', 'wav', '实时识别', '2026-07-04', 'task_recording.wav'))
+    expect(result.audio).toBe(path.join('/archive', '实时识别', '2026-07-04', 'task_recording.wav'))
   })
 
-  it('writes realtime WAV and JSON into their actual deep directories', async () => {
+  it('writes realtime WAV and JSON beside each other', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'amadeus-archive-'))
     try {
       const paths = await writeTranscriptionArchive({
         root, category: '实时识别', day: '2026-07-02', taskId: 'live_456', filename: 'live_caption.wav',
         audioBase64: Buffer.from('RIFF-WAVE').toString('base64'), audioExtension: '.wav', metadata: { full_text: '实时内容' },
       })
-      expect(paths.audio).toContain(path.join('wav', '实时识别', '2026-07-02'))
-      expect(paths.json).toContain(path.join('json', '实时识别', '2026-07-02'))
+      expect(paths.audio).toContain(path.join('实时识别', '2026-07-02'))
+      expect(paths.json).toContain(path.join('实时识别', '2026-07-02'))
+      expect(path.dirname(paths.audio!)).toBe(path.dirname(paths.json))
       expect(await fs.readFile(paths.audio!, 'utf8')).toBe('RIFF-WAVE')
       expect(JSON.parse(await fs.readFile(paths.json, 'utf8')).full_text).toBe('实时内容')
     } finally {

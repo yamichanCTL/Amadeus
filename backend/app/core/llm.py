@@ -395,24 +395,26 @@ async def summarize_archive_stream(request: ArchiveSummaryRequest) -> AsyncItera
             chunk_summaries.append(chunk)
             continue
         yield {"type": "status", "message": f"压缩第 {index}/{len(chunks)} 段记录"}
-        chunk_summaries.append(
-            await _chat_completion(
-                model=request.model,
-                base_url=request.base_url,
-                api_token=request.api_token,
-                system_prompt=(
-                    "你是严谨的 ASR 记录压缩助手。只依据输入内容提炼事实，"
-                    "不要补充未出现的信息。"
-                ),
-                user_prompt=(
-                    f"第 {index}/{len(chunks)} 段归档记录已只保留开始时间、结束时间和一个文本 label。"
-                    "压缩为不超过 900 字中文要点，保留事项、决定、待办和关键时间。\n\n"
-                    f"{chunk}"
-                ),
-                temperature=0.1,
-                timeout=90.0,
-            )
-        )
+        compressed_parts: list[str] = []
+        async for delta in _chat_completion_stream(
+            model=request.model,
+            base_url=request.base_url,
+            api_token=request.api_token,
+            system_prompt=(
+                "你是严谨的 ASR 记录压缩助手。只依据输入内容提炼事实，"
+                "不要补充未出现的信息。"
+            ),
+            user_prompt=(
+                f"第 {index}/{len(chunks)} 段归档记录已只保留开始时间、结束时间和一个文本 label。"
+                "压缩为不超过 900 字中文要点，保留事项、决定、待办和关键时间。\n\n"
+                f"{chunk}"
+            ),
+            temperature=0.1,
+            timeout=90.0,
+        ):
+            compressed_parts.append(delta)
+        chunk_summaries.append("".join(compressed_parts).strip())
+        yield {"type": "status", "message": f"已完成第 {index}/{len(chunks)} 段压缩"}
 
     final_input = "\n\n".join(chunk_summaries)
     summary_parts: list[str] = []

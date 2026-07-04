@@ -27,6 +27,13 @@ export type SummaryLogArgs = {
   content: string
 }
 
+export type SummaryLogEntry = {
+  name: string
+  path: string
+  modifiedAt: string
+  content: string
+}
+
 declare global {
   interface Window {
     __amadeusE2EAudio?: () => Promise<unknown>
@@ -41,6 +48,7 @@ declare global {
       minimize: () => void
       maximize: () => void
       close: () => void
+      closeWithAction: (action: 'hide' | 'quit') => void
       setKeepRunningInBackground: (enabled: boolean) => void
       openAudioDialog: () => Promise<string[]>
       openDirectoryDialog: () => Promise<string>
@@ -53,6 +61,7 @@ declare global {
       fileInfo: (path: string) => Promise<{ name: string; size: number; path: string }>
       archiveTranscription: (args: ArchiveTranscriptionArgs) => Promise<{ audio?: string; json: string }>
       saveSummaryLog: (args: SummaryLogArgs) => Promise<{ saved: boolean; path: string }>
+      listSummaryLogs: (args: { archiveRoot?: string; date: string }) => Promise<SummaryLogEntry[]>
       openExternal: (url: string) => Promise<void>
       getTheme: () => Promise<'dark' | 'light'>
       setTheme: (theme: 'system' | 'light' | 'dark') => Promise<boolean>

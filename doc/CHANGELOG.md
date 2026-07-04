@@ -4,6 +4,15 @@
 > **子文档**:
 > - [桌面端文档](desktop/README.md)
 
+## [2026-07-04] 当日总结全流式、同目录归档与关闭选择恢复
+
+- **类型**: feat / fix / refactor / test / docs
+- **描述**: 当日总结和被动总结改用 NDJSON 全流式链路，前端收到 delta 后逐字符刷新，完成后才自动保存；结果区可列出并加载指定日期已生成的 Markdown。新音频与 JSON 使用同目录、同 stem 存放。实时对话单次 ASR 自动填入可编辑消息输入框。点击标题栏 X 恢复“保留后台 / 完全退出 / 取消”选择。根据 1600×1000 截图前置生成按钮并压缩 Prompt 卡片，修复配置区覆盖和首屏操作不可见。
+- **影响范围**: `frontend/desktop/{electron,src,scripts}`、`backend/app/core/llm.py`、目标测试、`doc/{desktop,asrapp/backend,reports,assets/ui}`
+- **验证**: Desktop Vitest 34 files / 103 tests、renderer/Electron TypeScript、Backend 全流式单测 1 passed、Python compileall、Vite、VitePress、两张 Electron 当前截图及 `git diff --check` 通过；真实 LLM 计费流与 Windows 进程退出仍按报告边界复验。
+- **Plan**: [链接到 plan 文件](plans/2026-07-04-summary-stream-archive-close-dialog.md)
+- **报告**: [总结全流式、同目录归档、ASR 回填与关闭选择验证报告](reports/2026-07-04-summary-stream-archive-close-dialog-report.md)
+
 ## [2026-07-04] 修复桌面归档、总结来源、结果回填与 Qwen3-ASR 持久化
 
 - **类型**: feat / fix / refactor / test / docs

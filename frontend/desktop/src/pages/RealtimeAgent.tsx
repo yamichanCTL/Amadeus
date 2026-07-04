@@ -3,6 +3,7 @@ import { AssistantFigure } from '@/components/AssistantFigure'
 import { ASRApi, isAsyncResponse, type LLMChatContent, type LLMChatRole, type SkillDefinition, type TranscribeOptions } from '@/services/api'
 import { StreamingASRClient, audioRelayMixer, captureSpeakerAudio, speechRecorder } from '@/services/audio'
 import { useASRStore, type AgentTask, type AgentVoiceMode, type AppPage } from '@/store/useASRStore'
+import { fillPromptFromAsr } from '@/services/agentPrompt'
 
 type AgentStatus = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'responding' | 'speaking' | 'error'
 type AgentEmotion = 'neutral' | 'happy' | 'curious' | 'focused' | 'surprised' | 'concerned'
@@ -1063,7 +1064,8 @@ export function RealtimeAgentPage() {
       const result = isAsyncResponse(response) ? await pollTask(response.task_id) : response
       const text = result.full_text.trim()
       setLastTranscript(text)
-      await sendToAgent(text)
+      setDraft((current) => fillPromptFromAsr(current, text))
+      setStatus('idle')
     } catch (voiceError) {
       setError(voiceError instanceof Error ? voiceError.message : '语音识别失败')
       setStatus('error')
@@ -1235,7 +1237,7 @@ export function RealtimeAgentPage() {
             </button>
             <input
               value={draft}
-              placeholder="输入消息"
+              placeholder="输入消息，或点击语音自动填入 ASR 结果"
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') void sendToAgent(draft)

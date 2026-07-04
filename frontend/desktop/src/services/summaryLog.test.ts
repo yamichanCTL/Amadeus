@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest'
-import { saveSummaryToLocalLog, summaryLogFilename } from './summaryLog'
+import { loadLocalSummaryLogs, saveSummaryToLocalLog, summaryLogFilename } from './summaryLog'
 
 const result = {
   summary: '# 总结', model: 'demo', source_count: 1, input_chars: 2,
@@ -21,5 +21,15 @@ describe('summary log auto-save', () => {
     await saveSummaryToLocalLog(result, 'D:/Amadeus')
 
     expect(saveSummaryLog).toHaveBeenCalledWith(expect.objectContaining({ archiveRoot: 'D:/Amadeus', content: '# 总结' }))
+  })
+
+  it('loads generated summaries through the restricted Electron API', async () => {
+    const listSummaryLogs = vi.fn(async () => [{ name: 'summary.md', path: 'D:/summary.md', modifiedAt: '2026-07-04T12:00:00Z', content: '# 总结' }])
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: { listSummaryLogs } })
+
+    const logs = await loadLocalSummaryLogs('2026-07-04', 'D:/Amadeus')
+
+    expect(listSummaryLogs).toHaveBeenCalledWith({ archiveRoot: 'D:/Amadeus', date: '2026-07-04' })
+    expect(logs[0].content).toBe('# 总结')
   })
 })

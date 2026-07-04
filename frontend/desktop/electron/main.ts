@@ -24,6 +24,7 @@ import { runTextInjectionWithRecovery, TextInjectionCancelledError } from './tex
 import { closeAction } from './close-behavior'
 import { calculateInitialWindowBounds } from './window-layout'
 import { localArchiveDay, safeArchiveStem, writeTranscriptionArchive } from './archive-layout'
+import { listSummaryLogs } from './summary-log-layout'
 
 type CaptionOverlayOptions = {
   fontSize: number
@@ -1120,6 +1121,14 @@ function registerIpc() {
     else mainWindow.maximize()
   })
   ipcMain.on('win:close', () => mainWindow?.close())
+  ipcMain.on('win:closeWithAction', (_event, action: 'hide' | 'quit') => {
+    if (action === 'hide') {
+      mainWindow?.hide()
+      return
+    }
+    forceQuit = true
+    app.quit()
+  })
   ipcMain.on('app:keepRunningInBackground:set', (_event, enabled: boolean) => {
     keepRunningInBackground = enabled === true
   })
@@ -1154,6 +1163,10 @@ function registerIpc() {
   })
   ipcMain.handle('archive:transcription', (_event, args: ArchiveArgs) => archiveTranscription(args))
   ipcMain.handle('archive:summaryLog', (_event, args: SummaryLogArgs) => saveSummaryLog(args))
+  ipcMain.handle('archive:summaryLogs:list', async (_event, args: { archiveRoot?: string; date: string }) => {
+    const root = args.archiveRoot || (await defaultArchiveDir())
+    return listSummaryLogs(root, args.date)
+  })
   ipcMain.handle('shell:openExternal', (_event, url: string) => shell.openExternal(url))
   ipcMain.handle('theme:get', () => (nativeTheme.shouldUseDarkColors ? 'dark' : 'light'))
   ipcMain.handle('theme:set', (_event, theme: 'system' | 'light' | 'dark') => {
