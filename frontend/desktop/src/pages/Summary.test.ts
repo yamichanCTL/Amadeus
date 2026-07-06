@@ -3,9 +3,9 @@ import { describe, expect, it } from 'vitest'
 import { defaultSummaryTimeRange, localTimeValue, SUMMARY_CATEGORY_OPTIONS } from './Summary'
 
 describe('summary defaults', () => {
-  it('uses midnight through the current local minute', () => {
+  it('uses the complete local day by default', () => {
     const now = new Date(2026, 6, 2, 14, 7, 59)
-    expect(defaultSummaryTimeRange(now)).toEqual({ startTime: '00:00', endTime: '14:07' })
+    expect(defaultSummaryTimeRange(now)).toEqual({ startTime: '00:00', endTime: '23:59' })
     expect(localTimeValue(now)).toBe('14:07')
   })
 

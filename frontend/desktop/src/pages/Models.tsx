@@ -569,7 +569,7 @@ export function ModelsPage() {
 
   const waitReferenceTranscribeTask = async (taskId: string) => {
     const startedAt = Date.now()
-    const timeoutMs = settings.timeoutSec === 0 ? 30 * 60 * 1000 : settings.timeoutSec * 1000
+    const timeoutMs = Math.max(30 * 60 * 1000, settings.timeoutSec * 1000)
     let pollCount = 0
     while (Date.now() - startedAt < timeoutMs) {
       // Query once immediately. A completed backend task must not sit behind

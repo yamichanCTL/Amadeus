@@ -32,7 +32,7 @@ describe('summary streaming and generated log loading', () => {
     const settings = useASRStore.getState().settings
     useASRStore.setState({
       settings: { ...settings, llmModel: 'demo', llmBaseUrl: 'https://llm.test', llmApiToken: 'token' },
-      summaryWorkspace: { ...createSummaryWorkspace(new Date(2026, 6, 4, 12, 0)), date: '2026-07-04' },
+      summaryWorkspace: { ...createSummaryWorkspace(new Date(2026, 6, 4, 12, 0)), date: '2026-07-04', dateFollowsToday: false },
       history: [],
     })
   })
@@ -52,17 +52,20 @@ describe('summary streaming and generated log loading', () => {
     expect(await screen.findByText('流式总结完成')).toBeTruthy()
   })
 
-  it('loads and displays an existing generated Markdown summary', async () => {
+  it('displays an existing generated Markdown summary immediately and switches without confirmation', async () => {
     const listSummaryLogs = vi.fn(async () => [{
       name: 'saved.md', path: 'D:/saved.md', modifiedAt: '2026-07-04T12:00:00Z', content: '# 已保存标题\n\n历史总结正文',
+    }, {
+      name: 'older.md', path: 'D:/older.md', modifiedAt: '2026-07-04T10:00:00Z', content: '# 更早总结',
     }])
     Object.defineProperty(window, 'electronAPI', { configurable: true, value: { listSummaryLogs } })
     render(<SummaryPage />)
 
-    await waitFor(() => expect((screen.getByRole('button', { name: '加载显示' }) as HTMLButtonElement).disabled).toBe(false))
-    fireEvent.click(screen.getByRole('button', { name: '加载显示' }))
-
     expect(await screen.findByRole('heading', { name: '已保存标题' })).toBeTruthy()
     expect(screen.getByText('历史总结正文')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '加载显示' })).toBeNull()
+
+    fireEvent.change(screen.getByLabelText('已生成总结'), { target: { value: 'D:/older.md' } })
+    expect(await screen.findByRole('heading', { name: '更早总结' })).toBeTruthy()
   })
 })

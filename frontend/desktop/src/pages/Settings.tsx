@@ -289,7 +289,17 @@ export function SettingsPage() {
             </label>
             <div className="settings-toggle-stack">
               <label className="check"><input type="checkbox" checked={settings.autoLaunchEnabled} onChange={(event) => { const enabled = event.target.checked; updateSettings({ autoLaunchEnabled: enabled }); window.electronAPI?.setAutoLaunch(enabled) }} />开机自动启动 Amadeus</label>
-              <label className="check"><input type="checkbox" checked={settings.keepRunningInBackground} onChange={(event) => updateSettings({ keepRunningInBackground: event.target.checked })} />关闭窗口后保留后台运行</label>
+              <label>点击关闭按钮时
+                <select
+                  value={settings.rememberCloseAction ? (settings.keepRunningInBackground ? 'hide' : 'quit') : 'ask'}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    updateSettings({ rememberCloseAction: value !== 'ask', keepRunningInBackground: value === 'hide' })
+                  }}
+                >
+                  <option value="ask">每次询问</option><option value="hide">保留后台运行</option><option value="quit">完全退出</option>
+                </select>
+              </label>
             </div>
           </div>
         </section>

@@ -1,7 +1,6 @@
 import {
   app,
   BrowserWindow,
-  clipboard,
   desktopCapturer,
   dialog,
   globalShortcut,
@@ -513,10 +512,10 @@ function captionOverlayHtml() {
     <style>
       * { box-sizing: border-box; }
       body { margin: 0; overflow: hidden; font-family: "Microsoft YaHei", "Segoe UI", sans-serif; color: white; }
-      .caption { position: relative; width: 100vw; height: 100vh; display: grid; place-items: center; padding: 26px 54px 18px 28px; border-radius: 10px; border: 1px solid rgba(255,255,255,.18); }
+      .caption { position: relative; width: 100vw; height: 100vh; display: grid; place-items: center; padding: 26px 54px 18px 28px; border-radius: 10px; border: 1px solid rgba(255,255,255,.18); -webkit-app-region: drag; cursor: move; }
       .text { width: 100%; line-height: 1.45; text-align: center; word-break: break-word; white-space: pre-wrap; }
       .actions { position: absolute; top: 8px; right: 8px; display: flex; gap: 5px; }
-      button { width: 30px; height: 28px; border: 1px solid rgba(255,255,255,.18); border-radius: 7px; background: rgba(15,23,42,.58); color: white; cursor: pointer; }
+      button { width: 30px; height: 28px; border: 1px solid rgba(255,255,255,.18); border-radius: 7px; background: rgba(15,23,42,.58); color: white; cursor: pointer; -webkit-app-region: no-drag; }
       button:hover { background: rgba(68,84,112,.88); }
     </style>
     <div class="caption" id="caption">
@@ -1104,9 +1103,8 @@ async function injectText(text: string) {
     console.warn('[text:inject] skipping empty text injection')
     return false
   }
-  // Preserve the result even when PowerShell/UIAutomation cannot start after
-  // a reboot. A transient helper failure is recovered with one clean restart.
-  clipboard.writeText(text)
+  // Clipboard.SetText runs in the persistent STA helper. Keeping it off the
+  // Electron main thread prevents a foreign clipboard lock from freezing IPC.
   return await textInjectQueue.run(() => runTextInjectionWithRecovery(
     () => injectTextOnce(text),
     stopTextInjectHelper,
@@ -1191,9 +1189,6 @@ function registerIpc() {
   ipcMain.handle('mouse:unregister', () => {
     stopMouseHook()
     return true
-  })
-  ipcMain.on('text:toClipboard', (_event, text: string) => {
-    clipboard.writeText(text)
   })
   ipcMain.handle('text:inject', (_event, text: string) => injectText(text))
   ipcMain.handle('statusOverlay:show', (_event, status: string, level?: number, message?: string) => showStatusOverlay(status, level, message))

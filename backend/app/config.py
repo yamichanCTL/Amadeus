@@ -139,9 +139,9 @@ class Settings(BaseSettings):
 
     # ── LLM defaults (for frontend auto-configuration) ────────────────────────
     llm_default_api_token: str = ""
-    llm_default_base_url: str = "https://api.deepseek.com"
-    llm_default_model: str = "deepseek-chat"
-    llm_default_provider: str = "deepseek"
+    llm_default_base_url: str = ""
+    llm_default_model: str = ""
+    llm_default_provider: str = "custom"
 
     # ─────────────────────────────────────────────────────────────────────────
     @field_validator("allowed_origins", mode="before")

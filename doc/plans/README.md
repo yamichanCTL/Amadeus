@@ -2,6 +2,7 @@
 
 > **父文档**: [← 返回文档索引](../README.md)
 > **子文档**:
+> - [桌面总结、输入、生命周期与长音频修复](2026-07-06-desktop-summary-input-lifecycle-long-audio.md)
 > - [桌面总结全流式、同目录归档与关闭选择恢复](2026-07-04-summary-stream-archive-close-dialog.md)
 > - [桌面归档、总结来源、结果回填与 Qwen3-ASR 修复](2026-07-04-desktop-archive-summary-autofill-qwen-fixes.md)
 > - [总结持久化、Prompt 卡片与分页设置](2026-07-03-desktop-summary-prompt-cards-settings-pages.md)

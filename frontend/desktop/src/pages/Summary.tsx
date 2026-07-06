@@ -18,7 +18,8 @@ export function localTimeValue(date = new Date()) {
 }
 
 export function defaultSummaryTimeRange(date = new Date()) {
-  return { startTime: '00:00', endTime: localTimeValue(date) }
+  void date
+  return { startTime: '00:00', endTime: '23:59' }
 }
 
 export const SUMMARY_CATEGORY_OPTIONS = [
@@ -40,7 +41,7 @@ export function SummaryPage() {
   const updateWorkspace = useASRStore((state) => state.updateSummaryWorkspace)
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
   const providerPreset = getProviderPreset(settings.llmProvider)
-  const { source, date, userId, category, startTime, endTime, maxInputChars, result, loading, error, saveMessage } = workspace
+  const { source, date, dateFollowsToday, userId, category, startTime, endTime, maxInputChars, result, loading, error, saveMessage } = workspace
   const [streamPreview, setStreamPreview] = useState<ArchiveSummaryResult | null>(null)
   const [streamStatus, setStreamStatus] = useState('')
   const [summaryLogs, setSummaryLogs] = useState<Awaited<ReturnType<typeof loadLocalSummaryLogs>>>([])
@@ -61,6 +62,19 @@ export function SummaryPage() {
   useEffect(() => () => streamAbortRef.current?.abort(), [])
 
   useEffect(() => {
+    if (!dateFollowsToday) return
+    const syncToday = () => {
+      const today = localDateValue()
+      if (useASRStore.getState().summaryWorkspace.date !== today) {
+        updateWorkspace({ date: today, result: null, error: '', saveMessage: '' })
+      }
+    }
+    syncToday()
+    const timer = window.setInterval(syncToday, 60_000)
+    return () => window.clearInterval(timer)
+  }, [dateFollowsToday, updateWorkspace])
+
+  useEffect(() => {
     let alive = true
     setLogsLoading(true)
     loadLocalSummaryLogs(date, settings.archiveDir).then((logs) => {
@@ -74,6 +88,18 @@ export function SummaryPage() {
     })
     return () => { alive = false }
   }, [date, logsRefresh, settings.archiveDir, updateWorkspace])
+
+  useEffect(() => {
+    const selected = summaryLogs.find((item) => item.path === selectedLogPath)
+    if (!selected) return
+    setStreamPreview(null)
+    setStreamStatus('')
+    updateWorkspace({
+      result: summaryResultFromLog(selected.content, date),
+      error: '',
+      saveMessage: `已显示总结：${selected.path}`,
+    })
+  }, [date, selectedLogPath, summaryLogs, updateWorkspace])
 
   const runSummary = async () => {
     if (!canRun) {
@@ -171,24 +197,8 @@ export function SummaryPage() {
     if (ok) updateWorkspace({ saveMessage: '已另存为 Markdown 文件', error: '' })
   }
 
-  const loadGeneratedSummary = () => {
-    const log = summaryLogs.find((item) => item.path === selectedLogPath)
-    if (!log) return
-    const loaded: ArchiveSummaryResult = {
-      summary: log.content,
-      model: '本机总结日志',
-      provider: 'local',
-      source_count: 0,
-      input_chars: log.content.length,
-      estimated_input_tokens: 0,
-      chunk_count: 0,
-      truncated: false,
-      date,
-      time_range: null,
-    }
-    setStreamPreview(null)
-    setStreamStatus('')
-    updateWorkspace({ result: loaded, error: '', saveMessage: `已加载总结：${log.path}` })
+  const displayGeneratedSummary = (path: string) => {
+    setSelectedLogPath(path)
   }
 
   return (
@@ -217,7 +227,10 @@ export function SummaryPage() {
             </label>
             <label>
               日期
-              <input type="date" value={date} onChange={(event) => { setStreamPreview(null); updateWorkspace({ date: event.target.value, result: null }) }} />
+              <div className="inline-control">
+                <input type="date" value={date} onChange={(event) => { setStreamPreview(null); updateWorkspace({ date: event.target.value, dateFollowsToday: false, result: null }) }} />
+                <button type="button" onClick={() => updateWorkspace({ date: localDateValue(), dateFollowsToday: true, result: null })}>今天</button>
+              </div>
             </label>
             <label>
               用户
@@ -280,13 +293,12 @@ export function SummaryPage() {
               <strong>已生成总结</strong>
               <small>{logsLoading ? '正在读取…' : `${summaryLogs.length} 份本机 Markdown`}</small>
             </div>
-            <select aria-label="已生成总结" value={selectedLogPath} onChange={(event) => setSelectedLogPath(event.target.value)}>
+            <select aria-label="已生成总结" value={selectedLogPath} onChange={(event) => displayGeneratedSummary(event.target.value)}>
               {summaryLogs.length === 0 && <option value="">当前日期暂无总结</option>}
               {summaryLogs.map((log) => (
                 <option key={log.path} value={log.path}>{new Date(log.modifiedAt).toLocaleString()} · {log.name}</option>
               ))}
             </select>
-            <button type="button" disabled={!selectedLogPath} onClick={loadGeneratedSummary}>加载显示</button>
             <button type="button" title="刷新总结列表" onClick={() => setLogsRefresh((value) => value + 1)}>刷新</button>
           </div>
           {loading && <div className="summary-stream-status"><span aria-hidden="true" />{streamStatus || '正在连接大模型流'}</div>}
@@ -356,3 +368,18 @@ export function SummaryPage() {
 }
 
 export { localDateValue }
+
+function summaryResultFromLog(content: string, date: string): ArchiveSummaryResult {
+  return {
+    summary: content,
+    model: '本机总结日志',
+    provider: 'local',
+    source_count: 0,
+    input_chars: content.length,
+    estimated_input_tokens: 0,
+    chunk_count: 0,
+    truncated: false,
+    date,
+    time_range: null,
+  }
+}

@@ -27,7 +27,7 @@ describe('summary source and automatic log persistence', () => {
     const settings = useASRStore.getState().settings
     useASRStore.setState({
       settings: { ...settings, backendConfirmed: true, serverUrl: 'http://backend.test', llmModel: 'demo', llmBaseUrl: 'https://llm.test', llmApiToken: 'token' },
-      summaryWorkspace: { ...createSummaryWorkspace(new Date(2026, 6, 4, 12, 0)), date: '2026-07-04' },
+      summaryWorkspace: { ...createSummaryWorkspace(new Date(2026, 6, 4, 12, 0)), date: '2026-07-04', dateFollowsToday: false },
       history: [],
     })
   })

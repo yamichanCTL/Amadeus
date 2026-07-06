@@ -79,6 +79,14 @@ async def _run_with_timeout(operation: Callable[[], Awaitable[T]], timeout_sec: 
         raise TimeoutError(f"ASR execution exceeded {timeout_sec:g} seconds") from exc
 
 
+def _long_audio_timeout_sec(duration_sec: float, requested_timeout_sec: int) -> int:
+    """Give queued long audio enough inference time while respecting no-limit."""
+    if requested_timeout_sec <= 0:
+        return 0
+    duration_budget = int(duration_sec * 3 + 60)
+    return min(3600, max(requested_timeout_sec, duration_budget))
+
+
 # ── Helper: parse options from multipart form ──────────────────────────────────
 
 def _parse_options(options_json: str | None) -> TranscribeOptions:
@@ -246,6 +254,12 @@ async def transcribe(
     probe_started = time.perf_counter()
     duration = _probe_duration(audio_bytes)
     timing["audio_probe_sec"] = round(time.perf_counter() - probe_started, 6)
+    is_long = duration is not None and duration > settings.sync_max_duration_sec
+    effective_timeout_sec = (
+        _long_audio_timeout_sec(duration, opts.timeout_sec)
+        if is_long and duration is not None
+        else opts.timeout_sec
+    )
 
     # Resolve pipeline flags (request opts override server defaults)
     vad_on = opts.enable_vad if opts.enable_vad is not None else settings.enable_vad
@@ -266,7 +280,7 @@ async def transcribe(
         engine_options={
             "language": opts.language,
             "task": opts.whisper_task,
-            "timeout_sec": opts.timeout_sec,
+            "timeout_sec": effective_timeout_sec,
             "enable_hotwords": opts.enable_hotwords,
             "allow_server_data_collection": opts.allow_server_data_collection,
             "archive_category": opts.archive_category,
@@ -288,7 +302,6 @@ async def transcribe(
     timing["task_create_sec"] = round(time.perf_counter() - task_started, 6)
 
     # ── Async path: long audio ─────────────────────────────────────────────
-    is_long = duration is not None and duration > settings.sync_max_duration_sec
     if is_long:
         audio_path = await _save_audio(audio_bytes, file.filename, opts)
         await update_task_audio_path(db, task.id, str(audio_path), duration)

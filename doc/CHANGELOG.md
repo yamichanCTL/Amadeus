@@ -4,6 +4,15 @@
 > **子文档**:
 > - [桌面端文档](desktop/README.md)
 
+## [2026-07-06] 修复桌面总结、ASR 回填、关闭记忆与长音频链路
+
+- **类型**: feat / fix / refactor / test / docs
+- **描述**: 已生成总结改为选择即显示；当日总结默认所有类型、`00:00–23:59` 并实时跟随本地日期。快捷 ASR 优先回填 Amadeus 内当前 Prompt/input 光标；关闭弹窗新增“记住选择”并与设置页合并为同一三态策略。LLM 新装默认 custom 且地址/模型为空。复制或 X 都会关闭离线结果框；文本注入移除 Electron main process 同步剪贴板写入。字幕正文可原生拖动。长音频 renderer 轮询和 Celery 执行预算不再受默认 20 秒提前终止。
+- **影响范围**: `frontend/desktop/{src,electron}`、`backend/app/{api/v1/transcribe.py,config.py}`、目标测试、`doc/{desktop,plans,reports}`
+- **验证**: Desktop Vitest 37 files / 112 tests、renderer/Electron TypeScript、Vite 生产构建（83 modules）、Backend 定向 pytest 4 个独立用例通过、Python compileall 与 `git diff --check` 通过；Windows 剪贴板竞争、字幕拖动和真实 GPU 长音频按报告边界待打包实机复验。
+- **Plan**: [链接到 plan 文件](plans/2026-07-06-desktop-summary-input-lifecycle-long-audio.md)
+- **报告**: [桌面总结、ASR 回填、关闭策略与长音频验证报告](reports/2026-07-06-desktop-summary-input-lifecycle-long-audio-report.md)
+
 ## [2026-07-04] 当日总结全流式、同目录归档与关闭选择恢复
 
 - **类型**: feat / fix / refactor / test / docs

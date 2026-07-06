@@ -20,6 +20,43 @@ import { useASRStore } from '@/store/useASRStore'
 
 const terminalStatuses = new Set(['success', 'failed', 'cancelled'])
 
+export type RendererTextTarget = {
+  element: HTMLInputElement | HTMLTextAreaElement
+  selectionStart: number
+  selectionEnd: number
+}
+
+export function captureRendererTextTarget(ownerDocument: Document = document): RendererTextTarget | null {
+  const element = ownerDocument.activeElement
+  if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return null
+  if (element.disabled || element.readOnly) return null
+  const selectionStart = element.selectionStart
+  const selectionEnd = element.selectionEnd
+  if (selectionStart === null || selectionEnd === null) return null
+  return { element, selectionStart, selectionEnd }
+}
+
+export function insertIntoRendererTextTarget(target: RendererTextTarget | null, text: string): boolean {
+  if (!target || !target.element.isConnected || target.element.disabled || target.element.readOnly || !text) return false
+  const { element } = target
+  const start = Math.min(element.value.length, Math.max(0, target.selectionStart))
+  const end = Math.min(element.value.length, Math.max(start, target.selectionEnd))
+  const nextValue = `${element.value.slice(0, start)}${text}${element.value.slice(end)}`
+  const prototype = element instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
+  const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set
+  if (!setter) return false
+  setter.call(element, nextValue)
+  const cursor = start + text.length
+  element.setSelectionRange(cursor, cursor)
+  element.dispatchEvent(new Event('input', { bubbles: true }))
+  element.focus()
+  return true
+}
+
+export function asyncTaskPollTimeoutMs(configuredTimeoutSec: number): number {
+  return Math.max(30 * 60 * 1000, Math.max(0, configuredTimeoutSec) * 1000)
+}
+
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
   let timer: number | null = null
   try {
@@ -87,6 +124,7 @@ export class RecordingService {
    *  deliverResult checks this to avoid a stale transcription's
    *  overlay update clobbering a newer transcription's state. */
   private transcriptionId = 0
+  private rendererTextTarget: RendererTextTarget | null = null
 
   get isBusy(): boolean {
     const s = useASRStore.getState()
@@ -157,6 +195,7 @@ export class RecordingService {
     setError('')
     useASRStore.getState().setRecordStatus('recording')
     try {
+      this.rendererTextTarget = captureRendererTextTarget()
       void window.electronAPI?.captureTextTarget?.().catch(() => false)
       await window.electronAPI?.showStatusOverlay('recording', 0)
 
@@ -311,7 +350,7 @@ export class RecordingService {
     const settings = useASRStore.getState().settings
     useASRStore.getState().setTranscribeStatus('polling')
     const startedAt = Date.now()
-    const timeoutMs = settings.timeoutSec === 0 ? 30 * 60 * 1000 : settings.timeoutSec * 1000
+    const timeoutMs = asyncTaskPollTimeoutMs(settings.timeoutSec)
     let pollCount = 0
     while (Date.now() - startedAt < timeoutMs) {
       if (signal.aborted) throw new DOMException('识别已强制停止', 'AbortError')
@@ -344,6 +383,12 @@ export class RecordingService {
     if (autoInject && settings.injectMode === 'inject') {
       if (!hasText) {
         if (!isStale()) await window.electronAPI?.showStatusOverlay('result', 0, '未识别到语音内容')
+        return
+      }
+      const rendererTarget = this.rendererTextTarget
+      this.rendererTextTarget = null
+      if (insertIntoRendererTextTarget(rendererTarget, deliveryText)) {
+        if (!isStale()) await window.electronAPI?.hideStatusOverlay()
         return
       }
       try {

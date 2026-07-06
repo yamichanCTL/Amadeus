@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { clipboard, contextBridge, ipcRenderer } from 'electron'
 
 const on = <T>(channel: string, callback: (payload: T) => void) => {
   const listener = (_event: Electron.IpcRendererEvent, payload: T) => callback(payload)
@@ -36,8 +36,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   injectText: (text: string) => ipcRenderer.invoke('text:inject', text),
   textToClipboard: (text: string) => {
     const write = globalThis.navigator?.clipboard?.writeText(text)
-    if (write) void write.catch(() => ipcRenderer.send('text:toClipboard', text))
-    else ipcRenderer.send('text:toClipboard', text)
+    if (write) void write.catch(() => globalThis.setTimeout(() => clipboard.writeText(text), 0))
+    else globalThis.setTimeout(() => clipboard.writeText(text), 0)
     return true
   },
   showStatusOverlay: (status: string, level = 0, message = '') => ipcRenderer.invoke('statusOverlay:show', status, level, message),

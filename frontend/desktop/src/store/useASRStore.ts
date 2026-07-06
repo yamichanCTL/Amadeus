@@ -37,6 +37,7 @@ export type SummarySource = 'local' | 'server'
 export type SummaryWorkspace = {
   source: SummarySource
   date: string
+  dateFollowsToday: boolean
   userId: string
   category: string
   startTime: string
@@ -154,6 +155,7 @@ export type Settings = {
   audioRelayEnabled: boolean
   autoLaunchEnabled: boolean
   keepRunningInBackground: boolean
+  rememberCloseAction: boolean
 }
 
 export type HistoryItem = TranscribeResponse & {
@@ -225,9 +227,9 @@ export const DEFAULT_SETTINGS: Settings = {
   higgsTtsPitch: '',
   higgsTtsExpressiveness: '',
   higgsTtsInitialCodecChunkFrames: 1,
-  llmBaseUrl: 'https://api.deepseek.com',
-  llmProvider: 'deepseek',
-  llmModel: 'deepseek-chat',
+  llmBaseUrl: '',
+  llmProvider: 'custom',
+  llmModel: '',
   llmApiToken: '',
   llmTargetLanguage: 'English',
   llmStyle: '',
@@ -428,9 +430,9 @@ Unknown：无法判断状态时使用。
   passiveSummaryEnabled: false,
   passiveSummaryFrequencyMin: 60,
   passiveSummaryUserId: 'dsm',
-  passiveSummaryCategory: '实时转录',
+  passiveSummaryCategory: '',
   passiveSummaryStartTime: '00:00',
-  passiveSummaryEndTime: new Date().toTimeString().slice(0, 5),
+  passiveSummaryEndTime: '23:59',
   passiveSummarySource: 'local',
   passiveSummaryAutoLocalSave: true,
   passiveSummaryLastRunAt: '',
@@ -487,7 +489,8 @@ Unknown：无法判断状态时使用。
   userId: '',
   audioRelayEnabled: false,
   autoLaunchEnabled: false,
-  keepRunningInBackground: false
+  keepRunningInBackground: false,
+  rememberCloseAction: false
 }
 
 type ASRState = {
@@ -528,18 +531,15 @@ function localDateValue(date = new Date()) {
   return new Date(date.getTime() - offsetMs).toISOString().slice(0, 10)
 }
 
-function localTimeValue(date = new Date()) {
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
-}
-
 export function createSummaryWorkspace(date = new Date()): SummaryWorkspace {
   return {
     source: 'local',
     date: localDateValue(date),
+    dateFollowsToday: true,
     userId: 'dsm',
-    category: '实时转录',
+    category: '',
     startTime: '00:00',
-    endTime: localTimeValue(date),
+    endTime: '23:59',
     maxInputChars: 24000,
     result: null,
     loading: false,
@@ -646,6 +646,9 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
   merged.audioRelayEnabled = useSpeakerInput ? false : typeof merged.audioRelayEnabled === 'boolean' ? merged.audioRelayEnabled : false
   merged.autoLaunchEnabled = typeof merged.autoLaunchEnabled === 'boolean' ? merged.autoLaunchEnabled : false
   merged.keepRunningInBackground = typeof merged.keepRunningInBackground === 'boolean' ? merged.keepRunningInBackground : false
+  merged.rememberCloseAction = typeof legacy.rememberCloseAction === 'boolean'
+    ? legacy.rememberCloseAction
+    : merged.keepRunningInBackground
   merged.higgsTtsBaseUrl = merged.higgsTtsBaseUrl || 'http://localhost:8002'
   merged.higgsTtsProvider = merged.higgsTtsProvider === 'boson' ? 'boson' : 'local'
   merged.higgsTtsApiToken = typeof merged.higgsTtsApiToken === 'string' ? merged.higgsTtsApiToken : ''
@@ -700,9 +703,9 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
   merged.passiveSummaryUserId = merged.passiveSummaryUserId ?? 'dsm'
   merged.passiveSummaryCategory = ['', '一段语音转写', '实时转录'].includes(merged.passiveSummaryCategory)
     ? merged.passiveSummaryCategory
-    : '实时转录'
+    : ''
   merged.passiveSummaryStartTime = merged.passiveSummaryStartTime || '00:00'
-  merged.passiveSummaryEndTime = merged.passiveSummaryEndTime || new Date().toTimeString().slice(0, 5)
+  merged.passiveSummaryEndTime = merged.passiveSummaryEndTime || '23:59'
   merged.passiveSummarySource = merged.passiveSummarySource === 'server' ? 'server' : 'local'
   merged.passiveSummaryLastRunAt = merged.passiveSummaryLastRunAt || ''
   merged.passiveSummaryAutoLocalSave = typeof legacy.passiveSummaryAutoLocalSave === 'boolean'
@@ -757,6 +760,7 @@ function normalizeSummaryWorkspace(value: Partial<SummaryWorkspace> | undefined)
   const fallback = createSummaryWorkspace()
   const merged = { ...fallback, ...(value || {}) }
   merged.source = merged.source === 'server' ? 'server' : 'local'
+  merged.dateFollowsToday = typeof value?.dateFollowsToday === 'boolean' ? value.dateFollowsToday : true
   merged.maxInputChars = Math.min(120000, Math.max(4000, Number(merged.maxInputChars) || 24000))
   merged.loading = false
   merged.error = typeof merged.error === 'string' ? merged.error : ''
@@ -824,7 +828,7 @@ export const useASRStore = create<ASRState>()(
     }),
     {
       name: 'asr-desktop-store',
-      version: 37,
+      version: 38,
       partialize: (state) => ({
         settings: state.settings,
         history: state.history,

@@ -16,7 +16,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.tests.conftest import make_wav_bytes
-from app.api.v1.transcribe import _run_with_timeout
+from app.api.v1.transcribe import _long_audio_timeout_sec, _run_with_timeout
 from app.config import get_settings
 from app.db.crud import create_task
 from app.db.models import ASRTask
@@ -141,6 +141,18 @@ async def test_transcribe_short_audio_sync(async_client: AsyncClient) -> None:
 def test_transcribe_timeout_defaults_to_twenty_seconds() -> None:
     assert get_settings().transcribe_timeout_sec == 20
     assert TranscribeOptions(engine="mock").timeout_sec == 20
+
+
+def test_llm_defaults_are_blank_custom_configuration() -> None:
+    settings = get_settings()
+    assert settings.llm_default_provider == "custom"
+    assert settings.llm_default_base_url == ""
+    assert settings.llm_default_model == ""
+
+
+def test_long_audio_timeout_scales_with_duration() -> None:
+    assert _long_audio_timeout_sec(duration_sec=600, requested_timeout_sec=20) >= 1800
+    assert _long_audio_timeout_sec(duration_sec=600, requested_timeout_sec=0) == 0
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,8 @@
 
 模型管理把原“润色/翻译设置”更名为“LLM 设置”。该页只管理厂商、接口地址、模型和 API Token，不再重复展示 Prompt、“转写完成后自动执行”、目标语言或风格补充。Prompt 卡片和自动执行开关全部位于语音识别页，自动与手动处理读取同一张当前卡片。
 
+全新安装默认厂商为“自定义”，接口地址和模型均为空，不再自动带入 DeepSeek。接口地址、模型和 Token 的每次输入都会写入桌面 Zustand 持久 store；重启应用后继续保留。后端 `/v1/llm/defaults` 的无环境变量默认值也同步为空的 custom 配置，部署方仍可通过环境变量显式覆盖。
+
 ## 后端驱动的 ASR 模型发现
 
 ASR 模型行和离线/实时下拉不再维护前端引擎枚举。页面刷新时读取 `/v1/models`，根据每个模型的 `extra.model_modes`（`offline` / `streaming`）生成列表和“设为离线/实时”操作；旧后端只返回 `supports_streaming` 时仍有兼容回退。未知新引擎使用后端 `model_name`、`device` 和 `compute_type` 生成初始配置，Zustand 规范化也会保留动态配置键。
