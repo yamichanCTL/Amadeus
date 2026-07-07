@@ -41,7 +41,7 @@ export function SummaryPage() {
   const updateWorkspace = useASRStore((state) => state.updateSummaryWorkspace)
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
   const providerPreset = getProviderPreset(settings.llmProvider)
-  const { source, date, dateFollowsToday, userId, category, startTime, endTime, maxInputChars, result, loading, error, saveMessage } = workspace
+  const { source, date, endDate, dateFollowsToday, userId, category, startTime, endTime, maxInputChars, result, loading, error, saveMessage } = workspace
   const [streamPreview, setStreamPreview] = useState<ArchiveSummaryResult | null>(null)
   const [streamStatus, setStreamStatus] = useState('')
   const [summaryLogs, setSummaryLogs] = useState<Awaited<ReturnType<typeof loadLocalSummaryLogs>>>([])
@@ -54,10 +54,11 @@ export function SummaryPage() {
   const canRun = Boolean(settings.llmModel.trim() && settings.llmBaseUrl.trim() && settings.llmApiToken.trim())
   const localRecords = useMemo(() => buildLocalSummaryRecords(history, {
     date,
+    endDate,
     category,
     startTime,
     endTime,
-  }), [category, date, endTime, history, startTime])
+  }), [category, date, endDate, endTime, history, startTime])
 
   useEffect(() => () => streamAbortRef.current?.abort(), [])
 
@@ -66,7 +67,7 @@ export function SummaryPage() {
     const syncToday = () => {
       const today = localDateValue()
       if (useASRStore.getState().summaryWorkspace.date !== today) {
-        updateWorkspace({ date: today, result: null, error: '', saveMessage: '' })
+        updateWorkspace({ date: today, endDate: today, result: null, error: '', saveMessage: '' })
       }
     }
     syncToday()
@@ -122,12 +123,16 @@ export function SummaryPage() {
         chunk_count: 0,
         truncated: false,
         date,
-        time_range: [startTime, endTime].filter(Boolean).join('-') || null,
+        start_date: date,
+        end_date: endDate,
+        time_range: summaryRangeLabel(date, endDate, startTime, endTime),
       }
       setStreamPreview(preview)
       setStreamStatus('正在读取归档记录')
       const summary = await api.streamArchiveSummary({
         date,
+        start_date: date,
+        end_date: endDate,
         user_id: userId.trim() || undefined,
         category: category.trim() || undefined,
         start_time: startTime || undefined,
@@ -226,11 +231,22 @@ export function SummaryPage() {
               </select>
             </label>
             <label>
-              日期
+              开始日期
               <div className="inline-control">
-                <input type="date" value={date} onChange={(event) => { setStreamPreview(null); updateWorkspace({ date: event.target.value, dateFollowsToday: false, result: null }) }} />
-                <button type="button" onClick={() => updateWorkspace({ date: localDateValue(), dateFollowsToday: true, result: null })}>今天</button>
+                <input type="date" value={date} onChange={(event) => {
+                  const nextDate = event.target.value
+                  setStreamPreview(null)
+                  updateWorkspace({ date: nextDate, endDate: endDate < nextDate ? nextDate : endDate, dateFollowsToday: false, result: null })
+                }} />
+                <button type="button" onClick={() => {
+                  const today = localDateValue()
+                  updateWorkspace({ date: today, endDate: today, dateFollowsToday: true, result: null })
+                }}>今天</button>
               </div>
+            </label>
+            <label>
+              结束日期
+              <input type="date" value={endDate} min={date} onChange={(event) => { setStreamPreview(null); updateWorkspace({ endDate: event.target.value, dateFollowsToday: false, result: null }) }} />
             </label>
             <label>
               用户
@@ -267,7 +283,7 @@ export function SummaryPage() {
             <strong>{settings.llmModel || providerPreset.modelPlaceholder}</strong>
             <small>{settings.llmBaseUrl || providerPreset.baseUrl}</small>
           </div>
-          <button type="button" className="primary summary-run" disabled={loading || !date} onClick={() => void runSummary()}>
+          <button type="button" className="primary summary-run" disabled={loading || !date || !endDate} onClick={() => void runSummary()}>
             {loading ? '总结中' : '生成总结'}
           </button>
           {error && <p className="error">{error}</p>}
@@ -380,6 +396,14 @@ function summaryResultFromLog(content: string, date: string): ArchiveSummaryResu
     chunk_count: 0,
     truncated: false,
     date,
+    start_date: date,
+    end_date: date,
     time_range: null,
   }
+}
+
+function summaryRangeLabel(date: string, endDate: string, startTime: string, endTime: string) {
+  const day = date === endDate ? date : `${date} 至 ${endDate}`
+  const clock = [startTime, endTime].filter(Boolean).join('-') || '全天'
+  return `${day} ${clock}`
 }

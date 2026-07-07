@@ -7,6 +7,7 @@
 > - [ASR 引擎管理](ENGINES.md) — 引擎注册、加载、热切换
 > - [流式识别](STREAMING.md) — WebSocket X-ASR 原生流式
 > - [异步任务](TASKS.md) — Celery + Redis 长音频处理
+> - [并发推理方案](CONCURRENCY.md) — 多用户、显存和 micro-batch 设计
 
 ---
 
@@ -73,4 +74,4 @@ backend/
 
 ---
 
-> 📖 [API 端点详解 →](API.md) | [部署说明 →](DEPLOY.md) | [ASR 引擎 →](ENGINES.md)
+> 📖 [API 端点详解 →](API.md) | [部署说明 →](DEPLOY.md) | [ASR 引擎 →](ENGINES.md) | [并发推理方案 →](CONCURRENCY.md)

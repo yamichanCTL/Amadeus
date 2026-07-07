@@ -7,6 +7,7 @@
 ## 概述
 
 长音频（>60s）转写使用 Celery + Redis 异步处理，避免 HTTP 请求超时。
+Celery task 会按 `ASR_LONG_AUDIO_CHUNK_SEC` 将长音频拆成固定窗口 WAV chunk，逐段进入统一 ASR 推理调度器，最后按时间偏移合并文本和 segments。
 
 ## 架构
 
@@ -19,7 +20,9 @@ API (FastAPI)               Celery Worker
     │   └─ .delay(task_id) ──────→ 读取 task
     │                              ├─ 加载音频
     │←─ 返回 task_id               ├─ VAD (可选)
-    │                              ├─ ASR 推理
+    │                              ├─ 固定窗口拆段
+    │                              ├─ ASR scheduler 逐段推理
+    │                              ├─ 合并文本和 segments
     │                              ├─ 标点/说话人 (可选)
     │                              ├─ 写入 transcripts
     └─ GET /v1/tasks/{id} ←─────── └─ status = success/failed
@@ -60,6 +63,7 @@ celery -A app.tasks.celery_app.celery_app worker --loglevel=info --pool=solo --c
 | `CELERY_BROKER_URL` | `redis://localhost:6379/1` | 消息队列 |
 | `CELERY_RESULT_BACKEND` | `redis://localhost:6379/2` | 结果存储 |
 | `CELERY_TASK_TIME_LIMIT` | `3600` | 单任务最大秒数 |
+| `ASR_LONG_AUDIO_CHUNK_SEC` | `60` | 长音频固定窗口拆段秒数；调小可减少单个 chunk 占用模型的时间 |
 
 ## 数据库表
 

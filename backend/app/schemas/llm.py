@@ -197,6 +197,8 @@ class ArchiveSummaryRecord(BaseModel):
 
 class ArchiveSummaryRequest(BaseModel):
     date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    start_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    end_date: str | None = Field(None, pattern=r"^\d{4}-\d{2}-\d{2}$")
     user_id: str | None = None
     category: str | None = None
     start_time: str | None = Field(None, pattern=r"^\d{2}:\d{2}(:\d{2})?$")
@@ -230,6 +232,8 @@ class ArchiveSummaryResult(BaseModel):
     chunk_count: int = 1
     truncated: bool = False
     date: str
+    start_date: str | None = None
+    end_date: str | None = None
     time_range: str | None = None
 
 

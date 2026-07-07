@@ -67,6 +67,8 @@ data class LlmModelsResult(
 @Serializable
 data class ArchiveSummaryRequest(
     val date: String,
+    @SerialName("start_date") val startDate: String? = null,
+    @SerialName("end_date") val endDate: String? = null,
     @SerialName("user_id") val userId: String? = null,
     val category: String? = null,
     @SerialName("start_time") val startTime: String? = null,
@@ -92,6 +94,8 @@ data class ArchiveSummaryResult(
     @SerialName("chunk_count") val chunkCount: Int = 0,
     val truncated: Boolean = false,
     val date: String,
+    @SerialName("start_date") val startDate: String? = null,
+    @SerialName("end_date") val endDate: String? = null,
     @SerialName("time_range") val timeRange: String? = null,
 )
 

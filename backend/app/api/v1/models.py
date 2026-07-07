@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 from app.config import get_settings
 from app.core.asr.registry import available_engines
+from app.core.inference_scheduler import get_inference_scheduler
 from app.dependencies import Manager
 from app.schemas.transcribe import ModelInfo, ModelsListResponse
 
@@ -80,6 +81,17 @@ async def list_models(manager: Manager) -> ModelsListResponse:
         engines=engine_infos,
         default_engine=settings.default_engine,
     )
+
+
+@router.get("/scheduler", summary="Get ASR inference scheduler metrics")
+async def scheduler_metrics() -> dict[str, Any]:
+    scheduler = get_inference_scheduler()
+    return {
+        "enabled": scheduler.enabled,
+        "max_batch_items": scheduler.max_batch_items,
+        "max_wait_ms": scheduler.max_wait_ms,
+        "metrics": scheduler.snapshot(),
+    }
 
 
 # ── POST /v1/models/{name}/load ───────────────────────────────────────────────

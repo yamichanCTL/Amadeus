@@ -594,6 +594,8 @@ async def test_archive_summary_accepts_explicit_local_records_without_server_arc
         "/v1/llm/archive-summary",
         json={
             "date": "2026-07-03",
+            "start_date": "2026-07-03",
+            "end_date": "2026-07-05",
             "user_id": "local-only-user",
             "category": "实时转录",
             "provider": "deepseek",
@@ -612,9 +614,13 @@ async def test_archive_summary_accepts_explicit_local_records_without_server_arc
         },
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["source_count"] == 1
+    data = resp.json()
+    assert data["source_count"] == 1
+    assert data["start_date"] == "2026-07-03"
+    assert data["end_date"] == "2026-07-05"
     prompt = fake_llm.calls[0]["json"]["messages"][1]["content"]
     assert "这是只保存在用户电脑上的实时记录" in prompt
+    assert "2026-07-03 至 2026-07-05" in prompt
     assert "local-only-user" not in prompt
     assert "secret-token" not in prompt
 

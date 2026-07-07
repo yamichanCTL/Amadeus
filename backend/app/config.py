@@ -129,6 +129,10 @@ class Settings(BaseSettings):
     sync_max_duration_sec: float = 60.0
     celery_task_time_limit: int = 3600
     celery_task_always_eager: bool = False
+    asr_inference_scheduler_enabled: bool = True
+    asr_inference_max_batch_items: int = 4
+    asr_inference_max_wait_ms: int = 100
+    asr_long_audio_chunk_sec: float = 60.0
 
     # ── Auth ──────────────────────────────────────────────────────────────────
     access_token_expire_minutes: int = 60

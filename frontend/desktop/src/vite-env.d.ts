@@ -59,6 +59,7 @@ declare global {
       writeFile: (path: string, content: string) => Promise<boolean>
       readFileBase64: (path: string) => Promise<string>
       fileInfo: (path: string) => Promise<{ name: string; size: number; path: string }>
+      extractAudioForUpload?: (path: string) => Promise<{ extracted: boolean; path: string; name: string; originalPath: string }>
       archiveTranscription: (args: ArchiveTranscriptionArgs) => Promise<{ audio?: string; json: string }>
       saveSummaryLog: (args: SummaryLogArgs) => Promise<{ saved: boolean; path: string }>
       listSummaryLogs: (args: { archiveRoot?: string; date: string }) => Promise<SummaryLogEntry[]>

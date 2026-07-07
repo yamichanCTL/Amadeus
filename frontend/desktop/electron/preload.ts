@@ -21,6 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   writeFile: (filePath: string, content: string) => ipcRenderer.invoke('fs:writeFile', filePath, content),
   readFileBase64: (filePath: string) => ipcRenderer.invoke('fs:readFileBase64', filePath),
   fileInfo: (filePath: string) => ipcRenderer.invoke('fs:fileInfo', filePath),
+  extractAudioForUpload: (filePath: string) => ipcRenderer.invoke('media:extractAudioForUpload', filePath),
   archiveTranscription: (args: unknown) => ipcRenderer.invoke('archive:transcription', args),
   saveSummaryLog: (args: unknown) => ipcRenderer.invoke('archive:summaryLog', args),
   listSummaryLogs: (args: unknown) => ipcRenderer.invoke('archive:summaryLogs:list', args),

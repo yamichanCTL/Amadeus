@@ -58,6 +58,11 @@ def override_settings(tmp_path) -> None:
         _records_mod.settings = get_settings()
     except Exception:
         pass
+    try:
+        import app.core.inference_scheduler as _scheduler_mod
+        _scheduler_mod._scheduler = None
+    except Exception:
+        pass
     yield
     get_settings.cache_clear()
 

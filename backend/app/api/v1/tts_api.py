@@ -1385,15 +1385,14 @@ async def higgs_reference_asr(
     language: str = Form(default="zh"),
 ) -> dict[str, Any]:
     from app.core.asr.base import EngineOptions
-    from app.core.model_manager import get_model_manager
+    from app.core.inference_scheduler import transcribe_with_scheduler
 
     audio_bytes = await audio.read()
     if not audio_bytes:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Audio is empty")
     started = time.perf_counter()
     try:
-        asr_engine = await get_model_manager().get_engine(engine)
-        result = await asr_engine.transcribe(audio_bytes, EngineOptions(language=language or None))
+        result = await transcribe_with_scheduler(engine, audio_bytes, EngineOptions(language=language or None))
     except Exception as exc:
         logger.exception("Higgs reference ASR failed")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
@@ -1681,7 +1680,7 @@ async def higgs_audio_to_speech(
     language: str = Form(default="zh"),
 ) -> Response:
     from app.core.asr.base import EngineOptions
-    from app.core.model_manager import get_model_manager
+    from app.core.inference_scheduler import transcribe_with_scheduler
 
     total_started = time.perf_counter()
     audio_bytes = await audio.read()
@@ -1690,8 +1689,7 @@ async def higgs_audio_to_speech(
 
     try:
         asr_started = time.perf_counter()
-        asr_engine = await get_model_manager().get_engine(engine)
-        asr_result = await asr_engine.transcribe(audio_bytes, EngineOptions(language=language or None))
+        asr_result = await transcribe_with_scheduler(engine, audio_bytes, EngineOptions(language=language or None))
         asr_sec = time.perf_counter() - asr_started
         text = (asr_result.full_text or "").strip()
         if not text:

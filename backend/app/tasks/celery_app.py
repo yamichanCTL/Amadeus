@@ -54,6 +54,8 @@ def create_celery_app() -> Celery:
 
         # Development convenience: run tasks inline if configured.
         task_always_eager=settings.celery_task_always_eager,
+        task_ignore_result=True,
+        task_store_errors_even_if_ignored=False,
     )
 
     return app

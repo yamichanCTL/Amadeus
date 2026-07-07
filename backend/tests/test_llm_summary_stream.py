@@ -19,6 +19,8 @@ async def test_multi_chunk_summary_uses_streaming_provider_for_every_stage(monke
     monkeypatch.setattr(llm, "_chat_completion_stream", fake_stream)
     request = ArchiveSummaryRequest(
         date="2026-07-04",
+        start_date="2026-07-01",
+        end_date="2026-07-05",
         model="demo",
         base_url="https://llm.test/v1",
         api_token="token",
@@ -34,5 +36,12 @@ async def test_multi_chunk_summary_uses_streaming_provider_for_every_stage(monke
         "已完成第 2/2 段压缩",
         "大模型生成总结中",
     ]
+    meta = next(event for event in events if event["type"] == "meta")
+    assert meta["start_date"] == "2026-07-01"
+    assert meta["end_date"] == "2026-07-05"
+    assert meta["time_range"] == "2026-07-01 至 2026-07-05 全天"
     assert next(event for event in events if event["type"] == "delta")["text"] == "最终总结"
-    assert next(event for event in events if event["type"] == "done")["result"]["summary"] == "最终总结"
+    done = next(event for event in events if event["type"] == "done")
+    assert done["result"]["summary"] == "最终总结"
+    assert done["result"]["start_date"] == "2026-07-01"
+    assert "2026-07-01 至 2026-07-05" in calls[-1]

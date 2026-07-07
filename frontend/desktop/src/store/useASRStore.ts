@@ -37,6 +37,7 @@ export type SummarySource = 'local' | 'server'
 export type SummaryWorkspace = {
   source: SummarySource
   date: string
+  endDate: string
   dateFollowsToday: boolean
   userId: string
   category: string
@@ -532,9 +533,11 @@ function localDateValue(date = new Date()) {
 }
 
 export function createSummaryWorkspace(date = new Date()): SummaryWorkspace {
+  const today = localDateValue(date)
   return {
     source: 'local',
-    date: localDateValue(date),
+    date: today,
+    endDate: today,
     dateFollowsToday: true,
     userId: 'dsm',
     category: '',
@@ -760,6 +763,8 @@ function normalizeSummaryWorkspace(value: Partial<SummaryWorkspace> | undefined)
   const fallback = createSummaryWorkspace()
   const merged = { ...fallback, ...(value || {}) }
   merged.source = merged.source === 'server' ? 'server' : 'local'
+  merged.date = typeof merged.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(merged.date) ? merged.date : fallback.date
+  merged.endDate = typeof merged.endDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(merged.endDate) ? merged.endDate : merged.date
   merged.dateFollowsToday = typeof value?.dateFollowsToday === 'boolean' ? value.dateFollowsToday : true
   merged.maxInputChars = Math.min(120000, Math.max(4000, Number(merged.maxInputChars) || 24000))
   merged.loading = false
@@ -828,7 +833,7 @@ export const useASRStore = create<ASRState>()(
     }),
     {
       name: 'asr-desktop-store',
-      version: 38,
+      version: 39,
       partialize: (state) => ({
         settings: state.settings,
         history: state.history,

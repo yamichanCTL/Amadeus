@@ -107,3 +107,46 @@ def test_summary_both_uses_only_time_and_preferred_labels(
     assert "summary-user" not in transcript
     assert "[" in transcript and "]" in transcript
     assert truncated is False
+
+
+def test_summary_transcript_accepts_date_range(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import app.core.archive as archive_module
+
+    monkeypatch.setattr(archive_module.settings, "archive_dir", tmp_path)
+    for day, text in (
+        (datetime(2026, 7, 1, 9, 0, tzinfo=timezone.utc), "七月一号记录"),
+        (datetime(2026, 7, 3, 10, 0, tzinfo=timezone.utc), "七月三号记录"),
+        (datetime(2026, 7, 6, 11, 0, tzinfo=timezone.utc), "七月六号不应进入"),
+    ):
+        archive_module.archive_pcm_record(
+            pcm_bytes=b"\x00\x00" * 1600,
+            sample_rate=16_000,
+            user_id="summary-range-user",
+            category="实时转录",
+            text=text,
+            engine="mock",
+            language="zh",
+            started_at=day,
+            ended_at=day,
+            duration_sec=0.1,
+        )
+
+    transcript, source_count, _, truncated = build_summary_transcript(
+        user_id="summary-range-user",
+        date="2026-07-01",
+        end_date="2026-07-05",
+        category="实时转录",
+        start_time="00:00",
+        end_time="23:59",
+        max_chars=24000,
+    )
+
+    assert source_count == 2
+    assert "七月一号记录" in transcript
+    assert "七月三号记录" in transcript
+    assert "七月六号不应进入" not in transcript
+    assert "[2026-07-01 " in transcript
+    assert truncated is False

@@ -24,6 +24,7 @@ import { closeAction } from './close-behavior'
 import { calculateInitialWindowBounds } from './window-layout'
 import { localArchiveDay, safeArchiveStem, writeTranscriptionArchive } from './archive-layout'
 import { listSummaryLogs } from './summary-log-layout'
+import { extractAudioForUpload } from './media-upload'
 
 type CaptionOverlayOptions = {
   fontSize: number
@@ -1134,7 +1135,7 @@ function registerIpc() {
   ipcMain.handle('dialog:openAudio', async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
       properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'Audio', extensions: ['wav', 'mp3', 'm4a', 'aac', 'flac', 'ogg', 'webm'] }]
+      filters: [{ name: 'Audio / Video', extensions: ['wav', 'mp3', 'm4a', 'aac', 'flac', 'ogg', 'webm', 'mp4', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'm4v'] }]
     })
     return result.canceled ? [] : result.filePaths
   })
@@ -1159,6 +1160,7 @@ function registerIpc() {
     const stats = await fs.stat(filePath)
     return { name: path.basename(filePath), size: stats.size, path: filePath }
   })
+  ipcMain.handle('media:extractAudioForUpload', (_event, filePath: string) => extractAudioForUpload(filePath))
   ipcMain.handle('archive:transcription', (_event, args: ArchiveArgs) => archiveTranscription(args))
   ipcMain.handle('archive:summaryLog', (_event, args: SummaryLogArgs) => saveSummaryLog(args))
   ipcMain.handle('archive:summaryLogs:list', async (_event, args: { archiveRoot?: string; date: string }) => {

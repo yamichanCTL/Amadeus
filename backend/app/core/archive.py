@@ -191,6 +191,7 @@ def build_summary_transcript(
     *,
     user_id: str | None,
     date: str,
+    end_date: str | None = None,
     category: str | None,
     start_time: str | None,
     end_time: str | None,
@@ -200,11 +201,12 @@ def build_summary_transcript(
 
     records = list_archived_records(
         user_id=user_id,
-        date=date,
+        date=None,
         category=category,
         limit=20000,
         offset=0,
     )
+    range_start_date, range_end_date = _normalize_date_range(date, end_date)
     range_start = _parse_clock(start_time)
     range_end = _parse_clock(end_time)
     lines: list[tuple[datetime | None, str]] = []
@@ -224,9 +226,12 @@ def build_summary_transcript(
             or record.get("real_time_end")
             or record.get("created_at")
         )
+        record_date = _record_local_date(started_at) or str(record.get("date") or "")
+        if not _within_date_range(record_date, range_start_date, range_end_date):
+            continue
         if not _within_clock_range(started_at, ended_at, range_start, range_end):
             continue
-        prefix = _format_time_prefix(started_at, ended_at)
+        prefix = _format_time_prefix(started_at, ended_at, include_date=range_start_date != range_end_date)
         lines.append((started_at, f"{prefix} {label}"))
 
     lines.sort(key=lambda entry: entry[0].timestamp() if entry[0] else 0)
@@ -352,6 +357,24 @@ def _within_clock_range(
     return True
 
 
+def _normalize_date_range(start_date: str, end_date: str | None) -> tuple[str, str]:
+    start = start_date
+    end = end_date or start_date
+    if end < start:
+        return end, start
+    return start, end
+
+
+def _record_local_date(started_at: datetime | None) -> str | None:
+    if not started_at:
+        return None
+    return started_at.astimezone().strftime("%Y-%m-%d")
+
+
+def _within_date_range(date: str, start_date: str, end_date: str) -> bool:
+    return bool(date) and start_date <= date <= end_date
+
+
 def _nested_get(record: dict[str, Any], key: str, child: str) -> object:
     value = record.get(key)
     if not isinstance(value, dict):
@@ -416,11 +439,16 @@ def _record_speaker(record: dict[str, Any]) -> str:
     return ""
 
 
-def _format_time_prefix(started_at: datetime | None, ended_at: datetime | None) -> str:
+def _format_time_prefix(started_at: datetime | None, ended_at: datetime | None, *, include_date: bool = False) -> str:
     if not started_at:
         return "[--:--:--]"
-    start = started_at.strftime("%H:%M:%S")
-    end = ended_at.strftime("%H:%M:%S") if ended_at else start
+    start_time = started_at.strftime("%H:%M:%S")
+    end_time = ended_at.strftime("%H:%M:%S") if ended_at else start_time
+    if include_date:
+        day = started_at.astimezone().strftime("%Y-%m-%d")
+        return f"[{day} {start_time}-{end_time}]"
+    start = start_time
+    end = end_time
     return f"[{start}-{end}]"
 
 

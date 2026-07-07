@@ -21,12 +21,17 @@ Flow
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
 from celery import Task  # type: ignore[import]
 
+from app.core.asr.base import ASRResult, EngineOptions, Segment
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -58,6 +63,7 @@ class ASRBaseTask(Task):
     name="asr.run",
     max_retries=2,
     default_retry_delay=10,
+    ignore_result=True,
     throws=(),          # don't auto-retry on these (we handle all exceptions manually)
 )
 def run_asr_task(self: ASRBaseTask, task_id: str, llm_options: dict | None = None) -> dict:  # type: ignore[misc]
@@ -82,10 +88,9 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
     import time
     from app.config import get_settings
     from app.core.archive import archive_file_error_record, archive_file_record
-    from app.core.asr.base import EngineOptions
     from app.core.asr.hotwords import get_hotword_manager
     from app.core.llm import log_asr_ai_polish_result, run_auto_processing
-    from app.core.model_manager import get_model_manager
+    from app.core.inference_scheduler import transcribe_with_scheduler
     from app.core.pipeline.post.punctuation import restore_punctuation
     from app.core.pipeline.pre.vad import detect_speech
     from app.db.crud import (
@@ -138,29 +143,31 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
 
             # ── 5. Pre-pipeline (VAD) ─────────────────────────────────────
             if task.vad_enabled:
-                import io
-
-                import soundfile as sf
-
-                buf = io.BytesIO(audio_bytes)
-                audio_array, sr = sf.read(buf, dtype="float32", always_2d=False)
+                audio_array, sr = _decode_audio_for_chunking(audio_bytes)
                 speech_segments = await detect_speech(audio_array, sr)
                 logger.info(
                     "Task %s: VAD found %d speech segments.", task_id, len(speech_segments)
                 )
-                # TODO: splice audio and run per-segment (reassemble afterwards)
-                # For now: pass full audio through
+                timing["vad_segments"] = len(speech_segments)
 
             # ── 6. ASR inference ──────────────────────────────────────────
-            manager = get_model_manager()
-
             async def load_and_transcribe():
-                model_started = time.perf_counter()
-                engine = await manager.get_engine(engine_name)
-                timing["model_ready_sec"] = round(time.perf_counter() - model_started, 6)
                 asr_started = time.perf_counter()
-                result = await engine.transcribe(audio_bytes, options)
+                result, chunk_meta = await _transcribe_audio_via_scheduler(
+                    engine_name=engine_name,
+                    audio_bytes=audio_bytes,
+                    options=options,
+                    chunk_sec=float(
+                        engine_opts_raw.get(
+                            "long_audio_chunk_sec",
+                            settings.asr_long_audio_chunk_sec,
+                        )
+                    ),
+                    transcribe=transcribe_with_scheduler,
+                )
                 timing["asr_sec"] = round(time.perf_counter() - asr_started, 6)
+                timing["asr_scheduler"] = "enabled"
+                timing.update(chunk_meta)
                 return result
 
             timeout_sec = max(
@@ -342,3 +349,161 @@ def _delete_temp_audio(audio_path: str | None) -> None:
             path.unlink()
     except Exception as exc:
         logger.warning("Could not delete temporary audio %s: %s", audio_path, exc)
+
+
+@dataclass(frozen=True)
+class AudioInferenceChunk:
+    start_sec: float
+    end_sec: float
+    audio_bytes: bytes
+
+
+async def _transcribe_audio_via_scheduler(
+    *,
+    engine_name: str,
+    audio_bytes: bytes,
+    options: EngineOptions | None,
+    chunk_sec: float,
+    transcribe: Callable[[str, bytes, EngineOptions | None], Awaitable[ASRResult]],
+) -> tuple[ASRResult, dict[str, int | float | str]]:
+    chunks = _build_audio_inference_chunks(audio_bytes, chunk_sec)
+    if len(chunks) == 1:
+        result = await transcribe(engine_name, chunks[0].audio_bytes, options)
+        return result, {
+            "asr_chunk_count": 1,
+            "asr_chunk_sec": round(chunk_sec, 3) if chunk_sec > 0 else 0,
+        }
+
+    results: list[tuple[AudioInferenceChunk, ASRResult]] = []
+    for chunk in chunks:
+        result = await transcribe(engine_name, chunk.audio_bytes, options)
+        results.append((chunk, result))
+
+    return _merge_chunk_results(results), {
+        "asr_chunk_count": len(chunks),
+        "asr_chunk_sec": round(chunk_sec, 3),
+    }
+
+
+def _build_audio_inference_chunks(audio_bytes: bytes, chunk_sec: float) -> list[AudioInferenceChunk]:
+    if chunk_sec <= 0:
+        return [AudioInferenceChunk(start_sec=0.0, end_sec=0.0, audio_bytes=audio_bytes)]
+
+    try:
+        audio, sample_rate = _decode_audio_for_chunking(audio_bytes)
+    except Exception as exc:
+        logger.warning("Could not decode audio for chunked ASR; falling back to single request: %s", exc)
+        return [AudioInferenceChunk(start_sec=0.0, end_sec=0.0, audio_bytes=audio_bytes)]
+
+    total_samples = len(audio)
+    if total_samples == 0:
+        return [AudioInferenceChunk(start_sec=0.0, end_sec=0.0, audio_bytes=audio_bytes)]
+
+    samples_per_chunk = max(1, int(chunk_sec * sample_rate))
+    if total_samples <= samples_per_chunk:
+        return [
+            AudioInferenceChunk(
+                start_sec=0.0,
+                end_sec=round(total_samples / sample_rate, 6),
+                audio_bytes=audio_bytes,
+            )
+        ]
+
+    chunks: list[AudioInferenceChunk] = []
+    for start in range(0, total_samples, samples_per_chunk):
+        end = min(total_samples, start + samples_per_chunk)
+        chunk_audio = audio[start:end]
+        chunks.append(
+            AudioInferenceChunk(
+                start_sec=round(start / sample_rate, 6),
+                end_sec=round(end / sample_rate, 6),
+                audio_bytes=_encode_wav_chunk(chunk_audio, sample_rate),
+            )
+        )
+    return chunks
+
+
+def _decode_audio_for_chunking(audio_bytes: bytes) -> tuple[np.ndarray, int]:
+    import soundfile as sf
+
+    audio, sample_rate = sf.read(io.BytesIO(audio_bytes), dtype="float32", always_2d=True)
+    if audio.ndim == 2:
+        audio = audio.mean(axis=1)
+    return np.asarray(audio, dtype=np.float32), int(sample_rate)
+
+
+def _encode_wav_chunk(audio: np.ndarray, sample_rate: int) -> bytes:
+    import soundfile as sf
+
+    buf = io.BytesIO()
+    sf.write(buf, audio, sample_rate, format="WAV", subtype="PCM_16")
+    return buf.getvalue()
+
+
+def _merge_chunk_results(results: list[tuple[AudioInferenceChunk, ASRResult]]) -> ASRResult:
+    if not results:
+        return ASRResult(full_text="", segments=[], engine_name="unknown", raw={"chunked": True})
+
+    texts: list[str] = []
+    segments: list[Segment] = []
+    confidences: list[float] = []
+    languages: list[str] = []
+    raw_chunks: list[dict[str, object]] = []
+    engine_name = "unknown"
+
+    for index, (chunk, result_obj) in enumerate(results):
+        result = result_obj
+        engine_name = result.engine_name or engine_name
+        text = result.full_text.strip()
+        if text:
+            texts.append(text)
+        if result.language and result.language not in languages:
+            languages.append(result.language)
+        if result.confidence is not None:
+            confidences.append(float(result.confidence))
+
+        if result.segments:
+            for segment in result.segments:
+                start = min(chunk.end_sec, max(chunk.start_sec, chunk.start_sec + segment.start))
+                end = min(chunk.end_sec, max(start, chunk.start_sec + segment.end))
+                segments.append(
+                    Segment(
+                        start=round(start, 6),
+                        end=round(end, 6),
+                        text=segment.text,
+                        confidence=segment.confidence,
+                    )
+                )
+        elif text:
+            segments.append(
+                Segment(
+                    start=chunk.start_sec,
+                    end=chunk.end_sec,
+                    text=text,
+                    confidence=result.confidence,
+                )
+            )
+
+        raw_chunks.append(
+            {
+                "index": index,
+                "start_sec": chunk.start_sec,
+                "end_sec": chunk.end_sec,
+                "text_chars": len(result.full_text),
+                "segment_count": len(result.segments),
+            }
+        )
+
+    confidence = round(sum(confidences) / len(confidences), 6) if confidences else None
+    return ASRResult(
+        full_text="\n".join(texts),
+        segments=segments,
+        language=languages[0] if languages else None,
+        engine_name=engine_name,
+        confidence=confidence,
+        raw={
+            "chunked": True,
+            "chunk_count": len(results),
+            "chunks": raw_chunks,
+        },
+    )

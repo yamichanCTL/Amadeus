@@ -69,6 +69,8 @@ cd backend
 uv run celery -A app.tasks.celery_app.celery_app worker --loglevel=info --concurrency=1
 ```
 
+GPU 推理 worker 不建议直接把 `--concurrency` 调到 8 或 16；多进程会重复加载模型并线性增加显存占用。长音频任务的业务状态以数据库为准，Celery ASR task 不依赖 result backend，并按 `ASR_LONG_AUDIO_CHUNK_SEC` 拆段进入统一推理队列。多用户并发请参考 [并发推理方案](CONCURRENCY.md)，通过模型执行器队列和 100 ms micro-batch 控制延迟与显存。
+
 ## 模型文件要求
 
 | 引擎 | 模型目录 | 必需文件 |
@@ -94,4 +96,4 @@ uv run celery -A app.tasks.celery_app.celery_app worker --loglevel=info --concur
 
 ---
 
-> 📖 [ASR 引擎配置详情 →](ENGINES.md) | [Backend 总览 →](README.md)
+> 📖 [ASR 引擎配置详情 →](ENGINES.md) | [并发推理方案 →](CONCURRENCY.md) | [Backend 总览 →](README.md)

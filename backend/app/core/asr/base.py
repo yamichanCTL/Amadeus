@@ -146,6 +146,22 @@ class BaseASREngine(abc.ABC):
         """
         ...
 
+    async def transcribe_batch(
+        self,
+        items: list[tuple[bytes, EngineOptions | None]],
+    ) -> list[ASRResult]:
+        """
+        Transcribe a micro-batch of independent requests.
+
+        Engines with native batch APIs should override this method. The default
+        keeps every existing engine compatible while still letting the scheduler
+        own queueing, admission, and GPU serialization.
+        """
+        results: list[ASRResult] = []
+        for audio_bytes, options in items:
+            results.append(await self.transcribe(audio_bytes, options))
+        return results
+
     async def transcribe_stream(
         self,
         audio_chunk_iter: AsyncIterator[bytes],

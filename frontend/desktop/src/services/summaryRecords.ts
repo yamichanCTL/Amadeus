@@ -6,6 +6,17 @@ function localDateValue(date: Date) {
   return new Date(date.getTime() - offsetMs).toISOString().slice(0, 10)
 }
 
+function normalizeDateRange(date: string, endDate?: string) {
+  const start = date
+  const end = endDate || date
+  return end < start ? { start: end, end: start } : { start, end }
+}
+
+function isWithinDateRange(date: Date, startDate: string, endDate: string) {
+  const current = localDateValue(date)
+  return current >= startDate && current <= endDate
+}
+
 function clockMinutes(value: string | undefined) {
   if (!value) return null
   const [hour, minute] = value.split(':').map(Number)
@@ -41,13 +52,15 @@ function historyDateRange(item: HistoryItem) {
 
 export function buildLocalSummaryRecords(
   history: HistoryItem[],
-  options: { date: string; category?: string; startTime?: string; endTime?: string },
+  options: { date: string; endDate?: string; category?: string; startTime?: string; endTime?: string },
 ): ArchiveSummaryRecord[] {
+  const dateRange = normalizeDateRange(options.date, options.endDate)
   return history.flatMap((item) => {
     const itemCategory = historyCategory(item)
     if (options.category && itemCategory !== options.category) return []
     const { start, end } = historyDateRange(item)
-    if (!Number.isFinite(start.getTime()) || localDateValue(start) !== options.date) return []
+    if (!Number.isFinite(start.getTime())) return []
+    if (!isWithinDateRange(start, dateRange.start, dateRange.end) && !isWithinDateRange(end, dateRange.start, dateRange.end)) return []
     if (!isWithinRange(start, options.startTime, options.endTime) && !isWithinRange(end, options.startTime, options.endTime)) return []
     const text = item.llm_outputs?.polish?.text?.trim()
       || item.llm_outputs?.translate?.text?.trim()
@@ -61,4 +74,3 @@ export function buildLocalSummaryRecords(
     }]
   })
 }
-

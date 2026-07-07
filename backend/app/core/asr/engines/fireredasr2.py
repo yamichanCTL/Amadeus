@@ -150,16 +150,53 @@ class FireRedASR2Engine(BaseASREngine):
             lambda: self._run_inference(sample_rate, audio_array, opts),
         )
 
+    async def transcribe_batch(
+        self,
+        items: list[tuple[bytes, EngineOptions | None]],
+    ) -> list[ASRResult]:
+        if not items:
+            return []
+        if not self.is_loaded:
+            await self.load()
+
+        decoded = [(_decode_audio(audio_bytes), options or EngineOptions()) for audio_bytes, options in items]
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, lambda: self._run_batch_inference(decoded))
+
     def _run_inference(
         self,
         sample_rate: int,
         audio_array: np.ndarray,
         opts: EngineOptions,
     ) -> ASRResult:
+        return self._run_batch_inference([((sample_rate, audio_array), opts)])[0]
+
+    def _run_batch_inference(
+        self,
+        decoded: list[tuple[tuple[int, np.ndarray], EngineOptions]],
+    ) -> list[ASRResult]:
         assert self._model is not None
 
-        raw_results = self._model.transcribe(["utt0"], [(sample_rate, audio_array)])
-        raw = raw_results[0] if raw_results else {"uttid": "utt0", "text": ""}
+        uttids = [f"utt{index}" for index in range(len(decoded))]
+        audios = [audio for audio, _opts in decoded]
+        raw_results = self._model.transcribe(uttids, audios)
+        raw_by_uttid = {
+            str(raw.get("uttid")): raw
+            for raw in raw_results
+            if isinstance(raw, dict)
+        }
+
+        results: list[ASRResult] = []
+        for index, (_audio, opts) in enumerate(decoded):
+            raw = raw_by_uttid.get(uttids[index])
+            if raw is None and index < len(raw_results):
+                raw = raw_results[index]
+            if not isinstance(raw, dict):
+                raw = {"uttid": uttids[index], "text": str(raw or "")}
+            results.append(self._result_from_raw(raw, opts))
+        return results
+
+    def _result_from_raw(self, raw: dict[str, Any], opts: EngineOptions) -> ASRResult:
         text = (raw.get("text") or "").strip()
         confidence = raw.get("confidence")
         duration = raw.get("dur_s")

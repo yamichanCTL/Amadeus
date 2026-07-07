@@ -290,6 +290,8 @@ def _speech_media_type(response_format: str) -> str:
 async def summarize_archive(request: ArchiveSummaryRequest) -> ArchiveSummaryResult:
     started = time.perf_counter()
     transcript, source_count, input_chars, truncated = _summary_transcript(request)
+    start_date, end_date = _summary_date_range(request)
+    range_label = _summary_range_label(request)
     if not transcript.strip():
         return ArchiveSummaryResult(
             summary="未找到可总结的 ASR 文本。",
@@ -302,7 +304,9 @@ async def summarize_archive(request: ArchiveSummaryRequest) -> ArchiveSummaryRes
             chunk_count=0,
             truncated=False,
             date=request.date,
-            time_range=_time_range_label(request.start_time, request.end_time),
+            start_date=start_date,
+            end_date=end_date,
+            time_range=range_label,
         )
 
     chunks = _split_text(transcript, max_chars=min(request.max_input_chars, 18000))
@@ -354,19 +358,25 @@ async def summarize_archive(request: ArchiveSummaryRequest) -> ArchiveSummaryRes
         chunk_count=len(chunks),
         truncated=truncated,
         date=request.date,
-        time_range=_time_range_label(request.start_time, request.end_time),
+        start_date=start_date,
+        end_date=end_date,
+        time_range=range_label,
     )
 
 
 async def summarize_archive_stream(request: ArchiveSummaryRequest) -> AsyncIterator[dict]:
     started = time.perf_counter()
     transcript, source_count, input_chars, truncated = _summary_transcript(request)
+    start_date, end_date = _summary_date_range(request)
+    range_label = _summary_range_label(request)
     meta = {
         "source_count": source_count,
         "input_chars": input_chars,
         "estimated_input_tokens": _estimate_tokens(transcript) if transcript.strip() else 0,
         "date": request.date,
-        "time_range": _time_range_label(request.start_time, request.end_time),
+        "start_date": start_date,
+        "end_date": end_date,
+        "time_range": range_label,
     }
     yield {"type": "meta", **meta}
 
@@ -382,7 +392,9 @@ async def summarize_archive_stream(request: ArchiveSummaryRequest) -> AsyncItera
             chunk_count=0,
             truncated=False,
             date=request.date,
-            time_range=_time_range_label(request.start_time, request.end_time),
+            start_date=start_date,
+            end_date=end_date,
+            time_range=range_label,
         )
         yield {"type": "delta", "text": result.summary}
         yield {"type": "done", "result": result.model_dump(mode="json")}
@@ -445,7 +457,9 @@ async def summarize_archive_stream(request: ArchiveSummaryRequest) -> AsyncItera
         chunk_count=len(chunks),
         truncated=truncated,
         date=request.date,
-        time_range=_time_range_label(request.start_time, request.end_time),
+        start_date=start_date,
+        end_date=end_date,
+        time_range=range_label,
     )
     yield {"type": "done", "result": result.model_dump(mode="json")}
 
@@ -456,6 +470,7 @@ def _summary_transcript(request: ArchiveSummaryRequest) -> tuple[str, int, int, 
     return build_summary_transcript(
         user_id=request.user_id,
         date=request.date,
+        end_date=request.end_date,
         category=request.category,
         start_time=request.start_time,
         end_time=request.end_time,
@@ -472,7 +487,10 @@ def _summary_transcript_from_records(request: ArchiveSummaryRequest) -> tuple[st
             continue
         started_at = _parse_client_datetime(record.started_at)
         ended_at = _parse_client_datetime(record.ended_at) or started_at
-        prefix = _client_time_prefix(started_at, ended_at)
+        if not _client_record_in_requested_range(started_at, ended_at, request):
+            continue
+        start_date, end_date = _summary_date_range(request)
+        prefix = _client_time_prefix(started_at, ended_at, include_date=start_date != end_date)
         lines.append((started_at, f"{prefix} {record.text.strip()}"))
 
     lines.sort(key=lambda entry: entry[0].timestamp() if entry[0] else 0)
@@ -498,11 +516,14 @@ def _parse_client_datetime(value: str | None) -> datetime | None:
         return None
 
 
-def _client_time_prefix(started_at: datetime | None, ended_at: datetime | None) -> str:
+def _client_time_prefix(started_at: datetime | None, ended_at: datetime | None, *, include_date: bool = False) -> str:
     if not started_at:
         return "[--:--:--]"
+    start_date = started_at.astimezone().strftime("%Y-%m-%d")
     start = started_at.astimezone().strftime("%H:%M:%S")
     end = (ended_at or started_at).astimezone().strftime("%H:%M:%S")
+    if include_date:
+        return f"[{start_date} {start}-{end}]"
     return f"[{start}-{end}]"
 
 
@@ -510,7 +531,7 @@ def _summary_user_prompt(request: ArchiveSummaryRequest, final_input: str) -> st
     prompt = (request.prompt or request.style or "").strip() or "请总结下面时间段内我说过的内容。"
     return (
         f"Prompt：{prompt}\n\n"
-        f"时间范围：{request.date} {_time_range_label(request.start_time, request.end_time) or '全天'}。\n"
+        f"时间范围：{_summary_range_label(request)}。\n"
         "下面只包含开始时间、结束时间和单条文本 label；label 优先使用 AI 润色结果。"
         "请严格围绕 Prompt 回答，输出 Markdown：\n"
         "## 总览\n## 关键要点\n## 决定与待办\n## 时间线\n"
@@ -744,3 +765,52 @@ def _time_range_label(start_time: str | None, end_time: str | None) -> str | Non
     if end_time:
         return f"{end_time} 之前"
     return None
+
+
+def _summary_date_range(request: ArchiveSummaryRequest) -> tuple[str, str]:
+    start = request.start_date or request.date
+    end = request.end_date or start
+    if end < start:
+        return end, start
+    return start, end
+
+
+def _summary_range_label(request: ArchiveSummaryRequest) -> str:
+    start_date, end_date = _summary_date_range(request)
+    day_label = start_date if start_date == end_date else f"{start_date} 至 {end_date}"
+    return f"{day_label} {_time_range_label(request.start_time, request.end_time) or '全天'}"
+
+
+def _client_record_in_requested_range(
+    started_at: datetime | None,
+    ended_at: datetime | None,
+    request: ArchiveSummaryRequest,
+) -> bool:
+    if not started_at:
+        return False
+    start_date, end_date = _summary_date_range(request)
+    record_date = started_at.astimezone().strftime("%Y-%m-%d")
+    if not (start_date <= record_date <= end_date):
+        return False
+    start_clock = _parse_clock_text(request.start_time)
+    end_clock = _parse_clock_text(request.end_time)
+    if start_clock is None and end_clock is None:
+        return True
+    start_minutes = started_at.astimezone().hour * 60 + started_at.astimezone().minute
+    effective_end = ended_at or started_at
+    end_minutes = effective_end.astimezone().hour * 60 + effective_end.astimezone().minute
+    if start_clock is not None and end_minutes < start_clock:
+        return False
+    if end_clock is not None and start_minutes > end_clock:
+        return False
+    return True
+
+
+def _parse_clock_text(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        hour, minute, *_ = [int(part) for part in value.split(":")]
+    except ValueError:
+        return None
+    return hour * 60 + minute

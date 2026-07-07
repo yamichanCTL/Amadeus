@@ -4,6 +4,22 @@
 > **子文档**:
 > - [桌面端文档](desktop/README.md)
 
+## [2026-07-07] ASR 并发推理调度器实现
+
+- **类型**: feat / test / docs
+- **描述**: 新增后端 `InferenceScheduler`，短音频同步识别、长音频 Celery task、Higgs reference ASR 和音频转 TTS 的 ASR 阶段统一进入按 engine name 隔离的模型执行器队列。模型空闲时首条请求立即执行，模型忙碌期间最多等待 100 ms 聚合 micro-batch；FireRedASR2 已接入原生 batch adapter，SenseVoice、Whisper、Qwen3-ASR、X-ASR 和 mock 通过默认逐条 batch 接口获得串行准入保护。长音频 Celery task 新增固定窗口拆段，逐 chunk 进入 scheduler 并按时间偏移合并结果。新增 `/v1/models/scheduler` 指标端点和 `ASR_INFERENCE_*` / `ASR_LONG_AUDIO_CHUNK_SEC` 配置。
+- **影响范围**: `backend/app/core/{asr/base.py,inference_scheduler.py,model_manager.py}`、`backend/app/api/v1/{transcribe.py,tts_api.py,models.py}`、`backend/app/tasks/asr_task.py`、`backend/tests/`、`doc/asrapp/backend/{API.md,CONCURRENCY.md,TASKS.md,DEPLOY.md}`、`doc/plans/2026-07-07-asr-inference-scheduler-implementation.md`、`doc/plans/2026-07-07-long-audio-segmented-scheduler-verification.md`
+- **验证**: 调度器定向测试 5 passed；长音频拆段测试 3 passed；后端组合定向回归 25 passed；Python `compileall app` 通过。当前环境未加载真实 GPU 模型做 10 到 20 并发压测，`test_api.py` 的 ASGI fixture 单例仍会在当前环境挂起，未计为通过。
+- **Plan**: [链接到 plan 文件](plans/2026-07-07-asr-inference-scheduler-implementation.md)
+
+## [2026-07-07] 总结日期范围、长音频队列与视频上传音频化
+
+- **类型**: feat / fix / test / docs
+- **描述**: 桌面总结从单日扩展为开始日期到结束日期，服务端归档和本机记录都会按日期范围与每日时间窗口过滤，流式 meta/done 返回完整范围。长音频 Celery ASR 任务不再写 result backend，任务状态继续以数据库和 `/v1/tasks/{task_id}` 为准，避免 Redis result backend 重连异常影响已完成任务。桌面端选择或拖入本地视频时先用 `ffmpeg` 抽取 16 kHz 单声道 WAV，只上传音频。新增后端并发推理方案文档，明确单 GPU 单模型执行器、100 ms micro-batch 和长音频拆段排队策略。
+- **影响范围**: `backend/app/{core,schemas,tasks}`、`frontend/desktop/{src,electron}`、`frontend/android/app/src/main/java/com/asrapp/android/data/Models.kt`、目标测试、`doc/{asrapp/backend,desktop,plans}`
+- **验证**: Backend 定向单元 6 passed；Desktop Vitest 4 files / 6 tests passed；renderer 与 Electron TypeScript 通过；`npm run build` 完成 Vite 与 AppImage 打包；Python `compileall app` 通过。完整 `test_api.py` 单个 ASGI 用例在当前环境 45 秒无输出后中止，未计为通过。
+- **Plan**: [链接到 plan 文件](plans/2026-07-07-summary-range-long-audio-video-concurrency.md)
+
 ## [2026-07-06] 修复桌面总结、ASR 回填、关闭记忆与长音频链路
 
 - **类型**: feat / fix / refactor / test / docs

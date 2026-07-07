@@ -37,6 +37,7 @@ from app.core.archive import archive_file_error_record, archive_file_record
 from app.core.asr.base import EngineOptions
 from app.core.asr.hotwords import get_hotword_manager
 from app.core.llm import log_asr_ai_polish_result, run_auto_processing
+from app.core.inference_scheduler import transcribe_with_scheduler
 from app.core.pipeline.post.punctuation import restore_punctuation
 from app.db.crud import (
     create_task,
@@ -335,12 +336,10 @@ async def transcribe(
         )
 
         async def load_and_transcribe():
-            model_started = time.perf_counter()
-            engine = await manager.get_engine(opts.engine)
-            timing["model_ready_sec"] = round(time.perf_counter() - model_started, 6)
             asr_started = time.perf_counter()
-            result = await engine.transcribe(audio_bytes, engine_options)
+            result = await transcribe_with_scheduler(opts.engine, audio_bytes, engine_options)
             timing["asr_sec"] = round(time.perf_counter() - asr_started, 6)
+            timing["asr_scheduler"] = "enabled"
             return result
 
         result = await _run_with_timeout(load_and_transcribe, opts.timeout_sec)

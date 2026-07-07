@@ -198,6 +198,9 @@ class ModelManager:
 
     async def shutdown(self) -> None:
         """Unload all engines.  Call from FastAPI lifespan on_shutdown."""
+        from app.core.inference_scheduler import shutdown_inference_scheduler
+
+        await shutdown_inference_scheduler()
         for name in list(self._engines):
             await self.unload_engine(name)
         logger.info("All ASR engines unloaded.")

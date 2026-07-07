@@ -3,8 +3,11 @@ import type { SummaryLogEntry } from '@/vite-env'
 
 export function summaryLogFilename(result: ArchiveSummaryResult, now = new Date()) {
   const range = (result.time_range || 'all-day').replace(/[^0-9A-Za-z\u4e00-\u9fff_-]+/g, '-')
+  const dateLabel = result.start_date && result.end_date && result.start_date !== result.end_date
+    ? `${result.start_date}_to_${result.end_date}`
+    : result.date
   const generatedAt = now.toISOString().replace(/[:.]/g, '-').replace('Z', '')
-  return `summary_${result.date}_${range}_${generatedAt}.md`
+  return `summary_${dateLabel}_${range}_${generatedAt}.md`
 }
 
 export async function saveSummaryToLocalLog(result: ArchiveSummaryResult, archiveRoot?: string) {
@@ -12,7 +15,7 @@ export async function saveSummaryToLocalLog(result: ArchiveSummaryResult, archiv
   if (!api) return null
   return api.saveSummaryLog({
     archiveRoot: archiveRoot || undefined,
-    date: result.date,
+    date: result.start_date || result.date,
     filename: summaryLogFilename(result),
     content: result.summary,
   })

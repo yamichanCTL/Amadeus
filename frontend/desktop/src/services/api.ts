@@ -284,6 +284,8 @@ export type LLMModelsResult = {
 
 export type ArchiveSummaryRequest = {
   date: string
+  start_date?: string
+  end_date?: string
   user_id?: string
   category?: string
   start_time?: string
@@ -316,11 +318,13 @@ export type ArchiveSummaryResult = {
   chunk_count: number
   truncated: boolean
   date: string
+  start_date?: string | null
+  end_date?: string | null
   time_range?: string | null
 }
 
 export type ArchiveSummaryStreamEvent =
-  | ({ type: 'meta' } & Pick<ArchiveSummaryResult, 'source_count' | 'input_chars' | 'estimated_input_tokens' | 'date' | 'time_range'>)
+  | ({ type: 'meta' } & Pick<ArchiveSummaryResult, 'source_count' | 'input_chars' | 'estimated_input_tokens' | 'date' | 'start_date' | 'end_date' | 'time_range'>)
   | { type: 'status'; message: string }
   | { type: 'delta'; text: string }
   | { type: 'done'; result: ArchiveSummaryResult }

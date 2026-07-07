@@ -121,6 +121,7 @@
 | 端点 | 方法 | 说明 |
 |------|------|------|
 | `/v1/models` | GET | 列出所有注册引擎及加载状态 |
+| `/v1/models/scheduler` | GET | 查看 ASR 推理调度器配置与队列指标 |
 | `/v1/models/{engine}/load` | POST | 加载指定引擎模型 |
 | `/v1/models/{engine}/unload` | POST | 卸载指定引擎模型 |
 
@@ -131,6 +132,30 @@ curl -X POST "http://localhost:8000/v1/models/whisper/load" \
   -H "Content-Type: application/json" \
   -d '{"model_name":"base","device":"cpu","compute_type":"int8"}'
 ```
+
+调度器指标示例：
+
+```json
+{
+  "enabled": true,
+  "max_batch_items": 4,
+  "max_wait_ms": 100,
+  "metrics": {
+    "submitted": 12,
+    "completed": 12,
+    "failed": 0,
+    "batches": 5,
+    "max_batch_size": 4,
+    "average_queue_wait_ms": 21.4,
+    "max_queue_wait_ms": 98.7,
+    "last_batch_engine": "fireredasr2",
+    "last_batch_size": 3,
+    "last_queue_wait_ms": 45.2
+  }
+}
+```
+
+该端点用于观察短音频、长音频 Celery task 和 Higgs reference ASR 是否都进入统一模型准入队列。`max_wait_ms` 是 micro-batch 聚合上限；模型空闲且队列为空时首个请求会立即执行。
 
 ### 认证
 
