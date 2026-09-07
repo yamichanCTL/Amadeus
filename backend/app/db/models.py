@@ -35,6 +35,28 @@ class Base(DeclarativeBase):
     pass
 
 
+class CodexCall(Base):
+    """One accounting row per app turn; no prompt, answer, credentials or raw events."""
+
+    __tablename__ = "codex_calls"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(80), index=True)
+    model: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    provider: Mapped[str] = mapped_column(String(120))
+    effort: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    source: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), index=True)
+    input_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cached_input_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    reasoning_output_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    elapsed_sec: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    error_code: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _new_uuid() -> str:

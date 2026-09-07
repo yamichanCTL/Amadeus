@@ -34,6 +34,13 @@ backend/data/
 backend/models/
 backend/app/core/asr/engines/FireRedASR2S/
 
+# Locally downloaded upstream source and ASR model weights
+/thirdparty/X-ASR/
+
+# Local agent permissions and temporary worktree copies
+/.claude/settings.local.json
+/.claude/worktrees/
+
 # Android / Gradle
 frontend/android/.gradle/
 frontend/android/.kotlin/

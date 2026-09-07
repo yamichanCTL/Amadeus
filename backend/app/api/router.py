@@ -5,12 +5,11 @@ Aggregates all v1 sub-routers into a single APIRouter that is mounted
 on the FastAPI application in main.py.
 """
 
-from fastapi import APIRouter
-
 from app.api.v1 import (
     agent_chat,
     agents,
     auth,
+    codex,
     health,
     hotwords,
     llm,
@@ -23,8 +22,10 @@ from app.api.v1 import (
     tts_api,
     voice_api,
 )
+from fastapi import APIRouter
 
 api_router = APIRouter(prefix="/v1")
+api_router.include_router(codex.router)
 
 api_router.include_router(health.router)
 api_router.include_router(hotwords.router)

@@ -9,6 +9,19 @@
 
 ## 端点一览
 
+### Codex Agent
+
+| 端点 | 方法 | 说明 |
+|------|------|------|
+| `/v1/agents/codex/models` | GET | 当前连接及运行时模型/推理强度目录 |
+| `/v1/agents/codex/turns` | POST | 提交文本或已完成 ASR task_id，支持多轮会话 |
+| `/v1/agents/codex/sessions/{session_id}/cancel` | POST | 取消实际 Agent 调用 |
+| `/v1/agents/codex/sessions/{session_id}` | DELETE | 清除会话，保留用量记录 |
+| `/v1/agents/codex/usage` | GET | 本应用 token 用量，支持会话和模型筛选 |
+
+`WS /v1/stream` 可通过 `config.agent.enabled=true` 把 final 直接接入 Codex。
+协议与示例见 [ASR → Codex Agent](CODEX.md)。
+
 ### 健康检查
 
 | 端点 | 方法 | 说明 |

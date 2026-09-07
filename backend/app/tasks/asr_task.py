@@ -166,7 +166,7 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
                     transcribe=transcribe_with_scheduler,
                 )
                 timing["asr_sec"] = round(time.perf_counter() - asr_started, 6)
-                timing["asr_scheduler"] = "enabled"
+                timing["asr_scheduler_enabled"] = 1.0
                 timing.update(chunk_meta)
                 return result
 

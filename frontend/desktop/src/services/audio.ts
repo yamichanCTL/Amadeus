@@ -1,3 +1,5 @@
+import { openEchoCancelledMicrophone, type EchoCancellationState } from './echoCancellation'
+import type { CodexOptions, CodexVoiceEvent } from './codex'
 import { finishTelemetryTrace, recordTelemetry, recordTelemetryStage, startTelemetryTrace, type TelemetryTrace } from './telemetry'
 
 /** Tracks all AudioRecorder instances currently in 'recording' state.
@@ -739,12 +741,13 @@ export class AudioRelayMixer {
     return new MediaStream(this.inputStream.getAudioTracks().map((track) => track.clone()))
   }
 
-  async playBlob(blob: Blob) {
+  async playBlob(blob: Blob, canPlay: () => boolean = () => true) {
     const context = this.context
     const destination = this.injectionGain
     if (!context || !destination) throw new Error('麦克风中转尚未启动')
     const encoded = await blob.arrayBuffer()
     const decoded = await context.decodeAudioData(encoded.slice(0))
+    if (!canPlay() || this.context !== context) return { duration: 0, sinkApplied: this.sinkApplied }
     const source = context.createBufferSource()
     source.buffer = decoded
     source.connect(destination)
@@ -1239,17 +1242,27 @@ export class PcmStreamer {
   private readonly onPcm: PcmCallback
   private readonly rejectLoopbackInput: boolean
   private targetSampleRate = 16000
-  private outputPlaybackActive = false
-  private echoCancellationEnabled: boolean | null = null
+  private readonly requireEchoCancellation: boolean
+  private readonly onCaptureSettings?: (state: EchoCancellationState) => void
 
-  constructor(onPcm: PcmCallback, options: { rejectLoopbackInput?: boolean } = {}) {
+  constructor(onPcm: PcmCallback, options: { rejectLoopbackInput?: boolean; requireEchoCancellation?: boolean; onCaptureSettings?: (state: EchoCancellationState) => void } = {}) {
     this.onPcm = onPcm
     this.rejectLoopbackInput = Boolean(options.rejectLoopbackInput)
+    this.requireEchoCancellation = Boolean(options.requireEchoCancellation)
+    this.onCaptureSettings = options.onCaptureSettings
   }
 
   async start(deviceId?: string, inputStream?: MediaStream) {
     if (this.stream) throw new Error('PCM stream already active')
-    this.stream = inputStream || await navigator.mediaDevices.getUserMedia({
+    if (this.requireEchoCancellation) {
+      // Prepared and relay tracks are intentionally raw. Open a separate processed
+      // capture of the same physical device instead of silently inheriting AEC=false.
+      const actualDevice = deviceId || inputStream?.getAudioTracks()[0]?.getSettings().deviceId
+      inputStream?.getTracks().forEach((track) => track.stop())
+      const capture = await openEchoCancelledMicrophone(actualDevice)
+      this.stream = capture.stream
+      this.onCaptureSettings?.(capture.state)
+    } else this.stream = inputStream || await navigator.mediaDevices.getUserMedia({
       audio: {
         deviceId: deviceId ? { exact: deviceId } : undefined,
         sampleRate: { ideal: 16000 },
@@ -1264,8 +1277,6 @@ export class PcmStreamer {
       this.stream = null
       throw new Error(`实时 ASR + TTS 不能使用回环输入设备：${inputLabel}`)
     }
-    const echoCancellation = this.stream.getAudioTracks()[0]?.getSettings().echoCancellation
-    this.echoCancellationEnabled = typeof echoCancellation === 'boolean' ? echoCancellation : null
 
     this.audioContext = new AudioContext({ sampleRate: this.targetSampleRate })
     this.source = this.audioContext.createMediaStreamSource(this.stream)
@@ -1278,12 +1289,7 @@ export class PcmStreamer {
     }
   }
 
-  private shouldDropInputFrame() {
-    return this.outputPlaybackActive && this.echoCancellationEnabled === false
-  }
-
   private emitPcm(pcm: Int16Array, sampleRate: number) {
-    if (this.shouldDropInputFrame()) return
     this.onPcm(pcm, sampleRate)
   }
 
@@ -1327,8 +1333,8 @@ export class PcmStreamer {
     this.silenceGain.connect(context.destination)
   }
 
-  setOutputPlaybackActive(active: boolean) {
-    this.outputPlaybackActive = active
+  setOutputPlaybackActive(_active: boolean) {
+    // Playback never gates capture; AEC operates on the continuous audio signal.
   }
 
   stop() {
@@ -1345,8 +1351,6 @@ export class PcmStreamer {
     this.source = null
     this.audioContext = null
     this.stream = null
-    this.outputPlaybackActive = false
-    this.echoCancellationEnabled = null
   }
 }
 
@@ -1390,6 +1394,11 @@ export class StreamingASRClient {
     inputStream?: MediaStream
     userId?: string
     archive?: boolean
+    echoCancellation?: boolean
+    onCaptureSettings?: (state: EchoCancellationState) => void
+    endpointing?: 'manual' | 'vad'
+    agent?: CodexOptions & { enabled: boolean }
+    onAgentEvent?: (event: CodexVoiceEvent) => void
   }) {
     this.startedAt = performance.now()
     this.stoppedByUser = false
@@ -1415,7 +1424,9 @@ export class StreamingASRClient {
     const handleMessage = (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data as string)
-        if (data.type === 'accepted') {
+        if (typeof data.type === 'string' && data.type.startsWith('agent.')) {
+          config.onAgentEvent?.(data)
+        } else if (data.type === 'accepted') {
           // Backend confirmed WebSocket handshake; model loading may still be in progress.
           if (this.sessionTrace) recordTelemetryStage(this.sessionTrace, 'WebSocket 已接受', { detail: '等待模型加载…' })
           this.onEvent({ type: 'accepted' })
@@ -1464,14 +1475,18 @@ export class StreamingASRClient {
       if (captureStarted || this.stoppedByUser) return
       captureStarted = true
       this.pcmStreamer = new PcmStreamer((pcm, sampleRate) => {
+        if (this.stoppedByUser) return
         this.recordingBuffer.append(pcm, sampleRate)
         if (this.ws?.readyState === WebSocket.OPEN && this.ws.bufferedAmount < MAX_WS_AUDIO_BUFFER_BYTES) {
           this.ws.send(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength))
         }
-      })
+      }, { requireEchoCancellation: config.echoCancellation, onCaptureSettings: config.onCaptureSettings })
       const inputStream = this.pendingInputStream || undefined
       this.pendingInputStream = null
-      this.pcmStreamer.start(config.deviceId, inputStream).catch((error) => {
+      const capture = this.pcmStreamer
+      capture.start(config.deviceId, inputStream).then(() => {
+        if (this.stoppedByUser || this.pcmStreamer !== capture) capture.stop()
+      }).catch((error) => {
         this.pcmStreamer?.stop()
         this.pcmStreamer = null
         this.onEvent({ type: 'error', message: error instanceof Error ? error.message : '无法启动麦克风实时音频流' })
@@ -1566,6 +1581,8 @@ export class StreamingASRClient {
           language: config.language || 'zh',
           user_id: config.userId || '',
           archive: config.archive === true,
+          ...(config.agent ? { agent: config.agent } : {}),
+          ...(config.endpointing ? { endpointing: config.endpointing } : {}),
         }))
       }
       ws.onmessage = handleMessage
@@ -1576,6 +1593,23 @@ export class StreamingASRClient {
       }
     }
     connect(0)
+  }
+
+  // Stop capturing, but retain the socket until the backend drains ASR and Agent replies.
+  finish() {
+    this.stoppedByUser = true
+    this.pcmStreamer?.stop()
+    this.pcmStreamer = null
+    this.releasePendingInput()
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify({ type: 'end' }))
+    } else {
+      this.stop()
+    }
+  }
+
+  cancelAgent() {
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify({ type: 'agent.cancel' }))
   }
 
   stop() {
@@ -1708,7 +1742,7 @@ export class VoiceTTSStreamingClient {
         if (this.ws?.readyState === WebSocket.OPEN && this.ws.bufferedAmount < MAX_WS_AUDIO_BUFFER_BYTES) {
           this.ws.send(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength))
         }
-      }, { rejectLoopbackInput: true })
+      }, { rejectLoopbackInput: true, requireEchoCancellation: true })
       this.pcmStreamer.start(config.deviceId, config.inputStreamFactory?.()).catch((error) => {
         this.onEvent({ type: 'error', message: error instanceof Error ? error.message : 'Cannot start microphone stream' })
       })

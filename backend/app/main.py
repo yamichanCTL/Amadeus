@@ -59,6 +59,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Create DB tables (idempotent; use Alembic for migrations in prod)
     await init_db()
+    from app.core.codex_runtime import get_codex_runtime
+    await get_codex_runtime().ledger.recover()
     logger.info("Database initialised.")
 
     if settings.preload_default_engine:
@@ -82,6 +84,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
     logger.info("Shutting down ASR backend …")
+    from app.core.codex_runtime import close_codex_runtime
+    await close_codex_runtime()
     from app.core.model_manager import get_model_manager as _mgr
     await _mgr().shutdown()
     await close_db()

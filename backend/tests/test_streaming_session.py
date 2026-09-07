@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-
 from app.core.asr.base import ASRResult, BaseASREngine, BaseStreamingASRSession, EngineOptions
 from app.core.model_errors import ModelRuntimeError
 
@@ -36,7 +35,9 @@ class FakeTrueStream(BaseStreamingASRSession):
 
     async def accept_pcm(self, pcm_bytes: bytes) -> ASRResult:
         self.chunks.append(pcm_bytes)
-        return ASRResult(full_text=f"stream partial {len(self.chunks)}", language="zh", engine_name="x-asr")
+        return ASRResult(
+            full_text=f"stream partial {len(self.chunks)}", language="zh", engine_name="x-asr"
+        )
 
     async def finish(self) -> ASRResult:
         return ASRResult(full_text=self.final_text, language="zh", engine_name="x-asr")
@@ -51,18 +52,27 @@ class TrueStreamingEngine(BaseASREngine):
     def name(self) -> str:
         return "x-asr"
 
-    async def load(self) -> None: pass
-    async def unload(self) -> None: pass
+    async def load(self) -> None:
+        pass
+
+    async def unload(self) -> None:
+        pass
+
     @property
-    def is_loaded(self) -> bool: return True
+    def is_loaded(self) -> bool:
+        return True
+
     @property
-    def supports_streaming(self) -> bool: return True
+    def supports_streaming(self) -> bool:
+        return True
 
     async def create_streaming_session(self, sample_rate=16_000, options=None):
         assert sample_rate == 16_000
         return self.stream
 
-    async def transcribe(self, audio_bytes: bytes, options: EngineOptions | None = None) -> ASRResult:
+    async def transcribe(
+        self, audio_bytes: bytes, options: EngineOptions | None = None
+    ) -> ASRResult:
         self.transcribe_calls += 1
         raise AssertionError("native streaming must never call offline transcribe")
 
@@ -77,7 +87,9 @@ class TrueStreamingManager:
 
 
 @pytest.mark.asyncio
-async def test_streaming_session_reuses_online_decoder_and_adds_tail(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_streaming_session_reuses_online_decoder_and_adds_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import app.core.streaming.session as session_module
     from app.core.streaming.session import StreamConfig, StreamingASRSession
 
@@ -122,7 +134,9 @@ async def test_streaming_session_suppresses_empty_final(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
-async def test_failed_session_aborts_without_finishing_poisoned_decoder(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_failed_session_aborts_without_finishing_poisoned_decoder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import app.core.streaming.session as session_module
     from app.core.streaming.session import StreamConfig, StreamingASRSession
 
@@ -194,3 +208,71 @@ async def test_websocket_sender_closes_immediately_after_fatal_model_error() -> 
 
     assert websocket.sent[0]["code"] == "model_not_loaded"
     assert websocket.close_codes == [1011]
+
+
+@pytest.mark.asyncio
+async def test_manual_recording_never_loads_vad_or_finalizes_on_silence_or_duration(monkeypatch):
+    import app.core.streaming.session as session_module
+    from app.core.streaming.session import StreamConfig, StreamingASRSession
+
+    def no_vad():
+        raise AssertionError("manual input must not load VAD")
+
+    manager = TrueStreamingManager()
+    monkeypatch.setattr(session_module, "get_model_manager", lambda: manager)
+    monkeypatch.setattr(session_module, "create_streaming_vad", no_vad)
+    session = StreamingASRSession(StreamConfig(engine="x-asr", endpointing="manual"))
+    await session.prepare()
+    # Keep the same online decoder across 20 seconds, including long silence.
+    for pcm in [b"\x01\x00" * 32000, b"\x00\x00" * 256000, b"\x02\x00" * 32000]:
+        await session.accept_audio(pcm)
+    events = []
+    while not session.queue.empty():
+        events.append(await session.queue.get())
+    assert sum(e["type"] == "partial" for e in events) == 3
+    assert not any(e["type"] in {"final", "done"} for e in events)
+    assert session._vad is None
+    assert session._job_id == 1
+    assert manager.engine.transcribe_calls == 0
+    await session.finish()
+    await session.finish()  # Duplicate end must not submit twice.
+    while not session.queue.empty():
+        events.append(await session.queue.get())
+    final = [e for e in events if e["type"] == "final"]
+    assert len(final) == 1
+    assert final[0]["text"] == "stream final"
+    assert final[0]["duration_sec"] == 20
+    assert events[-1]["type"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_manual_empty_recording_never_emits_final(monkeypatch):
+    import app.core.streaming.session as session_module
+    from app.core.streaming.session import StreamConfig, StreamingASRSession
+
+    monkeypatch.setattr(session_module, "get_model_manager", lambda: TrueStreamingManager(""))
+    session = StreamingASRSession(StreamConfig(endpointing="manual"))
+    await session.accept_audio(b"\x00\x00" * 16000)
+    await session.finish()
+    events = []
+    while not session.queue.empty():
+        events.append(await session.queue.get())
+    assert not any(e["type"] == "final" for e in events)
+    assert any(e["type"] == "no_speech" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_manual_abort_does_not_submit_unfinished_recording(monkeypatch):
+    import app.core.streaming.session as session_module
+    from app.core.streaming.session import StreamConfig, StreamingASRSession
+
+    monkeypatch.setattr(session_module, "get_model_manager", lambda: TrueStreamingManager())
+    session = StreamingASRSession(StreamConfig(endpointing="manual"))
+    await session.accept_audio(b"\x01\x00" * 6400)
+    await session.abort()
+    events = []
+    while not session.queue.empty():
+        events.append(await session.queue.get())
+    assert not any(e["type"] == "final" for e in events)
+    with pytest.raises(ValueError):
+        session.update_config({"endpointing": "vad"})

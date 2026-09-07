@@ -81,6 +81,7 @@ export default defineConfig({
             { text: '部署说明', link: '/asrapp/backend/DEPLOY' },
             { text: 'ASR 引擎管理', link: '/asrapp/backend/ENGINES' },
             { text: '流式识别', link: '/asrapp/backend/STREAMING' },
+            { text: 'ASR → Codex Agent', link: '/asrapp/backend/CODEX' },
             { text: '异步任务', link: '/asrapp/backend/TASKS' },
           ]
         },

@@ -6,6 +6,7 @@
 > - [部署说明](DEPLOY.md) — Docker + 手动部署
 > - [ASR 引擎管理](ENGINES.md) — 引擎注册、加载、热切换
 > - [流式识别](STREAMING.md) — WebSocket X-ASR 原生流式
+> - [ASR → Codex Agent](CODEX.md) — 会话、模型选择和应用用量统计
 > - [异步任务](TASKS.md) — Celery + Redis 长音频处理
 > - [并发推理方案](CONCURRENCY.md) — 多用户、显存和 micro-batch 设计
 

@@ -128,17 +128,25 @@ class FireRedVad(StreamingVad):
             end_silence_ms=settings.stream_end_silence_ms,
             sample_rate=settings.stream_sample_rate,
         )
+        self._audio_buffer = np.empty(0, dtype=np.int16)
 
     def reset(self) -> None:
         self._vad.reset()
         self._fast_vad.reset()
+        self._audio_buffer = np.empty(0, dtype=np.int16)
 
     def accept_pcm(self, pcm_bytes: bytes) -> VadDecision:
         audio = np.frombuffer(pcm_bytes, dtype=np.int16)
         if audio.size == 0:
             return VadDecision(False)
         fast = self._fast_vad.accept_pcm(pcm_bytes)
-        results = self._vad.detect_chunk(audio)
+        # 10 fbank frames need 400 + 9 * 160 samples, with 240 samples of
+        # overlap. Browser callbacks can be only 128 samples long.
+        self._audio_buffer = np.concatenate((self._audio_buffer, audio))
+        results = []
+        while self._audio_buffer.size >= 1840:
+            results.extend(self._vad.detect_chunk(self._audio_buffer[:1840]))
+            self._audio_buffer = self._audio_buffer[1600:]
         if not results:
             return fast
         return VadDecision(

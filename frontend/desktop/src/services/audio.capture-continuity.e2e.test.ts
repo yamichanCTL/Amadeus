@@ -56,7 +56,7 @@ vi.stubGlobal('AudioWorkletNode', MockAudioWorkletNode)
 vi.stubGlobal('AudioContext', MockAudioContext)
 vi.stubGlobal('navigator', { mediaDevices: { getUserMedia: harness.getUserMedia } })
 
-import { AudioRecorder } from './audio'
+import { AudioRecorder, PcmStreamer } from './audio'
 
 function emitChunk(sequence: number, value: number, frames = 128) {
   const pcm = new Int16Array(frames)
@@ -154,4 +154,28 @@ describe('microphone capture continuity end to end', () => {
     expect(secondPcm).toHaveLength(frames * 2)
     expect(secondPcm.every((sample) => sample === 2_000)).toBe(true)
   })
+})
+
+
+it('replaces a raw prepared track with AEC capture and keeps emitting PCM during playback', async () => {
+  const rawTrack = { label: 'Physical mic', getSettings: () => ({ deviceId: 'physical-mic', echoCancellation: false }), stop: vi.fn() }
+  const rawStream = { getAudioTracks: () => [rawTrack], getTracks: () => [rawTrack] } as unknown as MediaStream
+  track.getSettings.mockReturnValue({ sampleRate: 48000, echoCancellation: true } as any)
+  harness.getUserMedia.mockResolvedValue(stream)
+  const onPcm = vi.fn()
+  const onCaptureSettings = vi.fn()
+  const pcm = new PcmStreamer(onPcm, { requireEchoCancellation: true, onCaptureSettings })
+  try {
+    await pcm.start(undefined, rawStream)
+    expect(rawTrack.stop).toHaveBeenCalledOnce()
+    expect(harness.getUserMedia.mock.lastCall?.[0].audio.echoCancellation).toBe(true)
+    expect(harness.getUserMedia.mock.lastCall?.[0].audio.deviceId).toEqual({ exact: 'physical-mic' })
+    pcm.setOutputPlaybackActive(true)
+    emitChunk(0, 1234)
+    emitChunk(1, 5678)
+    expect(onPcm).toHaveBeenCalledTimes(2)
+    expect(onPcm.mock.calls[0][0][0]).toBe(1234)
+    expect(onPcm.mock.calls[1][0][0]).toBe(5678)
+    expect(onCaptureSettings).toHaveBeenCalledWith(expect.objectContaining({ mode: 'browser' }))
+  } finally { pcm.stop() }
 })

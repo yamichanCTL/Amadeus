@@ -591,3 +591,7 @@ pre { white-space: pre-wrap; word-break: break-word; }
   .sidebar nav { gap: 4px; }
   .sidebar button { min-height: 40px; }
 }
+
+.agent-config-grid .agent-codex-usage { grid-column: 1 / -1; color: #526171; font-size: 12px; }
+.agent-codex-usage p { margin: 6px 0; }
+.agent-codex-usage button { margin-left: 12px; }

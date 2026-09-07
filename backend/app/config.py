@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     tts_data_dir: Path = Path("tts")
     gpt_sovits_dir: Path | None = None
 
+    # Embedded Codex: import only the selected connection, keep app state separate.
+    codex_binary: str = "codex"
+    codex_config_home: Path | None = None
+    codex_runtime_dir: Path | None = None
+    codex_max_sessions: int = Field(16, ge=1, le=64)
+    codex_max_active_turns: int = Field(2, ge=1, le=8)
+
     # ── ASR engine defaults ───────────────────────────────────────────────────
     default_engine: str = "fireredasr2"
     default_stream_engine: str = "x-asr"

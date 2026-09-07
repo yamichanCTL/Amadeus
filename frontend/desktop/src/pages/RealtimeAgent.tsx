@@ -3,6 +3,7 @@ import { AssistantFigure } from '@/components/AssistantFigure'
 import { ASRApi, isAsyncResponse, type LLMChatContent, type LLMChatRole, type SkillDefinition, type TranscribeOptions } from '@/services/api'
 import { StreamingASRClient, audioRelayMixer, captureSpeakerAudio, speechRecorder } from '@/services/audio'
 import { useASRStore, type AgentTask, type AgentVoiceMode, type AppPage } from '@/store/useASRStore'
+import { codexRequest, type CodexCatalog, type CodexAccounting, type CodexReply, type CodexVoiceEvent } from '@/services/codex'
 import { fillPromptFromAsr } from '@/services/agentPrompt'
 
 type AgentStatus = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'responding' | 'speaking' | 'error'
@@ -25,6 +26,7 @@ type AgentMessage = {
   content: string
   createdAt: string
   kind?: 'chat' | 'tool'
+  codex?: CodexReply
 }
 
 const terminalStatuses = new Set(['success', 'failed', 'cancelled'])
@@ -197,6 +199,7 @@ export function RealtimeAgentPage() {
   const speechQueueRef = useRef<string[]>([])
   const speechBufferRef = useRef('')
   const speakingRef = useRef(false)
+  const speechGenerationRef = useRef(0)
   const responseActiveRef = useRef(false)
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
   const currentAudioUrlRef = useRef('')
@@ -208,9 +211,18 @@ export function RealtimeAgentPage() {
   const proactiveLastAtRef = useRef(0)
   const sendToAgentRef = useRef<(text: string) => Promise<void>>(async () => undefined)
   const executedToolsRef = useRef<Set<string>>(new Set())
+  const codexSessionRef = useRef(crypto.randomUUID())
+  const mountedRef = useRef(true)
+  const [codexCatalog, setCodexCatalog] = useState<CodexCatalog | null>(null)
+  const [codexUsage, setCodexUsage] = useState<CodexAccounting | null>(null)
+  const [codexTotal, setCodexTotal] = useState<CodexAccounting | null>(null)
+  const [codexPending, setCodexPending] = useState(false)
+  const [voiceDraining, setVoiceDraining] = useState(false)
+  const [partialTranscript, setPartialTranscript] = useState('')
+  const [aecStatus, setAecStatus] = useState('')
   const [status, setStatus] = useState<AgentStatus>('idle')
   const [messages, setMessages] = useState<AgentMessage[]>([
-    createMessage('assistant', '我在。按住语音或直接输入，我们可以开始对话。')
+    createMessage('assistant', '我在。点击语音或直接输入，我们可以开始对话。')
   ])
   const messagesRef = useRef<AgentMessage[]>(messages)
   const [draft, setDraft] = useState('')
@@ -230,9 +242,12 @@ export function RealtimeAgentPage() {
     return names
   }, [backendSkills])
 
-  const canChat = Boolean(settings.llmModel.trim() && settings.llmBaseUrl.trim() && settings.llmApiToken.trim())
+  const usingCodex = settings.agentBackend === 'codex'
+  const legacyReady = Boolean(settings.llmModel.trim() && settings.llmBaseUrl.trim() && settings.llmApiToken.trim())
+  const canChat = usingCodex ? Boolean(codexCatalog && settings.backendConfirmed) : legacyReady
+  const codexVoiceOpen = usingCodex && handsFreeStatus !== 'idle' && handsFreeStatus !== 'error'
   const backendReady = Boolean(settings.backendConfirmed && settings.serverUrl.trim())
-  const busy = status === 'listening' || status === 'transcribing' || status === 'thinking' || status === 'responding'
+  const busy = codexPending || voiceDraining || status === 'listening' || status === 'transcribing' || status === 'thinking' || status === 'responding'
   const voiceBlocked = status === 'listening' || status === 'transcribing' || status === 'thinking'
   const agentAction = statusAction(status) || agentDirectedAction
   const openTasks = useMemo(() => settings.agentTasks.filter((task) => task.status === 'open'), [settings.agentTasks])
@@ -253,11 +268,11 @@ export function RealtimeAgentPage() {
       `离线 ASR：${settings.offlineEngine}`,
       `实时 ASR：${settings.streamingEngine}`,
       `已加载 ASR 引擎：${loadedModels.length ? loadedModels.join(', ') : '未知或未刷新'}`,
-      `LLM：${settings.llmProvider}/${settings.llmModel || '未选择模型'}`,
+      `LLM：${usingCodex ? `Codex/${settings.codexModel || '当前配置'}` : `${settings.llmProvider}/${settings.llmModel || '未选择模型'}`}`,
       `语言：${settings.defaultLanguage}`,
       `实时字幕状态：${liveCaptionStatus}`,
       `角色情绪：${emotionLabel(agentEmotion)} / ${agentAction}`,
-      `本地工具：${settings.agentUseLocalTools ? '开启' : '关闭'}（open_page、remember、add_task、complete_task、speak + 后端技能 ${backendSkills.length ? backendSkills.map(s => s.name).join('、') : '未加载'}）`,
+      `本地工具：${!usingCodex && settings.agentUseLocalTools ? '开启' : '关闭'}（open_page、remember、add_task、complete_task、speak + 后端技能 ${backendSkills.length ? backendSkills.map(s => s.name).join('、') : '未加载'}）`,
       `任务队列：\n${taskItems.length ? taskItems.join('\n') : '无'}`,
       `最近工具动作：${recentTools.length ? recentTools.join('；') : '无'}`,
       `免按键监听：${handsFreeStatus}`,
@@ -277,6 +292,8 @@ export function RealtimeAgentPage() {
     settings.offlineEngine,
     settings.streamingEngine,
     settings.defaultLanguage,
+    usingCodex,
+    settings.codexModel,
     settings.llmModel,
     settings.llmProvider,
     settings.agentUseLocalTools,
@@ -302,6 +319,95 @@ export function RealtimeAgentPage() {
   useEffect(() => {
     settingsRef.current = settings
   }, [settings])
+
+  const refreshCodexUsage = useCallback(async () => {
+    if (!backendReady) return
+    const id = codexSessionRef.current
+    const [current, total] = await Promise.all([
+      codexRequest<CodexAccounting>(settings.serverUrl, `/usage?session_id=${id}`),
+      codexRequest<CodexAccounting>(settings.serverUrl, '/usage'),
+    ])
+    if (mountedRef.current && id === codexSessionRef.current) {
+      setCodexUsage(current); setCodexTotal(total)
+    }
+  }, [settings.serverUrl, backendReady])
+
+  useEffect(() => {
+    let cancelled = false
+    setCodexCatalog(null)
+    if (!backendReady || !usingCodex) return
+    void codexRequest<CodexCatalog>(settings.serverUrl, '/models').then((catalog) => {
+      if (cancelled) return
+      setCodexCatalog(catalog)
+      if (!settings.codexModel) updateSettings({ codexModel: catalog.configured_model || catalog.models[0]?.id || '' })
+    }).catch((cause) => { if (!cancelled) setError(cause instanceof Error ? cause.message : 'Codex 连接失败') })
+    void refreshCodexUsage().catch(() => {})
+    const timer = window.setInterval(() => void refreshCodexUsage().catch(() => {}), 15000)
+    return () => { cancelled = true; clearInterval(timer) }
+  }, [backendReady, usingCodex, settings.serverUrl, refreshCodexUsage, updateSettings])
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      turnIdRef.current += 1
+      if (settings.serverUrl) void codexRequest(settings.serverUrl, `/sessions/${codexSessionRef.current}/cancel`, { method: 'POST' }).catch(() => {})
+    }
+  }, [settings.serverUrl])
+
+  const codexOptions = () => ({
+    session_id: codexSessionRef.current,
+    model: settings.codexModel || undefined,
+    effort: settings.codexEffort,
+    context: [settings.agentPrompt, settings.agentMemory ? `长期记忆：\n${settings.agentMemory}` : '',
+      settings.agentUseRuntimeContext ? runtimeContext : '',
+      '请用自然语言回答。当前对话不执行本地工具，不要输出 agent_tool 或 agent_state 指令。',
+    ].filter(Boolean).join('\n\n').slice(0, 16000),
+  })
+
+  const applyCodexReply = (result: CodexReply, messageId = result.call_id) => {
+    setMessages((current) => {
+      const content = result.status === 'completed' ? result.text : result.error || '请求已取消'
+      const found = current.some((message) => message.id === messageId)
+      const updated = found ? current.map((message) => message.id === messageId ? { ...message, content, codex: result } : message)
+        : [...current, { ...createMessage('assistant', content), id: messageId, codex: result }]
+      messagesRef.current = updated
+      return updated
+    })
+    if (result.status !== 'completed') setError(result.error || '请求已取消')
+    void refreshCodexUsage().catch(() => setError('用量刷新失败，请稍后重试。'))
+  }
+
+  const handleCodexVoice = (event: CodexVoiceEvent) => {
+    if (!mountedRef.current) return
+    if (event.type === 'agent.queued') { setCodexPending(true); setStatus('thinking') }
+    if (event.type === 'agent.started') {
+      responseActiveRef.current = true
+      setStatus('responding')
+    }
+    if (event.type === 'agent.delta' && event.call_id) {
+      speechBufferRef.current += event.text || ''
+      flushSpeechBuffer(false)
+      setMessages((current) => {
+        const updated = current.some((message) => message.id === event.call_id)
+          ? current.map((message) => message.id === event.call_id ? { ...message, content: message.content + (event.text || '') } : message)
+          : [...current, { ...createMessage('assistant', event.text || ''), id: event.call_id! }]
+        messagesRef.current = updated
+        return updated
+      })
+    }
+    if (event.type === 'agent.completed' && event.result) {
+      applyCodexReply(event.result)
+      responseActiveRef.current = false
+      setCodexPending(false)
+      flushSpeechBuffer(true)
+      if (!speakingRef.current) setStatus('idle')
+    }
+    if (event.type === 'agent.error') {
+      responseActiveRef.current = false
+      setCodexPending(false); setError(event.message || 'Codex 请求失败'); setStatus('error')
+    }
+  }
 
   // Fetch backend skills on mount
   useEffect(() => {
@@ -362,11 +468,16 @@ export function RealtimeAgentPage() {
   }
 
   const resetSpeech = () => {
+    speechGenerationRef.current += 1
     speechQueueRef.current = []
     speechBufferRef.current = ''
     speakingRef.current = false
     responseActiveRef.current = false
-    currentAudioRef.current?.pause()
+    if (currentAudioRef.current) {
+      currentAudioRef.current.onended = null
+      currentAudioRef.current.onerror = null
+      currentAudioRef.current.pause()
+    }
     currentAudioRef.current = null
     if (currentAudioUrlRef.current) URL.revokeObjectURL(currentAudioUrlRef.current)
     currentAudioUrlRef.current = ''
@@ -375,6 +486,13 @@ export function RealtimeAgentPage() {
     if (audioRelayMixer.isActive()) audioRelayMixer.stopInjectedAudio()
     window.speechSynthesis?.cancel()
   }
+
+  useEffect(() => {
+    if (!settings.agentAutoSpeak) {
+      resetSpeech()
+      if (statusRef.current === 'speaking') setStatus('idle')
+    }
+  }, [settings.agentAutoSpeak])
 
   const interruptActiveTurn = () => {
     turnIdRef.current += 1
@@ -391,6 +509,7 @@ export function RealtimeAgentPage() {
   }
 
   const playBrowserSpeech = (text: string) => {
+    if (!settingsRef.current.agentAutoSpeak) return
     if (!('speechSynthesis' in window)) {
       finishSpeechItem()
       return
@@ -399,15 +518,19 @@ export function RealtimeAgentPage() {
     utterance.lang = settings.defaultLanguage === 'en' ? 'en-US' : 'zh-CN'
     utterance.rate = settings.agentTtsSpeed
     utterance.pitch = 1.04
-    utterance.onstart = () => setStatus('speaking')
-    utterance.onend = finishSpeechItem
-    utterance.onerror = finishSpeechItem
+    const generation = speechGenerationRef.current
+    utterance.onstart = () => { if (generation === speechGenerationRef.current) setStatus('speaking') }
+    utterance.onend = () => { if (generation === speechGenerationRef.current) finishSpeechItem() }
+    utterance.onerror = utterance.onend
     window.speechSynthesis.speak(utterance)
   }
 
-  const playGeneratedSpeech = async (blob: Blob) => {
+  const playGeneratedSpeech = async (blob: Blob, generation: number) => {
+    const canPlay = () => mountedRef.current && generation === speechGenerationRef.current && settingsRef.current.agentAutoSpeak
+    if (!canPlay()) return
     if (audioRelayMixer.isActive()) {
-      const result = await audioRelayMixer.playBlob(blob)
+      const result = await audioRelayMixer.playBlob(blob, canPlay)
+      if (!canPlay()) return
       relaySpeechTimerRef.current = window.setTimeout(() => {
         relaySpeechTimerRef.current = null
         if (speakingRef.current) finishSpeechItem()
@@ -430,6 +553,7 @@ export function RealtimeAgentPage() {
   }
 
   const playServerSpeech = async (text: string) => {
+    const generation = speechGenerationRef.current
     const model = settings.agentTtsModel.trim() || settings.llmModel.trim()
     if (!model || !settings.llmBaseUrl.trim() || !settings.llmApiToken.trim()) {
       playBrowserSpeech(text)
@@ -447,27 +571,29 @@ export function RealtimeAgentPage() {
         response_format: settings.agentTtsFormat,
         speed: settings.agentTtsSpeed
       })
-      if (!speakingRef.current) return
-      await playGeneratedSpeech(blob)
+      if (!speakingRef.current || generation !== speechGenerationRef.current || !settingsRef.current.agentAutoSpeak) return
+      await playGeneratedSpeech(blob, generation)
     } catch (speechError) {
       console.warn('Server TTS failed, falling back to browser speech', speechError)
-      playBrowserSpeech(text)
+      if (generation === speechGenerationRef.current) playBrowserSpeech(text)
     }
   }
 
   const playVoxCpmSpeech = async (text: string) => {
+    const generation = speechGenerationRef.current
     try {
       setStatus('speaking')
       const blob = await api.ttsSpeak(text, 'zh', settings.agentTtsSpeed, 'voxcpm2')
-      if (!speakingRef.current) return
-      await playGeneratedSpeech(blob)
+      if (!speakingRef.current || generation !== speechGenerationRef.current || !settingsRef.current.agentAutoSpeak) return
+      await playGeneratedSpeech(blob, generation)
     } catch (e) {
       console.warn('VoxCPM2 TTS failed, falling back', e)
-      playBrowserSpeech(text)
+      if (generation === speechGenerationRef.current) playBrowserSpeech(text)
     }
   }
 
   const playGptSovitsSpeech = async (text: string) => {
+    const generation = speechGenerationRef.current
     try {
       setStatus('speaking')
       const blob = await api.ttsSpeak(
@@ -475,16 +601,16 @@ export function RealtimeAgentPage() {
         settings.defaultLanguage === 'en' ? 'en' : 'zh',
         settings.agentTtsSpeed
       )
-      if (!speakingRef.current) return
-      await playGeneratedSpeech(blob)
+      if (!speakingRef.current || generation !== speechGenerationRef.current || !settingsRef.current.agentAutoSpeak) return
+      await playGeneratedSpeech(blob, generation)
     } catch (e) {
       console.warn('GPT-SoVITS TTS failed, falling back to browser', e)
-      playBrowserSpeech(text)
+      if (generation === speechGenerationRef.current) playBrowserSpeech(text)
     }
   }
 
   const pumpSpeechQueue = async () => {
-    if (!settings.agentAutoSpeak || speakingRef.current) return
+    if (!settingsRef.current.agentAutoSpeak || speakingRef.current) return
     const next = speechQueueRef.current.shift()
     if (!next) {
       setStatus(responseActiveRef.current ? 'responding' : 'idle')
@@ -499,13 +625,13 @@ export function RealtimeAgentPage() {
 
   const enqueueSpeech = (text: string) => {
     const cleanText = text.trim()
-    if (!cleanText || !settings.agentAutoSpeak) return
+    if (!cleanText || !settingsRef.current.agentAutoSpeak) return
     speechQueueRef.current.push(cleanText)
     void pumpSpeechQueue()
   }
 
   const flushSpeechBuffer = (force = false) => {
-    if (!settings.agentAutoSpeak) {
+    if (!settingsRef.current.agentAutoSpeak) {
       speechBufferRef.current = ''
       return
     }
@@ -763,9 +889,9 @@ export function RealtimeAgentPage() {
 
   const sendToAgent = async (text: string) => {
     const cleanText = text.trim()
-    if (!cleanText) return
+    if (!cleanText || (usingCodex && (responseActiveRef.current || codexPending || codexVoiceOpen))) return
     if (!canChat) {
-      setError('请先在模型管理中填写 LLM 接口、模型和 API Token')
+      setError(usingCodex ? '请先确认后端地址并连接 Codex' : '请先在模型管理中填写 LLM 接口、模型和 API Token')
       setStatus('error')
       return
     }
@@ -791,6 +917,23 @@ export function RealtimeAgentPage() {
       streamAbortRef.current = controller
       let streamedText = ''
       const completedTools = new Set<string>()
+
+      if (usingCodex) {
+        setCodexPending(true)
+        try {
+          const result = await codexRequest<CodexReply>(settings.serverUrl, '/turns', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
+            body: JSON.stringify({ ...codexOptions(), text: cleanText }),
+          })
+          if (turnId !== turnIdRef.current || !mountedRef.current) return
+          applyCodexReply(result, assistantMessage.id)
+          responseActiveRef.current = false
+          streamAbortRef.current = null
+          if (result.status === 'completed') { speechBufferRef.current = result.text; flushSpeechBuffer(true) }
+          if (!speakingRef.current) setStatus(result.status === 'completed' ? 'idle' : 'error')
+        } finally { if (mountedRef.current && turnId === turnIdRef.current) setCodexPending(false) }
+        return
+      }
 
       await api.agentChatStream({
         text: cleanText,
@@ -1064,8 +1207,9 @@ export function RealtimeAgentPage() {
       const result = isAsyncResponse(response) ? await pollTask(response.task_id) : response
       const text = result.full_text.trim()
       setLastTranscript(text)
-      setDraft((current) => fillPromptFromAsr(current, text))
       setStatus('idle')
+      if (usingCodex && text) await sendToAgentRef.current(text)
+      else setDraft((current) => fillPromptFromAsr(current, text))
     } catch (voiceError) {
       setError(voiceError instanceof Error ? voiceError.message : '语音识别失败')
       setStatus('error')
@@ -1077,6 +1221,11 @@ export function RealtimeAgentPage() {
 
   const toggleHandsFree = async () => {
     if (handsFreeStreamerRef.current) {
+      if (usingCodex) {
+        setVoiceDraining(true)
+        handsFreeStreamerRef.current.finish()
+        return
+      }
       handsFreeStreamerRef.current.stop()
       handsFreeStreamerRef.current = null
       updateSettings({ agentHandsFree: false })
@@ -1085,22 +1234,38 @@ export function RealtimeAgentPage() {
       if (!audioRelayMixer.isActive() && !useSpeaker) void recorderRef.current.prepare(settings.audioInputDeviceId || undefined).catch(() => undefined)
       return
     }
-    if (status !== 'idle') return
+    if (usingCodex ? !canChat || responseActiveRef.current || codexPending : status !== 'idle') return
+    if (usingCodex && status !== 'speaking') setStatus('idle')
     if (!backendReady) {
       setError('未确认后端地址。请先在设置中输入后端 IP/地址并点击确认。')
       return
     }
     setError('')
+    setAecStatus('正在启用声学回声消除…')
+    setPartialTranscript('')
     setHandsFreeStatus('connecting')
     try {
       const streamer = new StreamingASRClient(settings.serverUrl, (event) => {
+        if (!mountedRef.current || handsFreeStreamerRef.current !== streamer) return
         if (event.type === 'accepted') setHandsFreeStatus('loading')
         if (event.type === 'loading') setHandsFreeStatus('loading')
         if (event.type === 'ready') setHandsFreeStatus('loading')
-        if (event.type === 'configured') setHandsFreeStatus('listening')
+        if (event.type === 'configured') { setHandsFreeStatus('listening'); if (usingCodex) setStatus('listening') }
         if (event.type === 'speech_start') setHandsFreeStatus('transcribing')
+        if (event.type === 'partial' && usingCodex) setPartialTranscript(event.text)
         if (event.type === 'final') {
           const text = event.text.trim()
+          if (usingCodex) {
+            setPartialTranscript('')
+            setLastTranscript(text)
+            if (text) setMessages((current) => {
+              const updated = [...current, createMessage('user', text)]
+              messagesRef.current = updated
+              return updated
+            })
+            setHandsFreeStatus('listening')
+            return
+          }
           if (statusRef.current !== 'idle' || speakingRef.current || responseActiveRef.current || text.length < 2) {
             setHandsFreeStatus('listening')
             return
@@ -1111,9 +1276,17 @@ export function RealtimeAgentPage() {
         }
         if (event.type === 'error') {
           setError(event.message)
+          setAecStatus('语音启动失败，可重新点击语音重试')
           setHandsFreeStatus('error')
+          if (usingCodex) { streamer.stop(); setCodexPending(false); setVoiceDraining(false) }
         }
         if (event.type === 'closed' && handsFreeStreamerRef.current) {
+          setVoiceDraining(false)
+          if (usingCodex && event.intentional && !speakingRef.current) setStatus('idle')
+          setCodexPending(false)
+          responseActiveRef.current = false
+          if (usingCodex && !event.intentional) { setError('语音连接已断开，请重新开始。'); setStatus('error') }
+
           handsFreeStreamerRef.current = null
           updateSettings({ agentHandsFree: false })
           setHandsFreeStatus('idle')
@@ -1133,18 +1306,34 @@ export function RealtimeAgentPage() {
             ? audioRelayMixer.createInputStream()
             : recorderRef.current.takePreparedStream(settings.audioInputDeviceId || undefined),
         userId: settings.userId || undefined,
-        archive: settings.allowServerDataCollection
+        archive: settings.allowServerDataCollection,
+        echoCancellation: true,
+        ...(usingCodex ? { onCaptureSettings: (state: { mode: string }) => {
+          if (!mountedRef.current || handsFreeStreamerRef.current !== streamer) return
+          const labels: Record<string, string> = {
+            all: '声学回声消除已开启 · 系统播放参考', browser: '声学回声消除已开启 · WebRTC',
+            unavailable: '录音已开启；当前设备未启用回声消除，自动朗读保持关闭',
+            unknown: '录音已开启；浏览器未报告回声消除状态，自动朗读保持关闭',
+          }
+          setAecStatus(labels[state.mode])
+          if (state.mode === 'unavailable' || state.mode === 'unknown') updateSettings({ agentAutoSpeak: false })
+        }, endpointing: 'manual' as const, agent: { enabled: true, ...codexOptions() }, onAgentEvent: (event: CodexVoiceEvent) => { if (handsFreeStreamerRef.current === streamer) handleCodexVoice(event) } } : {}),
       })
       updateSettings({ agentHandsFree: true })
     } catch (handsFreeError) {
       handsFreeStreamerRef.current = null
       updateSettings({ agentHandsFree: false })
       setHandsFreeStatus('error')
+      setAecStatus('声学回声消除未就绪')
       setError(handsFreeError instanceof Error ? handsFreeError.message : '免按键监听启动失败')
     }
   }
 
   const toggleVoice = async () => {
+    if (usingCodex) {
+      if (!voiceDraining) await toggleHandsFree()
+      return
+    }
     if (status === 'listening') {
       const { blob } = await recorderRef.current.stop()
       await transcribeVoice(blob)
@@ -1159,23 +1348,46 @@ export function RealtimeAgentPage() {
     }
     interruptActiveTurn()
     const useSpeaker = settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__'
-    await recorderRef.current.start(
+    try { await recorderRef.current.start(
       useSpeaker ? undefined : (settings.audioInputDeviceId || undefined),
       useSpeaker
         ? await captureSpeakerAudio()
         : audioRelayMixer.isActive() ? audioRelayMixer.createInputStream() : undefined,
-    )
+    ) } catch (cause) {
+      setError(cause instanceof Error ? cause.message : '录音启动失败')
+      setStatus('error')
+      return
+    }
     setStatus('listening')
     setError('')
   }
 
-  const stopSpeech = () => {
+  const stopSpeech = async () => {
     interruptActiveTurn()
+    if (usingCodex) {
+      setCodexPending(true)
+      handsFreeStreamerRef.current?.cancelAgent()
+      try { await codexRequest(settings.serverUrl, `/sessions/${codexSessionRef.current}/cancel`, { method: 'POST' }) }
+      catch (cause) { setError(cause instanceof Error ? cause.message : '取消失败') }
+      finally { setCodexPending(false); void refreshCodexUsage().catch(() => {}) }
+    }
     setStatus('idle')
   }
 
-  const resetConversation = () => {
+  const resetConversation = async () => {
     interruptActiveTurn()
+    handsFreeStreamerRef.current?.stop()
+    handsFreeStreamerRef.current = null
+    setHandsFreeStatus('idle'); setVoiceDraining(false)
+    if (usingCodex && backendReady) {
+      setCodexPending(true)
+      try { await codexRequest(settings.serverUrl, `/sessions/${codexSessionRef.current}`, { method: 'DELETE' }) }
+      catch (cause) { setError(cause instanceof Error ? cause.message : '清空失败'); setCodexPending(false); return }
+      codexSessionRef.current = crypto.randomUUID()
+      setCodexUsage(null)
+      void refreshCodexUsage().catch(() => {})
+      setCodexPending(false)
+    }
     const resetMessages = [createMessage('assistant', '上下文已清空。我们重新开始。')]
     messagesRef.current = resetMessages
     setMessages(resetMessages)
@@ -1207,44 +1419,51 @@ export function RealtimeAgentPage() {
           <div className="section-head compact">
             <div>
               <h1>实时对话</h1>
-              <p>{settings.llmModel || '未选择 LLM 模型'} / {settings.offlineEngine}</p>
+              <p>{usingCodex ? `Codex · ${settings.codexModel || '连接中'}` : settings.llmModel || '未选择 LLM 模型'} / {usingCodex ? settings.streamingEngine : settings.offlineEngine}</p>
             </div>
             <div className="agent-actions">
-              <button type="button" onClick={() => void inspectScreen()} disabled={busy || !canChat}>
+              <button type="button" onClick={() => void inspectScreen()} disabled={busy || !legacyReady || usingCodex} title={usingCodex ? '屏幕观察暂需切换到原有 Agent' : undefined}>
                 看屏幕
               </button>
               <button type="button" onClick={() => void sendToAgent('根据你当前可见的本地上下文，简要说明你现在知道哪些状态。')} disabled={busy}>
                 读状态
               </button>
-              <button type="button" onClick={stopSpeech} disabled={status !== 'speaking'}>停止朗读</button>
-              <button type="button" onClick={resetConversation}>清空</button>
+              <button type="button" onClick={() => void stopSpeech()} disabled={status !== 'speaking' && !codexPending}>{codexPending ? '取消回答' : '停止朗读'}</button>
+              <button type="button" onClick={() => void resetConversation()} disabled={voiceDraining}>清空</button>
             </div>
           </div>
 
           <div className="agent-messages">
             {messages.map((message) => (
               <article key={message.id} className={`agent-message ${message.kind === 'tool' ? 'tool' : message.role}`}>
-                <strong>{message.kind === 'tool' ? '工具' : message.role === 'user' ? '你' : 'Agent'}</strong>
+                <strong>{message.kind === 'tool' ? '工具' : message.role === 'user' ? '你' : usingCodex ? 'Codex' : 'Agent'}</strong>
                 <p>{message.content || '...'}</p>
+                {message.codex && <small>{message.codex.model} · {message.codex.elapsed_sec.toFixed(1)} 秒 · {message.codex.usage ? `${message.codex.usage.total_tokens.toLocaleString()} tokens` : '用量暂不可用'}</small>}
               </article>
             ))}
           </div>
 
           <div className="agent-input-row">
-            <button type="button" className={status === 'listening' ? 'primary record-button recording' : 'record-button'} onClick={() => void toggleVoice()}>
+            <button type="button" className={(usingCodex ? codexVoiceOpen && !voiceDraining : status === 'listening') ? 'primary record-button recording' : 'record-button'} onClick={() => void toggleVoice()} disabled={usingCodex && (!canChat || voiceDraining || (!codexVoiceOpen && busy))}>
               <span aria-hidden="true">●</span>
-              {status === 'listening' ? '结束语音' : status === 'responding' || status === 'speaking' ? '打断' : '语音'}
+              {usingCodex ? voiceDraining ? '完成回答中' : codexVoiceOpen ? '结束语音' : '语音' : status === 'listening' ? '结束语音' : status === 'responding' || status === 'speaking' ? '打断' : '语音'}
             </button>
             <input
               value={draft}
-              placeholder="输入消息，或点击语音自动填入 ASR 结果"
+              aria-label="对话消息"
+              maxLength={12000}
+              disabled={usingCodex && (busy || codexVoiceOpen)}
+              placeholder={usingCodex ? '输入消息，或点击语音直接与 Codex 对话' : '输入消息，或点击语音自动填入 ASR 结果'}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === 'Enter') void sendToAgent(draft)
+                if (event.key === 'Enter' && !event.nativeEvent.isComposing && !busy) void sendToAgent(draft)
               }}
             />
-            <button type="button" className="primary" disabled={!draft.trim() || busy} onClick={() => void sendToAgent(draft)}>发送</button>
+            <button type="button" className="primary" disabled={!draft.trim() || busy || !canChat || codexVoiceOpen} onClick={() => void sendToAgent(draft)}>发送</button>
           </div>
+          {usingCodex && <p className="agent-transcript">录音期间持续识别，点击「结束语音」后才发送给 Codex。</p>}
+          {aecStatus && <p className="agent-transcript">{aecStatus}</p>}
+          {partialTranscript && <p className="agent-transcript">正在识别：{partialTranscript}</p>}
           {lastTranscript && <p className="agent-transcript">ASR：{lastTranscript}</p>}
           {toolLog[0] && <p className="agent-tool-log">工具：{toolLog[0].label}</p>}
           {error && <p className="error">{error}</p>}
@@ -1255,13 +1474,40 @@ export function RealtimeAgentPage() {
         <div className="section-head compact">
           <h2>Agent 设定</h2>
           <div className="agent-actions">
-            <button type="button" onClick={() => void extractMemory()} disabled={memoryStatus === 'extracting' || !canChat}>
+            <button type="button" onClick={() => void extractMemory()} disabled={memoryStatus === 'extracting' || !legacyReady || usingCodex} title={usingCodex ? '自动提取记忆暂需切换到原有 Agent；手动记忆可继续使用' : undefined}>
               {memoryStatus === 'extracting' ? '提取中' : memoryStatus === 'done' ? '已处理' : '提取记忆'}
             </button>
             <button type="button" onClick={() => setPage('models')}>模型管理</button>
           </div>
         </div>
         <div className="agent-config-grid">
+          <label>对话引擎
+            <select aria-label="对话引擎" value={settings.agentBackend} disabled={busy || codexVoiceOpen} onChange={(event) => { updateSettings({ agentBackend: event.target.value as 'codex' | 'legacy' }); setError('') }}>
+              <option value="codex">Codex</option><option value="legacy">原有 Agent</option>
+            </select>
+          </label>
+          {usingCodex && <>
+            <label>Codex 模型
+              <select aria-label="Codex 模型" value={settings.codexModel} disabled={busy || codexVoiceOpen} onChange={(event) => updateSettings({ codexModel: event.target.value, codexEffort: codexCatalog?.models.find((item) => item.id === event.target.value)?.default_effort || 'low' })}>
+                {!codexCatalog?.models.some((item) => item.id === settings.codexModel) && <option value={settings.codexModel}>{settings.codexModel || '正在读取模型…'}</option>}
+                {codexCatalog?.models.map((item) => <option key={item.id} value={item.id}>{item.id}</option>)}
+              </select>
+            </label>
+            <label>推理强度
+              <select aria-label="推理强度" value={settings.codexEffort} disabled={busy || codexVoiceOpen} onChange={(event) => updateSettings({ codexEffort: event.target.value })}>
+                {(codexCatalog?.models.find((item) => item.id === settings.codexModel)?.efforts || ['low', 'medium', 'high', 'xhigh']).map((effort) => <option key={effort} value={effort}>{effort}</option>)}
+              </select>
+            </label>
+            <div className="wide agent-codex-usage" aria-label="Codex 用量">
+              <p>{codexCatalog ? `已连接 Codex · ${codexCatalog.provider}` : backendReady ? '正在连接 Codex…' : '请在设置中确认后端地址'}</p>
+              <p>本次对话：{codexUsage?.total_tokens.toLocaleString() ?? '—'} tokens · {codexUsage?.calls ?? 0} 次调用
+                <button type="button" onClick={() => void refreshCodexUsage().catch(() => setError('用量刷新失败'))}>刷新用量</button></p>
+              <small>输入 {codexUsage?.input_tokens.toLocaleString() ?? '—'}（含缓存 {codexUsage?.cached_input_tokens.toLocaleString() ?? '—'}） · 输出 {codexUsage?.output_tokens.toLocaleString() ?? '—'} · 本应用累计 {codexTotal?.total_tokens.toLocaleString() ?? '—'} tokens。用量不等于账单或剩余额度。</small>
+              {codexTotal && !codexTotal.complete && <p>应用累计另有 {codexTotal.missing_usage} 次调用暂无用量。</p>}
+              {codexUsage && !codexUsage.complete && <p>另有 {codexUsage.missing_usage} 次调用暂无用量，上方为已知小计。</p>}
+            </div>
+          </>}
+
           <label className="wide">
             prompt
             <textarea value={settings.agentPrompt} onChange={(event) => updateSettings({ agentPrompt: event.target.value })} rows={5} />
@@ -1272,23 +1518,23 @@ export function RealtimeAgentPage() {
           </label>
           <label className="check">
             <input type="checkbox" checked={settings.agentAutoSpeak} onChange={(event) => updateSettings({ agentAutoSpeak: event.target.checked })} />
-            流式朗读回复
+            自动朗读回复
           </label>
           <label className="check">
             <input type="checkbox" checked={settings.agentUseRuntimeContext} onChange={(event) => updateSettings({ agentUseRuntimeContext: event.target.checked })} />
             注入运行上下文
           </label>
           <label className="check">
-            <input type="checkbox" checked={settings.agentUseEmotionTags} onChange={(event) => updateSettings({ agentUseEmotionTags: event.target.checked })} />
+            <input type="checkbox" disabled={usingCodex} title={usingCodex ? 'Codex 立绘跟随对话状态' : undefined} checked={settings.agentUseEmotionTags} onChange={(event) => updateSettings({ agentUseEmotionTags: event.target.checked })} />
             情绪驱动立绘
           </label>
           <label className="check">
-            <input type="checkbox" checked={settings.agentUseLocalTools} onChange={(event) => updateSettings({ agentUseLocalTools: event.target.checked })} />
+            <input type="checkbox" disabled={usingCodex} title={usingCodex ? '当前 Codex 对话不执行本地工具' : undefined} checked={settings.agentUseLocalTools} onChange={(event) => updateSettings({ agentUseLocalTools: event.target.checked })} />
             本地工具指令
           </label>
           <label className="check">
-            <input type="checkbox" checked={handsFreeStatus !== 'idle' && handsFreeStatus !== 'error'} onChange={() => void toggleHandsFree()} />
-            免按键监听
+            <input type="checkbox" disabled={voiceDraining || (usingCodex && !canChat)} checked={handsFreeStatus !== 'idle' && handsFreeStatus !== 'error'} onChange={() => void toggleHandsFree()} />
+            {usingCodex ? '连续识别（手动结束）' : '免按键监听'}
           </label>
           <label className="check">
             <input type="checkbox" checked={settings.agentProactive} onChange={(event) => updateSettings({ agentProactive: event.target.checked })} />

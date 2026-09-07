@@ -137,6 +137,9 @@ export type Settings = {
   passiveSummarySource: SummarySource
   passiveSummaryAutoLocalSave: boolean
   passiveSummaryLastRunAt: string
+  agentBackend: 'codex' | 'legacy'
+  codexModel: string
+  codexEffort: string
   agentPrompt: string
   agentMemory: string
   agentAutoSpeak: boolean
@@ -437,6 +440,9 @@ Unknown：无法判断状态时使用。
   passiveSummarySource: 'local',
   passiveSummaryAutoLocalSave: true,
   passiveSummaryLastRunAt: '',
+  agentBackend: 'codex',
+  codexModel: '',
+  codexEffort: 'low',
   agentPrompt: [
     '【身份】你是 Amadeus 桌面语音 Agent，一个长期陪伴型虚拟主播 AI。你的名字是 "Amadeus"，你住在用户的电脑里，可以实时听到用户说的话、看到用户的屏幕、控制电脑执行任务。',
     '',
@@ -474,7 +480,7 @@ Unknown：无法判断状态时使用。
     '- 委派任务时要具体：清楚说明要改什么文件、怎么改、预期效果。'
   ].join('\n'),
   agentMemory: '',
-  agentAutoSpeak: true,
+  agentAutoSpeak: false,
   agentUseRuntimeContext: true,
   agentUseEmotionTags: true,
   agentUseLocalTools: true,
@@ -716,9 +722,12 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
     : typeof legacy.passiveSummaryAutoCloudSave === 'boolean'
       ? legacy.passiveSummaryAutoCloudSave
       : true
+  merged.agentBackend = merged.agentBackend === 'legacy' ? 'legacy' : 'codex'
+  merged.codexModel = typeof merged.codexModel === 'string' ? merged.codexModel : ''
+  merged.codexEffort = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(merged.codexEffort) ? merged.codexEffort : 'low'
   merged.agentPrompt = merged.agentPrompt || DEFAULT_SETTINGS.agentPrompt
   merged.agentMemory = merged.agentMemory || ''
-  merged.agentAutoSpeak = typeof merged.agentAutoSpeak === 'boolean' ? merged.agentAutoSpeak : true
+  merged.agentAutoSpeak = typeof merged.agentAutoSpeak === 'boolean' ? merged.agentAutoSpeak : false
   merged.agentUseRuntimeContext = typeof merged.agentUseRuntimeContext === 'boolean' ? merged.agentUseRuntimeContext : true
   merged.agentUseEmotionTags = typeof merged.agentUseEmotionTags === 'boolean' ? merged.agentUseEmotionTags : true
   merged.agentUseLocalTools = typeof merged.agentUseLocalTools === 'boolean' ? merged.agentUseLocalTools : true
@@ -833,7 +842,7 @@ export const useASRStore = create<ASRState>()(
     }),
     {
       name: 'asr-desktop-store',
-      version: 39,
+      version: 41,
       partialize: (state) => ({
         settings: state.settings,
         history: state.history,
@@ -842,6 +851,7 @@ export const useASRStore = create<ASRState>()(
       migrate: (persisted, version) => {
         const state = persisted as Partial<ASRState>
         const settings = normalizeSettings(state.settings)
+        if (version < 41) settings.agentAutoSpeak = false
         if (version < 30) {
           settings.asrModelConfigs = Object.fromEntries(Object.entries(settings.asrModelConfigs).map(([engine, config]) => [
             engine,

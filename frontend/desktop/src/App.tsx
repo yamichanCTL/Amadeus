@@ -51,7 +51,7 @@ function AppTopBar() {
     <div className="app-topbar">
       <div className="mode-pill">
         <span aria-hidden="true">↻</span>
-        <strong>{settings.llmModel || 'GPT Voice'} / {settings.offlineEngine}</strong>
+        <strong>{settings.agentBackend === 'codex' ? `Codex · ${settings.codexModel || '当前配置'}` : settings.llmModel || 'GPT Voice'} / {settings.offlineEngine}</strong>
         <small>⌄</small>
       </div>
       <button type="button" className="icon-button" title="设置" onClick={() => setPage('settings')}>⚙</button>
@@ -68,6 +68,13 @@ export default function App() {
   const updateSettings = useASRStore((state) => state.updateSettings)
   const setError = useASRStore((state) => state.setError)
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
+
+  useEffect(() => {
+    const openLinkedPage = () => { if (window.location.hash === '#realtime') setPage('realtime') }
+    openLinkedPage()
+    window.addEventListener('hashchange', openLinkedPage)
+    return () => window.removeEventListener('hashchange', openLinkedPage)
+  }, [setPage])
 
   useEffect(() => {
     let alive = true

@@ -339,7 +339,7 @@ async def transcribe(
             asr_started = time.perf_counter()
             result = await transcribe_with_scheduler(opts.engine, audio_bytes, engine_options)
             timing["asr_sec"] = round(time.perf_counter() - asr_started, 6)
-            timing["asr_scheduler"] = "enabled"
+            timing["asr_scheduler_enabled"] = 1.0
             return result
 
         result = await _run_with_timeout(load_and_transcribe, opts.timeout_sec)

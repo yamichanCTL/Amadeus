@@ -11,7 +11,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from app.config import get_settings
 from app.core.archive import archive_pcm_record
@@ -40,6 +40,7 @@ class StreamConfig:
     sample_rate: int = settings.stream_sample_rate
     # Debug audio/JSON retention is opt-in for every WebSocket client.
     archive: bool = False
+    endpointing: Literal["vad", "manual"] = "vad"
 
 
 class StreamingASRSession:
@@ -126,16 +127,26 @@ class StreamingASRSession:
         )
 
     async def prepare(self) -> None:
-        """Warm VAD and the configured native streaming engine before capture."""
+        """Warm the native decoder; manual input never constructs or runs VAD."""
 
         manager = get_model_manager()
-        vad_task = asyncio.create_task(self._ensure_vad())
-        engine_task = asyncio.create_task(manager.get_engine(self.config.engine))
-        _, engine = await asyncio.gather(vad_task, engine_task)
+        if self.config.endpointing == "manual":
+            engine = await manager.get_engine(self.config.engine)
+        else:
+            _, engine = await asyncio.gather(
+                self._ensure_vad(), manager.get_engine(self.config.engine)
+            )
         if not engine.supports_streaming:
             raise ValueError(f"Engine '{self.config.engine}' does not support native streaming")
 
     def update_config(self, data: dict[str, Any]) -> None:
+        if "endpointing" in data:
+            mode = data["endpointing"]
+            if mode not in {"manual", "vad"}:
+                raise ValueError("endpointing must be manual or vad")
+            if self._received_ms and mode != self.config.endpointing:
+                raise ValueError("endpointing cannot change after audio starts")
+            self.config.endpointing = mode
         if data.get("engine"):
             self.config.engine = str(data["engine"])
         if "language" in data:
@@ -155,12 +166,18 @@ class StreamingASRSession:
             self._pre_roll = _ms_to_bytes(settings.stream_pre_roll_ms, self.config.sample_rate)
 
     async def accept_audio(self, pcm_bytes: bytes) -> None:
-        if not pcm_bytes:
+        if not pcm_bytes or self._terminal_event_sent:
             return
-        await self._ensure_vad()
         if len(pcm_bytes) % 2:
             pcm_bytes = pcm_bytes[:-1]
-        self._session_audio.extend(pcm_bytes)
+        if not pcm_bytes:
+            return
+        if self.config.archive:
+            self._session_audio.extend(pcm_bytes)
+        if self.config.endpointing == "manual":
+            await self._accept_manual_audio(pcm_bytes)
+            return
+        await self._ensure_vad()
         pre_roll = bytes(self._ring[-self._pre_roll :])
         self._append_ring(pcm_bytes)
         assert self._vad is not None
@@ -198,7 +215,32 @@ class StreamingASRSession:
             await self._accept_true_stream(pcm_bytes)
             duration_ms = _bytes_to_ms(len(self._utterance), self.config.sample_rate)
             if decision.speech_end or duration_ms >= settings.stream_max_segment_ms:
-                await self._schedule_final(reason="vad_end" if decision.speech_end else "max_segment")
+                await self._schedule_final(
+                    reason="vad_end" if decision.speech_end else "max_segment"
+                )
+
+    async def _accept_manual_audio(self, pcm_bytes: bytes) -> None:
+        # One online decoder and one job for the entire button-controlled recording.
+        # Silence and the VAD mode's duration limits must not finalize it.
+        self._received_ms += _bytes_to_ms(len(pcm_bytes), self.config.sample_rate)
+        self._utterance.extend(pcm_bytes)
+        if self._true_stream is None:
+            self._state = StreamState.SPEAKING
+            self._job_id += 1
+            self._utterance_started_at = datetime.now(timezone.utc)
+            self._utterance_started_perf = time.perf_counter()
+            self._partials.clear()
+            await self._queue.put(
+                {
+                    "type": "speech_start",
+                    "session_id": self.session_id,
+                    "job_id": self._job_id,
+                    "state": self.state,
+                }
+            )
+            await self._start_true_stream(pcm_bytes)
+        else:
+            await self._accept_true_stream(pcm_bytes)
 
     async def finish(self) -> None:
         if self._terminal_event_sent:
@@ -206,7 +248,10 @@ class StreamingASRSession:
         if self._fatal_error is not None:
             await self.abort()
             return
-        if self._state in {StreamState.SPEAKING, StreamState.PARTIAL_RECOGNIZING} and self._utterance:
+        if (
+            self._state in {StreamState.SPEAKING, StreamState.PARTIAL_RECOGNIZING}
+            and self._utterance
+        ):
             await self._schedule_final(reason="client_end")
         if self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)
@@ -222,7 +267,9 @@ class StreamingASRSession:
                     "archive": session_archive,
                 }
             )
-        await self._queue.put({"type": "done", "session_id": self.session_id, "state": self._state.value})
+        await self._queue.put(
+            {"type": "done", "session_id": self.session_id, "state": self._state.value}
+        )
         self._terminal_event_sent = True
 
     async def abort(self) -> None:
@@ -253,7 +300,7 @@ class StreamingASRSession:
         if self._finalizing_job:
             return
         duration_ms = _bytes_to_ms(len(self._utterance), self.config.sample_rate)
-        if duration_ms < settings.stream_min_segment_ms:
+        if self.config.endpointing != "manual" and duration_ms < settings.stream_min_segment_ms:
             if self._true_stream is not None:
                 await self._true_stream.finish()
                 self._true_stream = None
@@ -314,7 +361,8 @@ class StreamingASRSession:
                     3,
                 ),
                 "asr_elapsed_sec": round(
-                    time.perf_counter() - (self._utterance_started_perf or time.perf_counter())
+                    time.perf_counter()
+                    - (self._utterance_started_perf or time.perf_counter())
                     + settings.stream_start_speech_ms / 1000.0,
                     3,
                 ),
@@ -395,7 +443,8 @@ class StreamingASRSession:
                     "text": text,
                     "duration_sec": round(duration_ms / 1000.0, 3),
                     "asr_elapsed_sec": round(
-                        time.perf_counter() - started_perf
+                        time.perf_counter()
+                        - started_perf
                         + settings.stream_start_speech_ms / 1000.0,
                         3,
                     ),
@@ -450,7 +499,7 @@ class StreamingASRSession:
         self._utterance_started_at = None
         self._utterance_started_perf = None
         self._partials.clear()
-        if self._vad is not None:
+        if self.config.endpointing != "manual" and self._vad is not None:
             self._vad.reset()
 
     def _stabilize(self, text: str) -> tuple[str, str]:

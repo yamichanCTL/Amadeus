@@ -340,6 +340,7 @@ dependencies = [
     { name = "soundfile" },
     { name = "sqlalchemy" },
     { name = "structlog" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
 ]
@@ -467,6 +468,7 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.30" },
     { name = "structlog", specifier = ">=24.2.0" },
     { name = "textgrid", marker = "extra == 'firered'", specifier = ">=1.6.1" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.1" },
     { name = "torch", marker = "python_full_version >= '3.13' and extra == 'qwen3asr'", specifier = ">=2.6.0" },
     { name = "torch", marker = "python_full_version < '3.13' and extra == 'qwen3asr'", specifier = ">=2.1.0" },
     { name = "torch", marker = "extra == 'firered'", specifier = ">=2.1.0" },

@@ -8,10 +8,11 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-
+from app.core.codex_asr import CodexASRBridge
+from app.core.codex_runtime import get_codex_runtime
 from app.core.model_errors import ModelRuntimeError, classify_model_error
 from app.core.streaming.session import StreamingASRSession, parse_stream_config
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/stream", tags=["streaming"])
@@ -52,7 +53,11 @@ async def stream_asr(websocket: WebSocket) -> None:
             if elapsed >= 3.0:
                 await websocket.send_text(
                     json.dumps(
-                        {"type": "loading", "message": "正在加载语音识别模型…", "elapsed_s": round(elapsed, 1)},
+                        {
+                            "type": "loading",
+                            "message": "正在加载语音识别模型…",
+                            "elapsed_s": round(elapsed, 1),
+                        },
                         ensure_ascii=False,
                     )
                 )
@@ -79,7 +84,9 @@ async def stream_asr(websocket: WebSocket) -> None:
         except asyncio.CancelledError:
             pass
         logger.exception("Could not initialise streaming ASR session: %s", exc)
-        await websocket.send_text(json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False))
+        await websocket.send_text(
+            json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False)
+        )
         await websocket.close(code=1011)
         return
     finally:
@@ -91,10 +98,12 @@ async def stream_asr(websocket: WebSocket) -> None:
                 pass
 
     await session.send_ready()
-    sender = asyncio.create_task(_send_loop(websocket, session))
+    bridge = CodexASRBridge(get_codex_runtime(), session.queue, session.session_id)
+    sender = asyncio.create_task(_send_loop(websocket, session, bridge))
     logger.info("WebSocket stream connected from %s", websocket.client)
 
     failed = False
+    client_ended = False
     try:
         while True:
             message = await websocket.receive()
@@ -102,8 +111,21 @@ async def stream_asr(websocket: WebSocket) -> None:
                 await session.accept_audio(message["bytes"] or b"")
                 continue
             if message.get("text") is not None:
+                data = parse_stream_config(message["text"])
+                if data.get("type") == "agent.cancel":
+                    await bridge.cancel()
+                    await session.queue.put(
+                        {
+                            "type": "agent.cancelled",
+                            "session_id": bridge.options.session_id,
+                        }
+                    )
+                    continue
+                if data.get("type") == "config" and "agent" in data:
+                    await bridge.configure(data["agent"])
                 should_close = await _handle_text_frame(session, message["text"])
                 if should_close:
+                    client_ended = True
                     break
             if message.get("type") == "websocket.disconnect":
                 break
@@ -126,11 +148,21 @@ async def stream_asr(websocket: WebSocket) -> None:
             }
         )
     finally:
-        if failed or session.fatal_error is not None:
+        # A peer disconnect must not leave a paid model turn running in the background.
+        if websocket.client_state.name == "DISCONNECTED" or failed:
+            await bridge.close()
+        if (
+            (session.config.endpointing == "manual" and not client_ended)
+            or failed
+            or session.fatal_error is not None
+        ):
             await session.abort()
         else:
             await session.finish()
-        await sender
+        try:
+            await sender
+        finally:
+            await bridge.close()
         try:
             await websocket.close()
         except Exception:
@@ -147,7 +179,9 @@ async def _handle_text_frame(session: StreamingASRSession, text: str) -> bool:
             {
                 "type": "loading",
                 "session_id": session.session_id,
-                "message": "正在预热流式 VAD 与 ASR 模型",
+                "message": "正在预热实时识别模型（手动结束）"
+                if session.config.endpointing == "manual"
+                else "正在预热流式 VAD 与 ASR 模型",
                 "state": session.state,
             }
         )
@@ -158,6 +192,7 @@ async def _handle_text_frame(session: StreamingASRSession, text: str) -> bool:
                 "session_id": session.session_id,
                 "engine": session.config.engine,
                 "language": session.config.language,
+                "endpointing": session.config.endpointing,
                 "user_id": session.config.user_id,
                 "category": session.config.category,
                 "state": session.state,
@@ -173,18 +208,32 @@ async def _handle_text_frame(session: StreamingASRSession, text: str) -> bool:
     if msg_type == "end":
         return True
     if msg_type == "ping":
-        await session.queue.put({"type": "pong", "session_id": session.session_id, "state": session.state})
+        await session.queue.put(
+            {"type": "pong", "session_id": session.session_id, "state": session.state}
+        )
         return False
     raise ValueError(f"Unknown stream message type: {msg_type}")
 
 
-async def _send_loop(websocket: WebSocket, session: StreamingASRSession) -> None:
+async def _send_loop(
+    websocket: WebSocket,
+    session: StreamingASRSession,
+    bridge: CodexASRBridge | None = None,
+) -> None:
     while True:
         event: dict[str, Any] = await session.queue.get()
+        if bridge and event.get("type") == "done" and bridge.options.enabled:
+            bridge.finish(event)
+            continue
+        drained = event.get("type") == "agent.drained"
+        if drained:
+            event = event["asr_done"]
         try:
             await websocket.send_text(json.dumps(event, ensure_ascii=False))
         except (WebSocketDisconnect, RuntimeError):
             return
+        if bridge and event.get("type") == "final":
+            await bridge.submit(event)
         if event.get("type") == "error" and event.get("fatal"):
             try:
                 await websocket.close(code=1011)

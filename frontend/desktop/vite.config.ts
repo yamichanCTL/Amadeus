@@ -17,7 +17,7 @@ export default defineConfig({
     // the Windows→WSL2 localhost forwarder can drop WebSocket upgrades.
     proxy: {
       '/v1': {
-        target: 'http://localhost:8000',
+        target: process.env.VITE_BACKEND_PROXY || 'http://127.0.0.1:8000',
         changeOrigin: true,
         ws: true,               // forward WebSocket upgrade
       },
