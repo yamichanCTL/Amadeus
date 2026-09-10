@@ -53,7 +53,7 @@ plugins = true
     binary.write_text(
         f"#!{sys.executable}\n"
         + r"""
-import json, sys, time
+import json, os, sys, time
 total = 0
 turn = 0
 history = []
@@ -68,6 +68,10 @@ for line in sys.stdin:
     params=message.get('params',{})
     if identifier is None: continue
     if method=='initialize': result={}
+    elif method=='account/read':
+        assert params['refreshToken'] is False
+        result=json.load(open('account-state.json')) if os.path.exists('account-state.json') else {
+            'account':{'type':'apiKey'},'requiresOpenaiAuth':True}
     elif method=='model/list':
         result={'data':[{'model':'catalog-model','displayName':'Catalog','isDefault':True,
             'supportedReasoningEfforts':[{'reasoningEffort':'low'}],'defaultReasoningEffort':'low'}]}
@@ -226,6 +230,75 @@ async def test_model_catalog_keeps_configured_provider_model(runtime):
     assert result["configured_model"] == "custom-model"
     assert [model["id"] for model in result["models"]] == ["custom-model", "catalog-model"]
     assert "private-" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("requires_auth", [True, False])
+async def test_model_catalog_checks_missing_account(runtime, requires_auth):
+    connection = prepare_connection(runtime.settings)
+    (connection.workspace / "account-state.json").write_text(
+        json.dumps({"account": None, "requiresOpenaiAuth": requires_auth})
+    )
+    if requires_auth:
+        with pytest.raises(CodexError) as error:
+            await runtime.inspect()
+        assert error.value.code == "codex_auth"
+    else:
+        assert (await runtime.inspect())["models"]
+
+
+async def test_meeting_explanations_are_isolated_and_dispose_sessions(runtime):
+    from app.api.v1.codex import router
+    from app.core.codex_runtime import get_codex_runtime
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    app = FastAPI()
+    app.include_router(router, prefix="/v1")
+    app.dependency_overrides[get_codex_runtime] = lambda: runtime
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await client.post("/v1/agents/codex/explanations", json={"target": "独立话题甲"})
+        second = await client.post("/v1/agents/codex/explanations", json={
+            "target": "独立话题乙", "preceding_context": "明确提供的前文" * 800,
+            "recent_excerpt": "独立话题乙", "focus": "recent_window",
+            "preset_prompt": "面向后端开发者解释", "focus_points": "业务意义与风险",
+            "recent_weight": 5, "lookback_seconds": 180, "recent_seconds": 45,
+        })
+        assert first.status_code == second.status_code == 200
+        a, b = first.json(), second.json()
+        assert a["result"]["session_id"] != b["result"]["session_id"]
+        assert b["target"] == "独立话题乙"
+        assert "独立话题甲" not in b["result"]["text"]
+        assert "明确提供的前文" in b["result"]["text"]
+        assert "面向后端开发者解释" in b["result"]["text"]
+        assert "业务意义与风险" in b["result"]["text"]
+        assert '"recent_weight": 5' in b["result"]["text"]
+        assert "触发之前" in b["result"]["text"]
+        assert "自行判断" in b["result"]["text"]
+        assert '"focus": "recent_window"' in b["result"]["text"]
+        assert not runtime._sessions
+        assert (await runtime.ledger.summary())["calls"] == 2
+        for body in [
+            {"target": "   "},
+            {"target": "x", "session_id": "old-chat"},
+            {"target": "x", "context": "old-persona"},
+            {"target": "x", "preceding_context": "字" * 8001},
+            {"target": "x", "recent_excerpt": "不属于原话"},
+            {"target": "x", "recent_weight": 6},
+            {"target": "x", "lookback_seconds": 10, "recent_seconds": 30},
+            {"target": "x", "preset_prompt": "字" * 4001},
+            {"target": "x", "focus_points": "字" * 2001},
+            {"target": "字" * 12001},
+            {"following_context": "后文", "focus": "target"},
+        ]:
+            rejected = await client.post("/v1/agents/codex/explanations", json=body)
+            assert rejected.status_code == 422
+        # The old post-trigger contract is rejected rather than silently reversing intent.
+        leading = await client.post("/v1/agents/codex/explanations", json={
+            "following_context": "未来的话", "focus": "after_trigger",
+        })
+        assert leading.status_code == 422
+        assert not runtime._sessions
+
 
 
 async def test_cancel_during_initial_accounting_commit_leaves_terminal_row(runtime, monkeypatch):

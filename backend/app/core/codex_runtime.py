@@ -41,6 +41,13 @@ class CodexRuntime:
             raise CodexError("codex_unavailable", "未找到 Codex CLI，请安装或设置 CODEX_BINARY。")
         connection = prepare_connection(self.settings)
         async with self.transport_factory(self.settings.codex_binary, connection) as client:
+            # A cached model catalogue is available even without a usable login.
+            # Do not force token rotation just to populate the model selector.
+            account = await client.request("account/read", {"refreshToken": False})
+            if account.get("requiresOpenaiAuth") and not account.get("account"):
+                raise CodexError(
+                    "codex_auth", "Codex 登录不可用，请在运行后端的机器上重新登录 Codex。"
+                )
             models = []
             cursor = None
             for _ in range(10):

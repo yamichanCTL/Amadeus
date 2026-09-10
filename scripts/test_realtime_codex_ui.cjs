@@ -33,7 +33,7 @@ app.whenReady().then(async () => {
     await input('input[placeholder="http://your-server-ip:18000"]','http://localhost:5173');
     await click('button','确认');
     await run("[...document.querySelectorAll('.sidebar nav button')].find(el=>el.textContent.includes('实时对话')).click()");
-    await until("document.querySelector('.agent-codex-usage')?.textContent.includes('已连接 Codex')");
+    await until("document.querySelector('.agent-codex-usage')?.textContent.includes('Codex 配置已读取')");
     const ttsOff = await run("![...document.querySelectorAll('.agent-config label')].find(el=>el.textContent.includes('自动朗读回复')).querySelector('input').checked");
     if (!ttsOff) throw Error('TTS must be disabled by default');
     await run(`(() => {

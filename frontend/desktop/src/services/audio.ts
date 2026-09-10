@@ -1394,6 +1394,7 @@ export class StreamingASRClient {
     inputStream?: MediaStream
     userId?: string
     archive?: boolean
+    recordAudio?: boolean
     echoCancellation?: boolean
     onCaptureSettings?: (state: EchoCancellationState) => void
     endpointing?: 'manual' | 'vad'
@@ -1476,7 +1477,7 @@ export class StreamingASRClient {
       captureStarted = true
       this.pcmStreamer = new PcmStreamer((pcm, sampleRate) => {
         if (this.stoppedByUser) return
-        this.recordingBuffer.append(pcm, sampleRate)
+        if (config.recordAudio !== false) this.recordingBuffer.append(pcm, sampleRate)
         if (this.ws?.readyState === WebSocket.OPEN && this.ws.bufferedAmount < MAX_WS_AUDIO_BUFFER_BYTES) {
           this.ws.send(new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength))
         }

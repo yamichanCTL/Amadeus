@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AssistantFigure } from '@/components/AssistantFigure'
+import { MeetingAssistPanel } from '@/components/MeetingAssistPanel'
 import { ASRApi, isAsyncResponse, type LLMChatContent, type LLMChatRole, type SkillDefinition, type TranscribeOptions } from '@/services/api'
 import { StreamingASRClient, audioRelayMixer, captureSpeakerAudio, speechRecorder } from '@/services/audio'
 import { useASRStore, type AgentTask, type AgentVoiceMode, type AppPage } from '@/store/useASRStore'
@@ -214,6 +215,10 @@ export function RealtimeAgentPage() {
   const codexSessionRef = useRef(crypto.randomUUID())
   const mountedRef = useRef(true)
   const [codexCatalog, setCodexCatalog] = useState<CodexCatalog | null>(null)
+  const [meetingMode, setMeetingMode] = useState(false)
+  const [meetingBusy, setMeetingBusy] = useState(false)
+  const [codexCatalogError, setCodexCatalogError] = useState('')
+  const [codexConnectionRevision, setCodexConnectionRevision] = useState(0)
   const [codexUsage, setCodexUsage] = useState<CodexAccounting | null>(null)
   const [codexTotal, setCodexTotal] = useState<CodexAccounting | null>(null)
   const [codexPending, setCodexPending] = useState(false)
@@ -335,16 +340,19 @@ export function RealtimeAgentPage() {
   useEffect(() => {
     let cancelled = false
     setCodexCatalog(null)
+    setCodexCatalogError('')
     if (!backendReady || !usingCodex) return
     void codexRequest<CodexCatalog>(settings.serverUrl, '/models').then((catalog) => {
       if (cancelled) return
       setCodexCatalog(catalog)
       if (!settings.codexModel) updateSettings({ codexModel: catalog.configured_model || catalog.models[0]?.id || '' })
-    }).catch((cause) => { if (!cancelled) setError(cause instanceof Error ? cause.message : 'Codex 连接失败') })
+    }).catch((cause) => {
+      if (!cancelled) setCodexCatalogError(cause instanceof Error ? cause.message : 'Codex 连接失败')
+    })
     void refreshCodexUsage().catch(() => {})
     const timer = window.setInterval(() => void refreshCodexUsage().catch(() => {}), 15000)
     return () => { cancelled = true; clearInterval(timer) }
-  }, [backendReady, usingCodex, settings.serverUrl, refreshCodexUsage, updateSettings])
+  }, [backendReady, usingCodex, settings.serverUrl, refreshCodexUsage, updateSettings, codexConnectionRevision])
 
   useEffect(() => {
     mountedRef.current = true
@@ -1021,7 +1029,7 @@ export function RealtimeAgentPage() {
   }, [sendToAgent])
 
   useEffect(() => {
-    if (!settings.agentProactive || !canChat) {
+    if (meetingMode || !settings.agentProactive || !canChat) {
       setProactiveStatus('idle')
       proactiveLastAtRef.current = 0
       return
@@ -1054,7 +1062,7 @@ export function RealtimeAgentPage() {
       window.clearInterval(timer)
       window.clearTimeout(statusTimer)
     }
-  }, [settings.agentProactive, settings.agentProactiveIntervalMin, canChat])
+  }, [settings.agentProactive, settings.agentProactiveIntervalMin, canChat, meetingMode])
 
   const inspectScreen = async () => {
     if (!canChat) {
@@ -1419,9 +1427,14 @@ export function RealtimeAgentPage() {
           <div className="section-head compact">
             <div>
               <h1>实时对话</h1>
+              <select aria-label="实时对话模式" value={meetingMode ? 'meeting' : 'chat'} disabled={busy || codexVoiceOpen || meetingBusy} onChange={(event) => {
+                const meeting = event.target.value === 'meeting'
+                if (meeting) updateSettings({ agentBackend: 'codex', agentAutoSpeak: false })
+                setMeetingMode(meeting)
+              }}><option value="chat">语音对话</option><option value="meeting">会议旁听与解释</option></select>
               <p>{usingCodex ? `Codex · ${settings.codexModel || '连接中'}` : settings.llmModel || '未选择 LLM 模型'} / {usingCodex ? settings.streamingEngine : settings.offlineEngine}</p>
             </div>
-            <div className="agent-actions">
+            {!meetingMode && <div className="agent-actions">
               <button type="button" onClick={() => void inspectScreen()} disabled={busy || !legacyReady || usingCodex} title={usingCodex ? '屏幕观察暂需切换到原有 Agent' : undefined}>
                 看屏幕
               </button>
@@ -1430,9 +1443,10 @@ export function RealtimeAgentPage() {
               </button>
               <button type="button" onClick={() => void stopSpeech()} disabled={status !== 'speaking' && !codexPending}>{codexPending ? '取消回答' : '停止朗读'}</button>
               <button type="button" onClick={() => void resetConversation()} disabled={voiceDraining}>清空</button>
-            </div>
+            </div>}
           </div>
 
+          {meetingMode ? <MeetingAssistPanel onBusy={setMeetingBusy} /> : <>
           <div className="agent-messages">
             {messages.map((message) => (
               <article key={message.id} className={`agent-message ${message.kind === 'tool' ? 'tool' : message.role}`}>
@@ -1467,6 +1481,7 @@ export function RealtimeAgentPage() {
           {lastTranscript && <p className="agent-transcript">ASR：{lastTranscript}</p>}
           {toolLog[0] && <p className="agent-tool-log">工具：{toolLog[0].label}</p>}
           {error && <p className="error">{error}</p>}
+          </>}
         </div>
       </section>
 
@@ -1499,7 +1514,8 @@ export function RealtimeAgentPage() {
               </select>
             </label>
             <div className="wide agent-codex-usage" aria-label="Codex 用量">
-              <p>{codexCatalog ? `已连接 Codex · ${codexCatalog.provider}` : backendReady ? '正在连接 Codex…' : '请在设置中确认后端地址'}</p>
+              <p>{codexCatalogError || (codexCatalog ? `Codex 配置已读取 · ${codexCatalog.provider}` : backendReady ? '正在连接 Codex…' : '请在设置中确认后端地址')}</p>
+              {backendReady && <button type="button" disabled={busy || codexVoiceOpen} onClick={() => { setError(''); setCodexConnectionRevision((value) => value + 1) }}>重新检查连接</button>}
               <p>本次对话：{codexUsage?.total_tokens.toLocaleString() ?? '—'} tokens · {codexUsage?.calls ?? 0} 次调用
                 <button type="button" onClick={() => void refreshCodexUsage().catch(() => setError('用量刷新失败'))}>刷新用量</button></p>
               <small>输入 {codexUsage?.input_tokens.toLocaleString() ?? '—'}（含缓存 {codexUsage?.cached_input_tokens.toLocaleString() ?? '—'}） · 输出 {codexUsage?.output_tokens.toLocaleString() ?? '—'} · 本应用累计 {codexTotal?.total_tokens.toLocaleString() ?? '—'} tokens。用量不等于账单或剩余额度。</small>

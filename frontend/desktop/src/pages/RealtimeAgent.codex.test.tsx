@@ -26,7 +26,9 @@ const usage = { ...reply.usage, calls: 1, missing_usage: 0, complete: true }
 let requests: { path: string; method: string; body: any }[]
 let finishTurn: ((response: Response) => void) | undefined
 let holdTurn = false
+let catalogLoginFailed = false
 beforeEach(() => {
+  catalogLoginFailed = false
   requests = []; mocks.streams.length = 0; mocks.legacyChat.mockClear(); holdTurn = false; finishTurn = undefined
   useASRStore.setState({ settings: { ...DEFAULT_SETTINGS, serverUrl: 'http://backend.test', backendConfirmed: true,
     agentBackend: 'codex', codexModel: '', codexEffort: 'low', agentAutoSpeak: false,
@@ -34,6 +36,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     const path = new URL(url).pathname
     requests.push({ path, method: init?.method || 'GET', body: init?.body ? JSON.parse(String(init.body)) : null })
+    if (path.endsWith('/models') && catalogLoginFailed) return Response.json({ detail: { code: 'codex_auth', message: 'Codex 登录不可用，请重新登录。' } }, { status: 503 })
     if (path.endsWith('/models')) return Response.json({ provider: 'local-codex', configured_model: 'test-codex', models: [
       { id: 'test-codex', efforts: ['low', 'high'], default_effort: 'low' },
       { id: 'other-codex', efforts: ['low', 'high'], default_effort: 'high' },
@@ -47,13 +50,26 @@ beforeEach(() => {
   }))
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
-const ready = async () => { render(<RealtimeAgentPage />); await screen.findByText('已连接 Codex · local-codex') }
+const ready = async () => { render(<RealtimeAgentPage />); await screen.findByText('Codex 配置已读取 · local-codex') }
 const send = async (text: string) => {
   fireEvent.change(screen.getByLabelText('对话消息'), { target: { value: text } })
   fireEvent.click(screen.getByRole('button', { name: '发送' }))
   await waitFor(() => expect(requests.filter((r) => r.path.endsWith('/turns')).length).toBeGreaterThan(0))
 }
 describe('Codex in the existing realtime UI', () => {
+  it('shows login failure and recovers after checking the connection again', async () => {
+    catalogLoginFailed = true
+    render(<RealtimeAgentPage />)
+    expect(await screen.findByText('Codex 登录不可用，请重新登录。')).toBeTruthy()
+    expect(screen.queryByText('正在连接 Codex…')).toBeNull()
+    expect(screen.queryByText('Codex 配置已读取 · local-codex')).toBeNull()
+    catalogLoginFailed = false
+    fireEvent.click(screen.getByRole('button', { name: '重新检查连接' }))
+    expect(await screen.findByText('Codex 配置已读取 · local-codex')).toBeTruthy()
+    expect(screen.queryByText('Codex 登录不可用，请重新登录。')).toBeNull()
+    await send('重新登录后继续对话')
+    expect(await screen.findByText(reply.text)).toBeTruthy()
+  })
   it('migrates an existing installation while retaining its backend and character settings', async () => {
     const previous = { ...useASRStore.getState().settings, agentBackend: undefined, codexModel: undefined, codexEffort: undefined, agentAutoSpeak: true }
     const migrated = await useASRStore.persist.getOptions().migrate!({ settings: previous }, 39) as { settings: typeof DEFAULT_SETTINGS }

@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import Annotated
 
 from app.core.codex_connection import CodexError
+from app.core.codex_meeting import explain_excerpt
 from app.core.codex_runtime import CodexRuntime, get_codex_runtime
 from app.db.models import ASRTask, TaskStatus, Transcript
 from app.db.session import get_db
-from app.schemas.codex import CodexTurnRequest, CodexTurnResult
+from app.schemas.codex import CodexExplanationRequest, CodexTurnRequest, CodexTurnResult
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -63,6 +64,14 @@ async def turn(
         )
     try:
         return await runtime.turn(text, request, source="asr_task" if request.task_id else "text")
+    except CodexError as error:
+        raise _http_error(error) from None
+
+
+@router.post("/explanations")
+async def explanation(request: CodexExplanationRequest, runtime: Runtime):
+    try:
+        return await explain_excerpt(runtime, request)
     except CodexError as error:
         raise _http_error(error) from None
 

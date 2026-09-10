@@ -595,3 +595,18 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .agent-config-grid .agent-codex-usage { grid-column: 1 / -1; color: #526171; font-size: 12px; }
 .agent-codex-usage p { margin: 6px 0; }
 .agent-codex-usage button { margin-left: 12px; }
+
+.meeting-assist { display: grid; gap: 12px; }
+.meeting-assist label { display: grid; gap: 6px; }
+.meeting-assist textarea { width: 100%; resize: vertical; }
+.meeting-assist .meeting-inline { display: flex; align-items: center; gap: 8px; }
+.meeting-assist .meeting-inline input { width: auto; }
+.meeting-answer blockquote { margin: 12px 0; padding: 8px 12px; border-left: 3px solid #80aaff; white-space: pre-wrap; }
+.meeting-answer p { white-space: pre-wrap; }
+
+.meeting-preferences { margin: 16px 0; padding: 16px; border: 1px solid var(--border, #ccd8e8); border-radius: 10px; min-width: 0; }
+.meeting-preferences > label { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+.meeting-preferences > .meeting-inline { flex-direction: row; align-items: center; }
+.meeting-preference-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.meeting-preference-grid label { display: flex; flex-direction: column; gap: 6px; }
+.meeting-preferences textarea { width: 100%; box-sizing: border-box; }
