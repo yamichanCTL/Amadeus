@@ -1,7 +1,7 @@
-export type MeetingExcerpt = { target: string; preceding: string; recent?: string; focus?: 'recent_window' }
+export type MeetingExcerpt = { target: string; preceding: string; recent?: string; focus?: 'recent_window'; truncated?: boolean }
 
 export function selectMeetingExcerpt(text: string, start: number, end: number): MeetingExcerpt {
-  return { target: text.slice(start, end).trim().slice(0, 12000), preceding: text.slice(0, start).trim().slice(-8000) }
+  return { target: text.slice(start, end).trim().slice(0, 96000), preceding: text.slice(0, start).trim().slice(-8000) }
 }
 
 export function latestMeetingExcerpt(text: string): MeetingExcerpt {
@@ -66,22 +66,27 @@ export type MeetingPreferences = {
   presetPrompt: string; focusPoints: string; useContext: boolean
   keywordEnabled: boolean; keyword: string; shortcutEnabled: boolean; shortcut: string
 }
-export const MEETING_PREFERENCES_KEY = 'amadeus.meeting.preferences.v2'
+export const MEETING_PREFERENCES_KEY = 'amadeus.meeting.preferences.v3'
 export const DEFAULT_MEETING_PREFERENCES: MeetingPreferences = {
-  lookbackSeconds: 120, recentSeconds: 30, recentWeight: 3, presetPrompt: '', focusPoints: '',
+  lookbackSeconds: 3600, recentSeconds: 60, recentWeight: 3, presetPrompt: '', focusPoints: '',
   useContext: true, keywordEnabled: false, keyword: '解释一下刚才这句话',
   shortcutEnabled: true, shortcut: 'Ctrl+Alt+KeyE',
 }
 export function readMeetingPreferences(): MeetingPreferences {
   try {
-    const stored = JSON.parse(localStorage.getItem(MEETING_PREFERENCES_KEY) || '{}')
+    const current = localStorage.getItem(MEETING_PREFERENCES_KEY)
+    const stored = JSON.parse(current || localStorage.getItem('amadeus.meeting.preferences.v2') || '{}')
+    if (!current) {
+      if (stored.lookbackSeconds === 120) stored.lookbackSeconds = 3600
+      if (stored.recentSeconds === 30) stored.recentSeconds = 60
+    }
     const result = { ...DEFAULT_MEETING_PREFERENCES }
     for (const key of Object.keys(result) as (keyof MeetingPreferences)[]) {
       if (typeof stored[key] === typeof result[key]) Object.assign(result, { [key]: stored[key] })
     }
     const clamp = (n: number, min: number, max: number, fallback: number) => Number.isFinite(n) ? Math.max(min, Math.min(max, Math.round(n))) : fallback
-    result.lookbackSeconds = clamp(result.lookbackSeconds, 10, 900, 120)
-    result.recentSeconds = clamp(result.recentSeconds, 5, result.lookbackSeconds, 30)
+    result.lookbackSeconds = clamp(result.lookbackSeconds, 10, 3600, 3600)
+    result.recentSeconds = clamp(result.recentSeconds, 5, result.lookbackSeconds, 60)
     result.recentWeight = clamp(result.recentWeight, 1, 5, 3)
     result.presetPrompt = result.presetPrompt.slice(0, 4000)
     result.focusPoints = result.focusPoints.slice(0, 2000)
@@ -104,7 +109,7 @@ export class MeetingTimeline {
   offset = 0
   times: number[] = []
   update(text: string, now: number) {
-    const offset = Math.max(0, text.length - 64000)
+    const offset = Math.max(0, text.length - 128000)
     if (offset >= this.offset) {
       this.text = this.text.slice(offset - this.offset)
       this.times = this.times.slice(offset - this.offset)
@@ -127,7 +132,8 @@ export class MeetingTimeline {
     const cutoff = now - preferences.lookbackSeconds * 1000
     let start = 0
     while (start < end && this.times[start] < cutoff) start++
-    start = Math.max(start, end - 12000)
+    const truncated = end - start > 96000 || (this.offset > 0 && this.times[0] >= cutoff)
+    start = Math.max(start, end - 96000)
     let recentStart = start
     while (recentStart < end && this.times[recentStart] < now - preferences.recentSeconds * 1000) recentStart++
     const stripCommands = (text: string) => {
@@ -139,7 +145,7 @@ export class MeetingTimeline {
       return text.trim().replace(/^[。！？!?，,；;\s]+|[\s]+$/g, '')
     }
     const target = stripCommands(this.text.slice(start, end))
-    let recent = stripCommands(this.text.slice(Math.max(recentStart, end - 2000), end))
+    let recent = stripCommands(this.text.slice(Math.max(recentStart, end - 8000), end))
     // A time/length boundary may land inside an earlier command. Keep only the
     // suffix that is also present in the cleaned target.
     while (recent && !target.includes(recent)) recent = recent.slice(1)
@@ -148,6 +154,7 @@ export class MeetingTimeline {
       preceding: stripCommands(this.text.slice(Math.max(0, start - 8000), start)),
       recent,
       focus: 'recent_window',
+      truncated,
     }
   }
 }

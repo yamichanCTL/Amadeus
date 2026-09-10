@@ -18,7 +18,7 @@ import { latestMeetingExcerpt } from '@/services/meeting'
 const requests: any[] = []
 let pending: ((value: Response) => void) | null = null
 let hold = false
-const response = (target: string) => Response.json({ target, result: { status: 'completed', text: '这是这段话的解释。', usage: { total_tokens: 42 } } })
+const response = (target: string) => new Response('data: ' + JSON.stringify({ type: 'meeting.completed', target, result: { status: 'completed', text: '这是这段话的解释。', usage: { total_tokens: 42 } } }) + '\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
 beforeEach(() => {
   localStorage.clear()
   mocks.streams.length = 0; requests.length = 0; hold = false; pending = null
@@ -157,4 +157,69 @@ it('bounds an unpunctuated transcript without mixing its prefix into the target'
   const snapshot = latestMeetingExcerpt('旧'.repeat(12000) + '新'.repeat(700))
   expect(snapshot.target).toBe('新'.repeat(600))
   expect(snapshot.preceding.length).toBe(8000)
+})
+
+
+it('renders deltas before completion while ASR continues, then displays final accounting', async () => {
+  let output!: ReadableStreamDefaultController<Uint8Array>
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(new ReadableStream<Uint8Array>({ start(controller) { output = controller } }), { headers: { 'Content-Type': 'text/event-stream' } })))
+  render(<MeetingAssistPanel onBusy={vi.fn()} />)
+  const stream = await start()
+  act(() => stream.emit({ type: 'partial', text: '需要解释的原话。' }))
+  fireEvent.click(screen.getByRole('button', { name: '解释最近一段' }))
+  await waitFor(() => expect(output).toBeTruthy())
+  const send = (event: object) => output.enqueue(new TextEncoder().encode('data: ' + JSON.stringify(event) + '\n\n'))
+  await act(async () => send({ type: 'agent.delta', text: '这是第一段，' }))
+  expect(screen.getByTestId('meeting-stream-output').textContent).toBe('这是第一段，')
+  expect(screen.getByText('正在流式生成…')).toBeTruthy()
+  act(() => stream.emit({ type: 'partial', text: '需要解释的原话。旁听仍在继续。' }))
+  expect(stream.stop).not.toHaveBeenCalled()
+  await act(async () => send({ type: 'agent.delta', text: '这是第二段。' }))
+  expect(screen.getByTestId('meeting-stream-output').textContent).toBe('这是第一段，这是第二段。')
+  await act(async () => send({ type: 'meeting.completed', target: '需要解释的原话。', result: { status: 'completed', text: '最终回答。', usage: { total_tokens: 42 } } }))
+  expect(screen.getByTestId('meeting-stream-output').textContent).toBe('最终回答。')
+  expect(screen.queryByText('正在流式生成…')).toBeNull()
+})
+
+it('retains partial output and reports an interrupted stream instead of claiming completion', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('data: {"type":"agent.delta","text":"已有内容"}\n\n', { headers: { 'Content-Type': 'text/event-stream' } })))
+  render(<MeetingAssistPanel onBusy={vi.fn()} />)
+  const stream = await start()
+  act(() => stream.emit({ type: 'partial', text: '原话。' }))
+  fireEvent.click(screen.getByRole('button', { name: '解释最近一段' }))
+  await screen.findByText('连接中断，解释尚未完成。')
+  expect(screen.getByTestId('meeting-stream-output').textContent).toBe('已有内容')
+})
+
+it('stops generation without stopping ASR and retains received text', async () => {
+  let requestSignal!: AbortSignal
+  vi.stubGlobal('fetch', vi.fn(async (_url: string, init: RequestInit) => {
+    requestSignal = init.signal as AbortSignal
+    return new Response(new ReadableStream({ start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: {"type":"agent.delta","text":"已生成的文字"}\n\n'))
+      requestSignal.addEventListener('abort', () => controller.error(new DOMException('Aborted', 'AbortError')))
+    } }), { headers: { 'Content-Type': 'text/event-stream' } })
+  }))
+  render(<MeetingAssistPanel onBusy={vi.fn()} />)
+  const stream = await start()
+  act(() => stream.emit({ type: 'partial', text: '原话。' }))
+  fireEvent.click(screen.getByRole('button', { name: '解释最近一段' }))
+  await screen.findByText('已生成的文字')
+  fireEvent.click(screen.getByRole('button', { name: '停止生成' }))
+  await screen.findByText('已停止生成，已收到的文字保留。')
+  expect(requestSignal.aborted).toBe(true)
+  expect(screen.getByTestId('meeting-stream-output').textContent).toBe('已生成的文字')
+  expect(stream.stop).not.toHaveBeenCalled()
+})
+
+
+it('synchronizes settings from another tab without overwriting newer saved fields', async () => {
+  render(<MeetingAssistPanel onBusy={vi.fn()} />)
+  const key = 'amadeus.meeting.preferences.v3'
+  localStorage.setItem(key, JSON.stringify({ lookbackSeconds: 3600, recentSeconds: 60, presetPrompt: '另一个页面的新方向' }))
+  act(() => window.dispatchEvent(new StorageEvent('storage', { key })))
+  expect((screen.getByLabelText('回看时长（秒）') as HTMLInputElement).value).toBe('3600')
+  expect((screen.getByLabelText('预置提示词') as HTMLTextAreaElement).value).toBe('另一个页面的新方向')
+  fireEvent.change(screen.getByLabelText('末尾关注程度'), { target: { value: '5' } })
+  expect(JSON.parse(localStorage.getItem(key)!)).toMatchObject({ presetPrompt: '另一个页面的新方向', lookbackSeconds: 3600, recentWeight: 5 })
 })

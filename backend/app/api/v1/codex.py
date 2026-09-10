@@ -5,12 +5,13 @@ from __future__ import annotations
 from typing import Annotated
 
 from app.core.codex_connection import CodexError
-from app.core.codex_meeting import explain_excerpt
+from app.core.codex_meeting import explain_excerpt, stream_explanation
 from app.core.codex_runtime import CodexRuntime, get_codex_runtime
 from app.db.models import ASRTask, TaskStatus, Transcript
 from app.db.session import get_db
 from app.schemas.codex import CodexExplanationRequest, CodexTurnRequest, CodexTurnResult
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -74,6 +75,15 @@ async def explanation(request: CodexExplanationRequest, runtime: Runtime):
         return await explain_excerpt(runtime, request)
     except CodexError as error:
         raise _http_error(error) from None
+
+
+@router.post("/explanations/stream")
+async def explanation_stream(request: CodexExplanationRequest, runtime: Runtime):
+    return StreamingResponse(
+        stream_explanation(runtime, request),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/sessions/{session_id}/cancel")

@@ -28,6 +28,7 @@ let finishTurn: ((response: Response) => void) | undefined
 let holdTurn = false
 let catalogLoginFailed = false
 beforeEach(() => {
+  window.history.replaceState(null, '', '/')
   catalogLoginFailed = false
   requests = []; mocks.streams.length = 0; mocks.legacyChat.mockClear(); holdTurn = false; finishTurn = undefined
   useASRStore.setState({ settings: { ...DEFAULT_SETTINGS, serverUrl: 'http://backend.test', backendConfirmed: true,
@@ -171,4 +172,19 @@ describe('Codex in the existing realtime UI', () => {
     render(<RealtimeAgentPage />)
     expect(screen.getByText('请在设置中确认后端地址')).toBeTruthy(); expect(requests).toHaveLength(0)
   })
+})
+
+
+it('keeps meeting mode across remounts through the meeting URL', async () => {
+  window.history.replaceState(null, '', '/#meeting')
+  const view = render(<RealtimeAgentPage />)
+  expect(await screen.findByRole('button', { name: '开始旁听' })).toBeTruthy()
+  expect((screen.getByLabelText('实时对话模式') as HTMLSelectElement).value).toBe('meeting')
+  view.unmount()
+  render(<RealtimeAgentPage />)
+  expect(await screen.findByRole('button', { name: '开始旁听' })).toBeTruthy()
+  fireEvent.change(screen.getByLabelText('实时对话模式'), { target: { value: 'chat' } })
+  expect(window.location.hash).toBe('#realtime')
+  fireEvent.change(screen.getByLabelText('实时对话模式'), { target: { value: 'meeting' } })
+  expect(window.location.hash).toBe('#meeting')
 })

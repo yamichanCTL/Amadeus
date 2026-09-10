@@ -39,14 +39,14 @@ class StreamCodexOptions(CodexOptions):
 class CodexExplanationRequest(BaseModel):
     model_config = {"extra": "forbid", "str_strip_whitespace": True}
 
-    target: str = Field(min_length=1, max_length=12000)
+    target: str = Field(min_length=1, max_length=96000)
     preceding_context: str = Field(default="", max_length=8000)
-    recent_excerpt: str = Field(default="", max_length=2000)
+    recent_excerpt: str = Field(default="", max_length=8000)
     focus: Literal["target", "recent_window"] = "target"
     preset_prompt: str = Field(default="", max_length=4000)
     focus_points: str = Field(default="", max_length=2000)
-    lookback_seconds: int = Field(default=120, ge=10, le=900)
-    recent_seconds: int = Field(default=30, ge=5, le=900)
+    lookback_seconds: int = Field(default=3600, ge=10, le=3600)
+    recent_seconds: int = Field(default=60, ge=5, le=3600)
     recent_weight: int = Field(default=3, ge=1, le=5)
     model: str | None = Field(default=None, min_length=1, max_length=120, pattern=r"^[\w./:-]+$")
     effort: Literal["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] | None = (

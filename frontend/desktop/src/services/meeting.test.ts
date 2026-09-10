@@ -1,5 +1,6 @@
+// @vitest-environment jsdom
 import { expect, it } from 'vitest'
-import { MeetingTimeline, DEFAULT_MEETING_PREFERENCES, meetingKeyword } from './meeting'
+import { MeetingTimeline, DEFAULT_MEETING_PREFERENCES, MEETING_PREFERENCES_KEY, readMeetingPreferences, meetingKeyword } from './meeting'
 
 it.each([
   '解释一下，刚才这句话。',
@@ -66,10 +67,10 @@ it('strips earlier spoken commands from later summaries and never includes post-
 
 it('caps retained text and preserves timing when a long transcript advances', () => {
   const timeline = new MeetingTimeline()
-  timeline.update('旧'.repeat(65000), 1000)
-  timeline.update('旧'.repeat(65000) + '新'.repeat(500), 100000)
-  expect(timeline.text.length).toBe(64000)
-  expect(timeline.times.length).toBe(64000)
+  timeline.update('旧'.repeat(129000), 1000)
+  timeline.update('旧'.repeat(129000) + '新'.repeat(500), 100000)
+  expect(timeline.text.length).toBe(128000)
+  expect(timeline.times.length).toBe(128000)
   expect(timeline.offset).toBe(1500)
   const excerpt = timeline.excerpt(100000, { ...DEFAULT_MEETING_PREFERENCES, lookbackSeconds: 60 })
   expect(excerpt.target).toBe('新'.repeat(500))
@@ -84,4 +85,29 @@ it('keeps the recent excerpt valid when its boundary falls inside a previous com
   expect(excerpt.target).not.toContain('解释一下')
   expect(excerpt.target).toContain(excerpt.recent)
   expect(excerpt.recent).toContain('重点内容')
+})
+
+
+it('keeps an hour of substantial transcript and focuses only on the last minute', () => {
+  const timeline = new MeetingTimeline()
+  let text = ''
+  for (let minute = 0; minute <= 65; minute++) {
+    text += `第${minute}分钟。` + '会议资料。'.repeat(180)
+    timeline.update(text, minute * 60000)
+  }
+  const excerpt = timeline.excerpt(65 * 60000, DEFAULT_MEETING_PREFERENCES)
+  expect(excerpt.target.startsWith('第5分钟。')).toBe(true)
+  expect(excerpt.target.length).toBeGreaterThan(50000)
+  expect(excerpt.recent?.startsWith('第64分钟。')).toBe(true)
+  expect(excerpt.recent).toContain('第65分钟。')
+  expect(excerpt.truncated).toBe(false)
+})
+
+it('migrates the old defaults to one hour/one minute and preserves custom preferences', () => {
+  localStorage.clear()
+  localStorage.setItem('amadeus.meeting.preferences.v2', JSON.stringify({ lookbackSeconds: 120, recentSeconds: 30, presetPrompt: '自定义方向', shortcut: 'Ctrl+KeyJ' }))
+  expect(readMeetingPreferences()).toMatchObject({ lookbackSeconds: 3600, recentSeconds: 60, presetPrompt: '自定义方向', shortcut: 'Ctrl+KeyJ' })
+  localStorage.setItem(MEETING_PREFERENCES_KEY, JSON.stringify({ lookbackSeconds: 600, recentSeconds: 45 }))
+  expect(readMeetingPreferences()).toMatchObject({ lookbackSeconds: 600, recentSeconds: 45 })
+  localStorage.clear()
 })

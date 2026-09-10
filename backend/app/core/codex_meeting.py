@@ -1,18 +1,23 @@
 """Explain one immutable meeting excerpt in a fresh, disposable Codex session."""
 
+import asyncio
 import json
 import uuid
 
-from app.core.codex_runtime import CodexRuntime
+import anyio
+from app.core.codex_connection import CodexError, public_error
+from app.core.codex_runtime import CodexRuntime, EventSink
 from app.schemas.codex import CodexExplanationRequest, CodexOptions
 
 
-async def explain_excerpt(runtime: CodexRuntime, request: CodexExplanationRequest):
+async def explain_excerpt(
+    runtime: CodexRuntime, request: CodexExplanationRequest, emit: EventSink | None = None
+):
     options = CodexOptions(
         session_id=f"explain-{uuid.uuid4().hex}",
         model=request.model,
         effort=request.effort,
-        timeout_sec=90,
+        timeout_sec=300,
     )
     prompt = (
         "你是通过 Codex 运行的会议解释 Agent，使用简洁中文。"
@@ -48,7 +53,57 @@ async def explain_excerpt(runtime: CodexRuntime, request: CodexExplanationReques
         )
     )
     try:
-        result = await runtime.turn(prompt, options, source="meeting_explanation")
+        result = await runtime.turn(prompt, options, source="meeting_explanation", emit=emit)
         return {"target": request.target, "result": result}
     finally:
         await runtime.reset(options.session_id)
+
+
+async def stream_explanation(runtime: CodexRuntime, request: CodexExplanationRequest):
+    """Forward deltas with bounded backpressure; disconnect cancels the owned turn."""
+    queue: asyncio.Queue[dict | None] = asyncio.Queue(maxsize=64)
+    disconnected = False
+
+    async def publish(event: dict):
+        if not disconnected and event["type"] in {"agent.started", "agent.delta"}:
+            await queue.put(event)
+
+    async def produce():
+        try:
+            response = await explain_excerpt(runtime, request, emit=publish)
+            if not disconnected:
+                await queue.put({
+                    "type": "meeting.completed",
+                    "target": response["target"],
+                    "result": response["result"].model_dump(),
+                })
+        except Exception as error:
+            failure = error if isinstance(error, CodexError) else public_error(error)
+            if not disconnected:
+                await queue.put({
+                    "type": "meeting.error", "code": failure.code, "message": str(failure),
+                })
+        finally:
+            if not disconnected:
+                await queue.put(None)
+
+    task = asyncio.create_task(produce())
+    try:
+        yield ": connected\n\n"
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=15)
+            except TimeoutError:
+                yield ": keepalive\n\n"
+                continue
+            if event is None:
+                break
+            yield "data: " + json.dumps(event, ensure_ascii=False) + "\n\n"
+    finally:
+        disconnected = True
+        if not task.done():
+            task.cancel()
+        # Starlette disconnects cancel the response task through an AnyIO scope.
+        # Let the runtime finish accounting and dispose its private session.
+        with anyio.CancelScope(shield=True):
+            await asyncio.gather(task, return_exceptions=True)

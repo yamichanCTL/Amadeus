@@ -45,11 +45,33 @@ app.whenReady().then(async () => {
     await until('document.querySelector(".meeting-assist")');
     await run(`(() => {
       window.__requests=[];window.__responses=[];window.__events=[];window.__frames=0;window.__tts=0;
+      window.__streamEvents=[];window.__streamVisible=false;window.__streamErrors=[];
+      new MutationObserver(()=>{
+        const text=document.querySelector('[data-testid="meeting-stream-output"]')?.textContent;
+        if(text && text!=='等待 Agent 输出…' && document.querySelector('.meeting-assist')?.textContent.includes('正在流式生成…')) window.__streamVisible=true;
+      }).observe(document.body,{childList:true,subtree:true,characterData:true});
       const fetch=window.fetch.bind(window);
       window.fetch=async (url,init)=>{
-        if(!String(url).endsWith('/explanations'))return fetch(url,init);
+        if(!String(url).endsWith('/explanations/stream'))return fetch(url,init);
         window.__requests.push(JSON.parse(init.body));const frames=window.__frames;
-        const response=await fetch(url,init);window.__responses.push({body:await response.clone().json(),frames:window.__frames-frames});return response;
+        const response=await fetch(url,init);
+        const copy=response.clone();
+        void (async()=>{
+          const reader=copy.body.getReader(), decoder=new TextDecoder();let buffer='';
+          while(true){
+            const chunk=await reader.read();if(chunk.done)break;
+            buffer+=decoder.decode(chunk.value,{stream:true});
+            let boundary;
+            while((boundary=buffer.indexOf('\\n\\n'))>=0){
+              const packet=buffer.slice(0,boundary);buffer=buffer.slice(boundary+2);
+              if(!packet.startsWith('data: '))continue;
+              const event=JSON.parse(packet.slice(6));window.__streamEvents.push({type:event.type,time:performance.now()});
+              if(event.type==='meeting.completed')window.__responses.push({body:event,frames:window.__frames-frames});
+              if(event.type==='meeting.error')window.__streamErrors.push(event);
+            }
+          }
+        })().catch(error=>window.__streamErrors.push(String(error)));
+        return response;
       };
       const WS=window.WebSocket;
       window.WebSocket=class extends WS {
@@ -62,8 +84,8 @@ app.whenReady().then(async () => {
     await input('input[aria-label="解释口令"]', keyword);
     await input('textarea[aria-label="预置提示词"]', '请优先解释委员会会议的决策程序和业务含义，用通俗中文解释。', 'HTMLTextAreaElement');
     await input('textarea[aria-label="关注要点"]', '法定人数的作用\n对表决有效性的影响', 'HTMLTextAreaElement');
-    await input('input[aria-label="回看时长（秒）"]', '90');
-    await input('input[aria-label="重点关注末尾（秒）"]', '15');
+    await input('input[aria-label="回看时长（秒）"]', '3600');
+    await input('input[aria-label="重点关注末尾（秒）"]', '60');
     await input('select[aria-label="末尾关注程度"]', '5', 'HTMLSelectElement');
     await run(`(() => {
       [...document.querySelectorAll('button')].find(x=>x.textContent.startsWith('设置快捷键')).click();
@@ -83,14 +105,16 @@ app.whenReady().then(async () => {
     const evidence = await run(`({requests:window.__requests,responses:window.__responses,frames:window.__frames,tts:window.__tts,
       finals:window.__events.filter(e=>e.type==='final').length,agentEvents:window.__events.filter(e=>e.type.startsWith('agent.')).length,
       endpointing:window.__events.find(e=>e.type==='configured')?.endpointing,listening:document.querySelector('.meeting-assist [role=status]').textContent,
+      streamVisible:window.__streamVisible,streamEvents:window.__streamEvents,streamErrors:window.__streamErrors,
       transcript:document.querySelector('textarea[aria-label="会议实时转写"]').value})`);
     fs.writeFileSync(path.join(out, 'evidence.json'), JSON.stringify(evidence, null, 2));
+    if(!evidence.streamVisible || evidence.streamErrors.length || !evidence.streamEvents.some(e=>e.type==='agent.delta'))throw Error('Streaming rendering failed: '+JSON.stringify(evidence.streamErrors));
     const second = evidence.responses[1].body.result;
     if (second.status !== 'completed' || second.session_id === first.body.result.session_id || /法定人数|quorum|乐观锁|optimistic locking/i.test(second.text)) throw Error('Explanation isolation failed');
     // ASR may merge the earlier sentences: background can then be in target.
     const request = evidence.requests[0];
-    if (request.focus !== 'recent_window' || !/voting members/i.test(request.target) || !/database changes/i.test(request.preceding_context + request.target) || /holiday|airline|explain this/i.test(request.target) || 'following_context' in request || request.recent_weight !== 5 || request.lookback_seconds !== 90 || !request.preset_prompt.includes('委员会') || !request.focus_points.includes('法定人数') || evidence.requests[1].focus !== 'target') throw Error('Meeting focus/context routing failed');
-    if (!(await run('localStorage.getItem("amadeus.meeting.preferences.v2")')).includes('Ctrl+Shift+KeyJ')) throw Error('Shortcut was not saved');
+    if (request.focus !== 'recent_window' || !/voting members/i.test(request.target) || !/database changes/i.test(request.preceding_context + request.target) || /holiday|airline|explain this/i.test(request.target) || 'following_context' in request || request.recent_weight !== 5 || request.lookback_seconds !== 3600 || request.recent_seconds !== 60 || !request.preset_prompt.includes('委员会') || !request.focus_points.includes('法定人数') || evidence.requests[1].focus !== 'target') throw Error('Meeting focus/context routing failed');
+    if (!(await run('localStorage.getItem("amadeus.meeting.preferences.v3")')).includes('Ctrl+Shift+KeyJ')) throw Error('Shortcut was not saved');
     if (evidence.requests.some(x=>x.context || x.session_id) || evidence.finals || evidence.agentEvents || evidence.tts || evidence.endpointing!=='manual' || !evidence.listening.includes('持续旁听中')) throw Error('Meeting stream/control invariant failed');
     await click('.meeting-assist button', '停止旁听');
     const frames = await run('window.__frames');

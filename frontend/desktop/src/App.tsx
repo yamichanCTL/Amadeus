@@ -70,7 +70,7 @@ export default function App() {
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
 
   useEffect(() => {
-    const openLinkedPage = () => { if (window.location.hash === '#realtime') setPage('realtime') }
+    const openLinkedPage = () => { if (['#realtime', '#meeting'].includes(window.location.hash)) setPage('realtime') }
     openLinkedPage()
     window.addEventListener('hashchange', openLinkedPage)
     return () => window.removeEventListener('hashchange', openLinkedPage)

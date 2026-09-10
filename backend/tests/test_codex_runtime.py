@@ -80,7 +80,7 @@ for line in sys.stdin:
         turn+=1
         text=params['input'][0]['text']
         send({'id':identifier,'result':{'turn':{'id':str(turn)}}})
-        if text=='WAIT': time.sleep(60)
+        if text=='WAIT' or '"target": "MEETING_WAIT"' in text: time.sleep(60)
         if text=='FAIL':
             notification('turn/completed',{'turn':{'id':str(turn),'status':'failed',
                 'error':{'message':'401 private-provider-token private-source-token'}}})
@@ -287,7 +287,7 @@ async def test_meeting_explanations_are_isolated_and_dispose_sessions(runtime):
             {"target": "x", "lookback_seconds": 10, "recent_seconds": 30},
             {"target": "x", "preset_prompt": "字" * 4001},
             {"target": "x", "focus_points": "字" * 2001},
-            {"target": "字" * 12001},
+            {"target": "字" * 96001},
             {"following_context": "后文", "focus": "target"},
         ]:
             rejected = await client.post("/v1/agents/codex/explanations", json=body)
@@ -447,3 +447,46 @@ async def test_ui_persona_context_reaches_codex_with_voice_input(runtime):
     assert "记忆：偏好中文。" in result.text
     assert result.text.endswith("[用户输入]\n这是语音结果")
     assert (await runtime.ledger.summary("ui-context"))["calls"] == 1
+
+
+async def test_meeting_stream_delivers_delta_before_completion_and_cleans_up(runtime):
+    from app.core.codex_meeting import stream_explanation
+    from app.schemas.codex import CodexExplanationRequest
+
+    packets = []
+    async for chunk in stream_explanation(runtime, CodexExplanationRequest(target="流式解释")):
+        if chunk.startswith("data: "):
+            packets.append(json.loads(chunk[6:]))
+    kinds = [packet["type"] for packet in packets]
+    assert kinds.index("agent.delta") < kinds.index("meeting.completed")
+    assert packets[-1]["result"]["status"] == "completed"
+    assert packets[-1]["result"]["usage"]["total_tokens"] > 0
+    assert not runtime._sessions and not runtime._active
+
+
+async def test_meeting_stream_disconnect_cancels_turn_and_disposes_session(runtime):
+    from app.core.codex_meeting import stream_explanation
+    from app.schemas.codex import CodexExplanationRequest
+
+    stream = stream_explanation(runtime, CodexExplanationRequest(target="MEETING_WAIT"))
+    await anext(stream)
+    while True:
+        packet = await asyncio.wait_for(anext(stream), 5)
+        if '"agent.started"' in packet:
+            break
+    assert runtime._active
+    await asyncio.wait_for(stream.aclose(), 5)
+    assert not runtime._sessions and not runtime._active
+    async with runtime.ledger.session_factory() as db:
+        from sqlalchemy import select
+        row = (await db.execute(select(CodexCall))).scalar_one()
+        assert row.status == "cancelled"
+
+
+def test_meeting_contract_accepts_an_hour_and_large_transcript():
+    from app.schemas.codex import CodexExplanationRequest
+    request = CodexExplanationRequest(
+        target="会议原文。" * 15000, recent_excerpt="会议原文。" * 800
+    )
+    assert request.lookback_seconds == 3600 and request.recent_seconds == 60
+    assert len(request.target) > 64000

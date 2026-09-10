@@ -215,8 +215,11 @@ export function RealtimeAgentPage() {
   const codexSessionRef = useRef(crypto.randomUUID())
   const mountedRef = useRef(true)
   const [codexCatalog, setCodexCatalog] = useState<CodexCatalog | null>(null)
-  const [meetingMode, setMeetingMode] = useState(false)
+  const [meetingMode, setMeetingMode] = useState(() => window.location.hash === '#meeting')
   const [meetingBusy, setMeetingBusy] = useState(false)
+  useEffect(() => {
+    if (meetingMode) updateSettings({ agentBackend: 'codex', agentAutoSpeak: false })
+  }, [meetingMode, updateSettings])
   const [codexCatalogError, setCodexCatalogError] = useState('')
   const [codexConnectionRevision, setCodexConnectionRevision] = useState(0)
   const [codexUsage, setCodexUsage] = useState<CodexAccounting | null>(null)
@@ -1429,7 +1432,7 @@ export function RealtimeAgentPage() {
               <h1>实时对话</h1>
               <select aria-label="实时对话模式" value={meetingMode ? 'meeting' : 'chat'} disabled={busy || codexVoiceOpen || meetingBusy} onChange={(event) => {
                 const meeting = event.target.value === 'meeting'
-                if (meeting) updateSettings({ agentBackend: 'codex', agentAutoSpeak: false })
+                window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${meeting ? '#meeting' : '#realtime'}`)
                 setMeetingMode(meeting)
               }}><option value="chat">语音对话</option><option value="meeting">会议旁听与解释</option></select>
               <p>{usingCodex ? `Codex · ${settings.codexModel || '连接中'}` : settings.llmModel || '未选择 LLM 模型'} / {usingCodex ? settings.streamingEngine : settings.offlineEngine}</p>
