@@ -36,7 +36,7 @@
 
 ### 环境要求
 
-- Python 3.10–3.14 与 [uv](https://docs.astral.sh/uv/)
+- Python 3.10+ 与 [uv](https://docs.astral.sh/uv/)
 - Node.js 20+
 - FFmpeg
 - 可选：NVIDIA CUDA（GPU 模型）
