@@ -41,7 +41,7 @@
 - FFmpeg
 - 可选：NVIDIA CUDA（GPU 模型）
 
-模型、CUDA 和第三方源码的详细组合见[环境安装与迁移](doc/asrapp/installation/README.md)。
+模型、CUDA和第三方源码的详细组合见[环境安装与迁移](doc/asrapp/installation/README.md)。
 
 ### 1. 启动后端
 
