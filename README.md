@@ -39,7 +39,6 @@
 - Python 3.10+ 与 [uv](https://docs.astral.sh/uv/)
 - Node.js 20+
 - FFmpeg
-- 可选：NVIDIA CUDA（GPU 模型）
 
 模型、CUDA和第三方源码的详细组合见[环境安装与迁移](doc/asrapp/installation/README.md)。
 
