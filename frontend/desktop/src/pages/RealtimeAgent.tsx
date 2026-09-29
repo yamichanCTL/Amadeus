@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AssistantFigure } from '@/components/AssistantFigure'
+import { Aemeath3D } from '@/components/Aemeath3D'
 import { MeetingAssistPanel } from '@/components/MeetingAssistPanel'
+import { RealtimeVoiceConfig, type RealtimeVoiceCatalog } from '@/components/RealtimeVoiceConfig'
 import { ASRApi, isAsyncResponse, type LLMChatContent, type LLMChatRole, type SkillDefinition, type TranscribeOptions } from '@/services/api'
 import { StreamingASRClient, audioRelayMixer, captureSpeakerAudio, speechRecorder } from '@/services/audio'
 import { useASRStore, type AgentTask, type AgentVoiceMode, type AppPage } from '@/store/useASRStore'
-import { codexRequest, type CodexCatalog, type CodexAccounting, type CodexReply, type CodexVoiceEvent } from '@/services/codex'
+import { codexRequest, streamCodexTurn, type CodexCatalog, type CodexAccounting, type CodexReply, type CodexVoiceEvent } from '@/services/codex'
 import { fillPromptFromAsr } from '@/services/agentPrompt'
+import { LiveVoiceSession, type LiveVoiceCallbacks, type LiveVoiceState } from '@/services/liveVoice'
+import type { LiveAvatarAudioFrame } from '@/services/liveVoiceTypes'
+import { observeAudioElement, silentAvatarAudioFrame } from '@/services/avatarAudio'
+import { RealtimePlayback } from '@/services/realtimePlayback'
 
 type AgentStatus = 'idle' | 'listening' | 'transcribing' | 'thinking' | 'responding' | 'speaking' | 'error'
 type AgentEmotion = 'neutral' | 'happy' | 'curious' | 'focused' | 'surprised' | 'concerned'
@@ -39,6 +44,25 @@ const AGENT_TOOL_PARTIAL_PATTERN = /^\s*\[\[agent_tool[^\]]*$/i
 const agentEmotions: AgentEmotion[] = ['neutral', 'happy', 'curious', 'focused', 'surprised', 'concerned']
 const agentActions: AgentAction[] = ['idle', 'listening', 'thinking', 'speaking', 'observing']
 const agentLocalTools: AgentLocalTool[] = ['open_page', 'remember', 'add_task', 'complete_task', 'speak']
+
+function inferPetGesture(text: string) {
+  if (/(挥手|招手|打招呼|wave\b)/i.test(text)) return 'wave'
+  if (/(跳舞|跳一段|dance\b)/i.test(text)) return 'dance'
+  if (/(向左走|往左走|左移一步)/.test(text)) return 'step_left'
+  if (/(向右走|往右走|右移一步)/.test(text)) return 'step_right'
+  if (/(走近|靠近我|come closer)/i.test(text)) return 'come_closer'
+  if (/(后退|退后|step back)/i.test(text)) return 'step_back'
+  if (/(向左转|左转身)/.test(text)) return 'turn_left'
+  if (/(向右转|右转身)/.test(text)) return 'turn_right'
+  return 'none'
+}
+
+function inferAssistantPetGesture(text: string) {
+  const firstSentence = text.trim().slice(0, 90)
+  if (/^(好[的呀啊]?|当然|没问题)?[，,!！。\s]*(我(现在|来|给你|这就)?|让爱弥斯)(挥手|招手)/.test(firstSentence)) return 'wave'
+  if (/^(好[的呀啊]?|当然|没问题)?[，,!！。\s]*(我(现在|来|给你|这就)?|让爱弥斯)(跳舞|跳一段)/.test(firstSentence)) return 'dance'
+  return 'none'
+}
 const toolPages: AppPage[] = ['home', 'realtime', 'transcribe', 'history', 'summary', 'models', 'settings', 'voice']
 
 function createTask(text: string): AgentTask {
@@ -187,6 +211,8 @@ async function captureScreenFrame() {
 
 export function RealtimeAgentPage() {
   const settings = useASRStore((state) => state.settings)
+  const petCommand = useASRStore((state) => state.petCommand)
+  const setPetCommand = useASRStore((state) => state.setPetCommand)
   const models = useASRStore((state) => state.models)
   const serverStatus = useASRStore((state) => state.serverStatus)
   const liveCaptionStatus = useASRStore((state) => state.liveCaptionStatus)
@@ -197,12 +223,23 @@ export function RealtimeAgentPage() {
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
   const recorderRef = useRef(speechRecorder)
   const handsFreeStreamerRef = useRef<StreamingASRClient | null>(null)
+  const liveVoiceRef = useRef<LiveVoiceSession | null>(null)
+  const liveGenerationRef = useRef(0)
+  const liveMessageRef = useRef<{ user: { id: string; at: number }; assistant: { id: string; at: number } }>({ user: { id: '', at: 0 }, assistant: { id: '', at: 0 } })
   const speechQueueRef = useRef<string[]>([])
   const speechBufferRef = useRef('')
   const speakingRef = useRef(false)
   const speechGenerationRef = useRef(0)
   const responseActiveRef = useRef(false)
   const currentAudioRef = useRef<HTMLAudioElement | null>(null)
+  const avatarAudioFrameRef = useRef<LiveAvatarAudioFrame | null>(null)
+  const avatarGenerationRef = useRef(0)
+  const avatarEpochRef = useRef(Date.now())
+  const avatarObserverRef = useRef<(() => void) | null>(null)
+  const previewPlaybackRef = useRef<RealtimePlayback | null>(null)
+  const previewAbortRef = useRef<AbortController | null>(null)
+  const [previewPlaying, setPreviewPlaying] = useState(false)
+  const [avatarView, setAvatarView] = useState<'portrait' | 'full'>('portrait')
   const currentAudioUrlRef = useRef('')
   const relaySpeechTimerRef = useRef<number | null>(null)
   const streamAbortRef = useRef<AbortController | null>(null)
@@ -226,6 +263,9 @@ export function RealtimeAgentPage() {
   const [codexTotal, setCodexTotal] = useState<CodexAccounting | null>(null)
   const [codexPending, setCodexPending] = useState(false)
   const [voiceDraining, setVoiceDraining] = useState(false)
+  const [liveVoiceState, setLiveVoiceState] = useState<LiveVoiceState>('closed')
+  const [liveCatalog, setLiveCatalog] = useState<RealtimeVoiceCatalog | null>(null)
+  const [liveCapture, setLiveCapture] = useState<{ level: number; seconds: number; serverSeconds?: number } | null>(null)
   const [partialTranscript, setPartialTranscript] = useState('')
   const [aecStatus, setAecStatus] = useState('')
   const [status, setStatus] = useState<AgentStatus>('idle')
@@ -233,6 +273,7 @@ export function RealtimeAgentPage() {
     createMessage('assistant', '我在。点击语音或直接输入，我们可以开始对话。')
   ])
   const messagesRef = useRef<AgentMessage[]>(messages)
+  const petReplyIdRef = useRef('')
   const [draft, setDraft] = useState('')
   const [error, setError] = useState('')
   const [lastTranscript, setLastTranscript] = useState('')
@@ -258,6 +299,146 @@ export function RealtimeAgentPage() {
   const busy = codexPending || voiceDraining || status === 'listening' || status === 'transcribing' || status === 'thinking' || status === 'responding'
   const voiceBlocked = status === 'listening' || status === 'transcribing' || status === 'thinking'
   const agentAction = statusAction(status) || agentDirectedAction
+  const liveSelected = settings.agentRealtimeProvider !== 'off'
+  const selectedLiveProvider = liveCatalog?.providers.find((provider) => provider.id === settings.agentRealtimeProvider)
+  const selectedLiveProviderReady = Boolean(selectedLiveProvider?.available)
+  const liveActive = liveVoiceState !== 'closed' && liveVoiceState !== 'error'
+  const visualStatus: AgentStatus = liveActive
+    ? liveVoiceState === 'speaking' ? 'speaking' : liveVoiceState === 'working' ? 'thinking' : 'listening'
+    : previewPlaying ? 'speaking' : status
+
+  function publishAvatarFrame(frame: LiveAvatarAudioFrame) {
+    avatarAudioFrameRef.current = frame
+    window.electronAPI?.publishPetAudioFrame?.(frame)
+  }
+
+  function clearAvatarOutput(invalidate = true) {
+    if (invalidate) avatarGenerationRef.current += 1
+    avatarEpochRef.current = Math.max(Date.now(), avatarEpochRef.current + 1)
+    publishAvatarFrame(silentAvatarAudioFrame(avatarEpochRef.current))
+  }
+
+  function beginAvatarOutput() {
+    clearAvatarOutput()
+    const generation = avatarGenerationRef.current
+    let localEpoch = -1
+    let wireEpoch = avatarEpochRef.current
+    return (frame: LiveAvatarAudioFrame) => {
+      if (!mountedRef.current || generation !== avatarGenerationRef.current || frame.epoch < localEpoch) return
+      if (frame.epoch !== localEpoch || wireEpoch < avatarEpochRef.current) {
+        localEpoch = frame.epoch
+        wireEpoch = avatarEpochRef.current = Math.max(Date.now(), avatarEpochRef.current + 1)
+      }
+      publishAvatarFrame({ ...frame, epoch: wireEpoch })
+    }
+  }
+
+  function cancelAvatarPreview() {
+    previewAbortRef.current?.abort()
+    previewAbortRef.current = null
+    const playback = previewPlaybackRef.current
+    previewPlaybackRef.current = null
+    playback?.close()
+    clearAvatarOutput()
+    setPreviewPlaying(false)
+  }
+
+  async function toggleAvatarPreview() {
+    if (previewAbortRef.current || previewPlaybackRef.current) { cancelAvatarPreview(); return }
+    const abort = new AbortController()
+    previewAbortRef.current = abort
+    const onFrame = beginAvatarOutput()
+    let enqueueing = true
+    let playback: RealtimePlayback
+    const finish = () => {
+      if (!mountedRef.current || previewPlaybackRef.current !== playback) return
+      previewPlaybackRef.current = null
+      previewAbortRef.current = null
+      playback.close()
+      clearAvatarOutput()
+      setPreviewPlaying(false)
+    }
+    playback = new RealtimePlayback(() => {
+      if (!enqueueing && !playback.active) finish()
+    }, (cause) => {
+      setError(cause instanceof Error ? cause.message : '试听播放失败')
+      finish()
+    }, settings.audioOutputDeviceId || undefined, onFrame)
+    previewPlaybackRef.current = playback
+    setPreviewPlaying(true)
+    try {
+      const response = await fetch(new URL('./pet/speech-preview.pcm', window.location.href), { signal: abort.signal })
+      if (!response.ok) throw new Error('试听音频未找到，请重新构建桌面端')
+      const bytes = new Uint8Array(await response.arrayBuffer())
+      if (!bytes.length || bytes.length % 2) throw new Error('试听音频格式不正确')
+      // Same 24kHz PCM path as a streaming provider, without an API request.
+      for (let offset = 0; offset < bytes.length && !abort.signal.aborted; offset += 4800) {
+        const chunk = bytes.subarray(offset, offset + 4800)
+        await playback.play(btoa(String.fromCharCode(...chunk)), 'local-avatar-preview')
+      }
+      enqueueing = false
+      if (!playback.active) finish()
+    } catch (cause) {
+      if (!abort.signal.aborted) setError(cause instanceof Error ? cause.message : '试听播放失败')
+      finish()
+    }
+  }
+
+  useEffect(() => {
+    // A settings change must not leave a microphone streaming to the former
+    // backend/provider. AudioRecorder.cancel invalidates pending preparation.
+    if (settings.agentRealtimeProvider !== 'off') recorderRef.current.cancel()
+    if (!liveVoiceRef.current) return
+    liveGenerationRef.current += 1
+    liveVoiceRef.current.stop()
+    liveVoiceRef.current = null
+    clearAvatarOutput()
+    setLiveVoiceState('closed'); setLiveCapture(null); setPartialTranscript('')
+  }, [settings.serverUrl, settings.agentRealtimeProvider])
+
+  useEffect(() => {
+    if (!settings.agentPetEnabled || !window.electronAPI) return
+    const lastUser = [...messages].reverse().find((message) => message.role === 'user' && message.kind !== 'tool')
+    const lastAssistant = [...messages].reverse().find((message) => message.role === 'assistant')
+    const assistantGesture = lastAssistant && messages.length > 1 && !responseActiveRef.current
+      ? inferAssistantPetGesture(lastAssistant.content) : 'none'
+    const gesture = assistantGesture !== 'none' ? assistantGesture : lastUser ? inferPetGesture(lastUser.content) : 'none'
+    const gestureId = assistantGesture !== 'none' ? lastAssistant?.id || '' : lastUser?.id || ''
+    let reply = ''
+    if (lastAssistant && messages.length > 1 && !responseActiveRef.current
+      && lastAssistant.content && petReplyIdRef.current !== lastAssistant.id) {
+      reply = lastAssistant.content.slice(0, 240)
+      petReplyIdRef.current = lastAssistant.id
+    }
+    const petStatus = liveActive ? visualStatus : status === 'idle' && handsFreeStatus === 'listening' ? 'listening'
+      : status === 'idle' && handsFreeStatus === 'transcribing' ? 'transcribing' : status
+    window.electronAPI.publishPetState({ status: petStatus, emotion: agentEmotion, action: agentAction,
+      reply, error, gesture, gestureId: gesture === 'none' ? '' : gestureId })
+  }, [settings.agentPetEnabled, status, handsFreeStatus, agentEmotion, agentAction, messages, error, liveActive, visualStatus])
+
+  useEffect(() => () => {
+    liveGenerationRef.current += 1
+    liveVoiceRef.current?.stop()
+    liveVoiceRef.current = null
+    const previewAbort = previewAbortRef.current
+    const previewPlayback = previewPlaybackRef.current
+    previewAbortRef.current = null
+    previewPlaybackRef.current = null
+    previewAbort?.abort()
+    previewPlayback?.close()
+    speechGenerationRef.current += 1
+    if (currentAudioRef.current) {
+      currentAudioRef.current.onended = null
+      currentAudioRef.current.onerror = null
+      currentAudioRef.current.pause()
+      currentAudioRef.current = null
+    }
+    if (currentAudioUrlRef.current) URL.revokeObjectURL(currentAudioUrlRef.current)
+    currentAudioUrlRef.current = ''
+    avatarObserverRef.current?.()
+    clearAvatarOutput()
+    window.electronAPI?.publishPetState({ status: 'idle', emotion: 'neutral', action: 'idle', reply: '', error: '', gesture: 'none', gestureId: '' })
+  }, [])
   const openTasks = useMemo(() => settings.agentTasks.filter((task) => task.status === 'open'), [settings.agentTasks])
   const doneTasks = useMemo(() => settings.agentTasks.filter((task) => task.status === 'done'), [settings.agentTasks])
   const loadedModels = useMemo(() => models.filter((model) => model.is_loaded).map((model) => model.engine), [models])
@@ -450,7 +631,7 @@ export function RealtimeAgentPage() {
       recorderRef.current.cancel()
       const latest = useASRStore.getState().settings
       const useSpeaker = latest.inputSource === 'speaker' || latest.audioInputDeviceId === '__speaker_loopback__'
-      if (!latest.audioRelayEnabled && !useSpeaker) void recorderRef.current.prepare(latest.audioInputDeviceId || undefined).catch(() => undefined)
+      if (latest.agentRealtimeProvider === 'off' && !latest.audioRelayEnabled && !useSpeaker) void recorderRef.current.prepare(latest.audioInputDeviceId || undefined).catch(() => undefined)
     }
   }, [])
 
@@ -483,6 +664,9 @@ export function RealtimeAgentPage() {
     speechQueueRef.current = []
     speechBufferRef.current = ''
     speakingRef.current = false
+    avatarObserverRef.current?.()
+    avatarObserverRef.current = null
+    if (!liveVoiceRef.current && !previewPlaybackRef.current) clearAvatarOutput()
     responseActiveRef.current = false
     if (currentAudioRef.current) {
       currentAudioRef.current.onended = null
@@ -514,6 +698,8 @@ export function RealtimeAgentPage() {
   }
 
   const finishSpeechItem = () => {
+    avatarObserverRef.current?.()
+    avatarObserverRef.current = null
     speakingRef.current = false
     void pumpSpeechQueue()
     if (!speechQueueRef.current.length && !responseActiveRef.current) setStatus('idle')
@@ -552,9 +738,12 @@ export function RealtimeAgentPage() {
     currentAudioUrlRef.current = url
     const audio = new Audio(url)
     currentAudioRef.current = audio
+    avatarObserverRef.current?.()
+    avatarObserverRef.current = observeAudioElement(audio, beginAvatarOutput())
     const finish = () => {
       URL.revokeObjectURL(url)
       if (currentAudioUrlRef.current === url) currentAudioUrlRef.current = ''
+      if (!canPlay() || currentAudioRef.current !== audio) return
       currentAudioRef.current = null
       finishSpeechItem()
     }
@@ -900,6 +1089,13 @@ export function RealtimeAgentPage() {
 
   const sendToAgent = async (text: string) => {
     const cleanText = text.trim()
+    if (liveSelected) {
+      if (!cleanText) return
+      if (!liveVoiceRef.current || !liveActive || liveVoiceState === 'connecting') { setError('请先开始所选模型的全双工会话'); return }
+      try { liveVoiceRef.current.sendText(cleanText); setDraft(''); setError('') }
+      catch (cause) { setError(cause instanceof Error ? cause.message : '实时消息发送失败') }
+      return
+    }
     if (!cleanText || (usingCodex && (responseActiveRef.current || codexPending || codexVoiceOpen))) return
     if (!canChat) {
       setError(usingCodex ? '请先确认后端地址并连接 Codex' : '请先在模型管理中填写 LLM 接口、模型和 API Token')
@@ -932,15 +1128,22 @@ export function RealtimeAgentPage() {
       if (usingCodex) {
         setCodexPending(true)
         try {
-          const result = await codexRequest<CodexReply>(settings.serverUrl, '/turns', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
-            body: JSON.stringify({ ...codexOptions(), text: cleanText }),
+          const result = await streamCodexTurn(settings.serverUrl, { ...codexOptions(), text: cleanText }, controller.signal, (event) => {
+            if (turnId !== turnIdRef.current || event.type !== 'agent.delta') return
+            streamedText += event.text || ''
+            speechBufferRef.current += event.text || ''
+            flushSpeechBuffer(false)
+            setMessages((current) => {
+              const updated = current.map((message) => message.id === assistantMessage.id ? { ...message, content: streamedText } : message)
+              messagesRef.current = updated
+              return updated
+            })
           })
           if (turnId !== turnIdRef.current || !mountedRef.current) return
           applyCodexReply(result, assistantMessage.id)
           responseActiveRef.current = false
           streamAbortRef.current = null
-          if (result.status === 'completed') { speechBufferRef.current = result.text; flushSpeechBuffer(true) }
+          if (result.status === 'completed') { if (!streamedText) speechBufferRef.current = result.text; flushSpeechBuffer(true) }
           if (!speakingRef.current) setStatus(result.status === 'completed' ? 'idle' : 'error')
         } finally { if (mountedRef.current && turnId === turnIdRef.current) setCodexPending(false) }
         return
@@ -1032,7 +1235,7 @@ export function RealtimeAgentPage() {
   }, [sendToAgent])
 
   useEffect(() => {
-    if (meetingMode || !settings.agentProactive || !canChat) {
+    if (meetingMode || liveSelected || !settings.agentProactive || !canChat) {
       setProactiveStatus('idle')
       proactiveLastAtRef.current = 0
       return
@@ -1065,7 +1268,7 @@ export function RealtimeAgentPage() {
       window.clearInterval(timer)
       window.clearTimeout(statusTimer)
     }
-  }, [settings.agentProactive, settings.agentProactiveIntervalMin, canChat, meetingMode])
+  }, [settings.agentProactive, settings.agentProactiveIntervalMin, canChat, meetingMode, liveSelected])
 
   const inspectScreen = async () => {
     if (!canChat) {
@@ -1216,21 +1419,25 @@ export function RealtimeAgentPage() {
     try {
       const response = await api.transcribe(blob, `agent_voice_${Date.now()}.webm`, buildOptions())
       const result = isAsyncResponse(response) ? await pollTask(response.task_id) : response
+      if (!mountedRef.current || useASRStore.getState().settings.agentRealtimeProvider !== 'off') return
       const text = result.full_text.trim()
       setLastTranscript(text)
       setStatus('idle')
       if (usingCodex && text) await sendToAgentRef.current(text)
       else setDraft((current) => fillPromptFromAsr(current, text))
     } catch (voiceError) {
+      if (!mountedRef.current || useASRStore.getState().settings.agentRealtimeProvider !== 'off') return
       setError(voiceError instanceof Error ? voiceError.message : '语音识别失败')
       setStatus('error')
     } finally {
-      const useSpeaker = settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__'
-      if (!audioRelayMixer.isActive() && !useSpeaker) void recorderRef.current.prepare(settings.audioInputDeviceId || undefined).catch(() => undefined)
+      const latest = useASRStore.getState().settings
+      const useSpeaker = latest.inputSource === 'speaker' || latest.audioInputDeviceId === '__speaker_loopback__'
+      if (latest.agentRealtimeProvider === 'off' && !audioRelayMixer.isActive() && !useSpeaker) void recorderRef.current.prepare(latest.audioInputDeviceId || undefined).catch(() => undefined)
     }
   }
 
   const toggleHandsFree = async () => {
+    if (useASRStore.getState().settings.agentRealtimeProvider !== 'off') return
     if (handsFreeStreamerRef.current) {
       if (usingCodex) {
         setVoiceDraining(true)
@@ -1241,8 +1448,9 @@ export function RealtimeAgentPage() {
       handsFreeStreamerRef.current = null
       updateSettings({ agentHandsFree: false })
       setHandsFreeStatus('idle')
-      const useSpeaker = settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__'
-      if (!audioRelayMixer.isActive() && !useSpeaker) void recorderRef.current.prepare(settings.audioInputDeviceId || undefined).catch(() => undefined)
+      const latest = useASRStore.getState().settings
+      const useSpeaker = latest.inputSource === 'speaker' || latest.audioInputDeviceId === '__speaker_loopback__'
+      if (latest.agentRealtimeProvider === 'off' && !audioRelayMixer.isActive() && !useSpeaker) void recorderRef.current.prepare(latest.audioInputDeviceId || undefined).catch(() => undefined)
       return
     }
     if (usingCodex ? !canChat || responseActiveRef.current || codexPending : status !== 'idle') return
@@ -1301,8 +1509,9 @@ export function RealtimeAgentPage() {
           handsFreeStreamerRef.current = null
           updateSettings({ agentHandsFree: false })
           setHandsFreeStatus('idle')
-          const useSpeaker = settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__'
-          if (!audioRelayMixer.isActive() && !useSpeaker) void recorderRef.current.prepare(settings.audioInputDeviceId || undefined).catch(() => undefined)
+          const latest = useASRStore.getState().settings
+          const useSpeaker = latest.inputSource === 'speaker' || latest.audioInputDeviceId === '__speaker_loopback__'
+          if (latest.agentRealtimeProvider === 'off' && !audioRelayMixer.isActive() && !useSpeaker) void recorderRef.current.prepare(latest.audioInputDeviceId || undefined).catch(() => undefined)
         }
       })
       handsFreeStreamerRef.current = streamer
@@ -1330,8 +1539,14 @@ export function RealtimeAgentPage() {
           if (state.mode === 'unavailable' || state.mode === 'unknown') updateSettings({ agentAutoSpeak: false })
         }, endpointing: 'manual' as const, agent: { enabled: true, ...codexOptions() }, onAgentEvent: (event: CodexVoiceEvent) => { if (handsFreeStreamerRef.current === streamer) handleCodexVoice(event) } } : {}),
       })
+      if (!mountedRef.current || useASRStore.getState().settings.agentRealtimeProvider !== 'off' || handsFreeStreamerRef.current !== streamer) {
+        streamer.stop()
+        if (handsFreeStreamerRef.current === streamer) handsFreeStreamerRef.current = null
+        return
+      }
       updateSettings({ agentHandsFree: true })
     } catch (handsFreeError) {
+      if (!mountedRef.current || useASRStore.getState().settings.agentRealtimeProvider !== 'off') return
       handsFreeStreamerRef.current = null
       updateSettings({ agentHandsFree: false })
       setHandsFreeStatus('error')
@@ -1340,8 +1555,137 @@ export function RealtimeAgentPage() {
     }
   }
 
+  const appendLiveTranscript = (role: 'user' | 'assistant', delta: string) => {
+    const now = Date.now()
+    const slot = liveMessageRef.current[role]
+    if (!slot.id || now - slot.at > 1800) slot.id = `${role}_live_${now}_${Math.random().toString(36).slice(2, 7)}`
+    slot.at = now
+    setMessages((current) => {
+      const existing = current.some((message) => message.id === slot.id)
+      const updated = existing
+        ? current.map((message) => message.id === slot.id ? { ...message, content: message.content + delta } : message)
+        : [...current, { ...createMessage(role, delta), id: slot.id }]
+      messagesRef.current = updated
+      return updated
+    })
+    if (role === 'user') setLastTranscript((current) => (current + delta).slice(-500))
+  }
+
+  const toggleLiveVoice = async () => {
+    if (previewAbortRef.current || previewPlaybackRef.current) cancelAvatarPreview()
+    if (liveVoiceRef.current) {
+      liveGenerationRef.current += 1
+      liveVoiceRef.current.stop(); liveVoiceRef.current = null
+      clearAvatarOutput()
+      setLiveVoiceState('closed'); setLiveCapture(null); setPartialTranscript('')
+      return
+    }
+    const provider = settings.agentRealtimeProvider
+    if (provider === 'off') return
+    if (!backendReady) { setError('请先在设置中确认本机后端地址'); return }
+    if (!selectedLiveProviderReady) {
+      setError(selectedLiveProvider?.unavailable_reason || '所选实时模型尚不可用，请检查服务商配置。')
+      return
+    }
+    handsFreeStreamerRef.current?.stop()
+    handsFreeStreamerRef.current = null
+    recorderRef.current.cancel()
+    setHandsFreeStatus('idle')
+    interruptActiveTurn()
+    setStatus('idle')
+    const generation = ++liveGenerationRef.current
+    const currentSession = () => generation === liveGenerationRef.current && mountedRef.current
+    const onAvatarFrame = beginAvatarOutput()
+    const callbacks: LiveVoiceCallbacks = {
+      onAvatarAudioFrame: (frame) => { if (currentSession()) onAvatarFrame(frame) },
+      onState: (state) => {
+        if (!currentSession()) return
+        setLiveVoiceState(state)
+        if (state === 'closed' || state === 'error') { liveVoiceRef.current = null; clearAvatarOutput(); setLiveCapture(null); setPartialTranscript('') }
+      },
+      onTranscript: (role, delta) => { if (currentSession()) appendLiveTranscript(role, delta) },
+      onTranscriptItem: ({ role, text, id, final }) => {
+        if (!currentSession()) return
+        const messageId = `live_${generation}_${role}_${id}`
+        setMessages((current) => {
+          const next = current.some((message) => message.id === messageId)
+            ? current.map((message) => message.id === messageId ? { ...message, content: text } : message)
+            : [...current, { ...createMessage(role, text), id: messageId }]
+          messagesRef.current = next
+          return next
+        })
+        if (role === 'user') { setLastTranscript(text); setPartialTranscript(final ? '' : text) }
+      },
+      onCapture: (capture) => { if (currentSession()) setLiveCapture(capture) },
+      onTool: ({ name, result }) => {
+        if (!currentSession()) return
+        const label = `${name}：${typeof result === 'string' ? result : JSON.stringify(result)}`
+        setToolLog((current) => [{ id: crypto.randomUUID(), label, createdAt: new Date().toISOString() }, ...current].slice(0, 20))
+      },
+      onError: (message) => { if (currentSession()) setError(message) },
+      onDelegate: async (task) => {
+        if (!currentSession()) throw new Error('语音会话已结束')
+        setCodexPending(true)
+        try {
+          const current = settingsRef.current
+          const allowWork = current.agentWorkMode && window.confirm(
+            `允许 Codex 执行以下后台任务吗？\n\n${task.slice(0, 800)}\n\n执行时将使用当前 Windows 用户权限，可运行命令并读写本机文件。请只批准明确任务；取消后仅进行分析。`
+          )
+          const workToken = allowWork ? await window.electronAPI?.getWorkToken() : ''
+          if (allowWork && !workToken) throw new Error('桌面端未取得本机任务授权令牌，请重启后端和桌面端')
+          const result = await codexRequest<CodexReply>(current.serverUrl, '/turns', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', ...(workToken ? { 'X-Amadeus-Work-Token': workToken } : {}) },
+            body: JSON.stringify({
+              session_id: codexSessionRef.current,
+              model: current.codexModel || undefined,
+              effort: current.codexEffort,
+              allow_work: allowWork,
+              context: [current.agentPrompt, current.agentMemory ? `长期记忆：\n${current.agentMemory}` : '',
+                '你在为爱弥斯实时语音会话处理一项后台任务。请给出准确结果和当前完成状态。'].filter(Boolean).join('\n\n').slice(0, 16000),
+              text: task.slice(0, 12000),
+            }),
+          })
+          if (!currentSession()) throw new Error('语音会话已结束')
+          if (result.status !== 'completed') throw new Error(result.error || 'Codex 任务未完成')
+          setMessages((messages) => [...messages, createToolMessage(`Codex 已完成后台任务：${result.text.slice(0, 500)}`)])
+          void refreshCodexUsage().catch(() => {})
+          return result.text
+        } finally { if (currentSession()) setCodexPending(false) }
+      },
+    }
+    const options = settings.agentRealtimeOptions?.[provider] || {}
+    const voice = selectedLiveProvider?.voices.some((item) => item.id === options.voice) ? options.voice : selectedLiveProvider?.default_voice
+    const instructions = [settings.agentPrompt, settings.agentMemory ? `长期记忆：\n${settings.agentMemory}` : ''].filter(Boolean).join('\n\n')
+    const session = new LiveVoiceSession(settings.serverUrl, provider, instructions, callbacks, {
+      voice: voice || undefined,
+      brain: provider === 'qwen' && liveCatalog?.brain_available ? options.brain || 'off' : 'off',
+      reasoning: provider === 'gemini_thinking' ? options.reasoning || 'low' : options.reasoning || 'high',
+      outputDeviceId: settings.audioOutputDeviceId || undefined,
+    })
+    liveVoiceRef.current = session
+    setError('')
+    setLastTranscript('')
+    setPartialTranscript(''); setLiveCapture(null)
+    liveMessageRef.current = { user: { id: '', at: 0 }, assistant: { id: '', at: 0 } }
+    try { await session.start(settings.audioInputDeviceId || undefined) }
+    catch (cause) {
+      if (!currentSession()) return
+      liveGenerationRef.current += 1
+      session.stop()
+      if (liveVoiceRef.current === session) liveVoiceRef.current = null
+      setLiveVoiceState('error')
+      setError(cause instanceof Error ? cause.message : '实时语音启动失败')
+    }
+  }
+
   const toggleVoice = async () => {
+    if (liveSelected) { await toggleLiveVoice(); return }
     if (usingCodex) {
+      if (!canChat && !codexVoiceOpen) {
+        setError('请先确认后端地址并连接 Codex')
+        setStatus('error')
+        return
+      }
       if (!voiceDraining) await toggleHandsFree()
       return
     }
@@ -1373,7 +1717,20 @@ export function RealtimeAgentPage() {
     setError('')
   }
 
+  useEffect(() => {
+    if (!petCommand) return
+    setPetCommand(null)
+    if (meetingMode && petCommand.type !== 'open') {
+      setMeetingMode(false)
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#realtime`)
+    }
+    if (petCommand.type === 'voice') void toggleVoice()
+    if (petCommand.type === 'text' && petCommand.text?.trim()) void sendToAgentRef.current(petCommand.text)
+  }, [petCommand, setPetCommand, meetingMode])
+
   const stopSpeech = async () => {
+    if (previewAbortRef.current || previewPlaybackRef.current) cancelAvatarPreview()
+    if (liveVoiceRef.current) { liveVoiceRef.current.interrupt(); clearAvatarOutput(false); return }
     interruptActiveTurn()
     if (usingCodex) {
       setCodexPending(true)
@@ -1386,11 +1743,17 @@ export function RealtimeAgentPage() {
   }
 
   const resetConversation = async () => {
+    cancelAvatarPreview()
     interruptActiveTurn()
+    liveGenerationRef.current += 1
+    liveVoiceRef.current?.stop()
+    liveVoiceRef.current = null
+    setLiveVoiceState('closed'); setLiveCapture(null); setPartialTranscript(''); setCodexPending(false)
+    liveMessageRef.current = { user: { id: '', at: 0 }, assistant: { id: '', at: 0 } }
     handsFreeStreamerRef.current?.stop()
     handsFreeStreamerRef.current = null
     setHandsFreeStatus('idle'); setVoiceDraining(false)
-    if (usingCodex && backendReady) {
+    if (usingCodex && backendReady && !liveSelected) {
       setCodexPending(true)
       try { await codexRequest(settings.serverUrl, `/sessions/${codexSessionRef.current}`, { method: 'DELETE' }) }
       catch (cause) { setError(cause instanceof Error ? cause.message : '清空失败'); setCodexPending(false); return }
@@ -1415,10 +1778,14 @@ export function RealtimeAgentPage() {
     <div className="page realtime-agent-page">
       <section className="agent-stage">
         <div className="agent-visual" data-emotion={agentEmotion} data-action={agentAction}>
-          <AssistantFigure className="agent-figure" emotion={agentEmotion} action={agentAction} />
-          <div className={`agent-status ${status}`}>
+          <Aemeath3D status={visualStatus} emotion={agentEmotion} action={agentAction} gesture={inferPetGesture(lastTranscript)} audioFrameRef={avatarAudioFrameRef} view={avatarView} />
+          <div className="agent-avatar-controls">
+            <button type="button" onClick={() => setAvatarView((view) => view === 'portrait' ? 'full' : 'portrait')}>{avatarView === 'portrait' ? '全身视角' : '半身视角'}</button>
+            <button type="button" disabled={liveActive || (!previewPlaying && (busy || speakingRef.current))} onClick={() => void toggleAvatarPreview()} title="播放本地测试语音，不调用在线模型">{previewPlaying ? '停止试听' : '试听口型'}</button>
+          </div>
+          <div className={`agent-status ${visualStatus}`}>
             <span className="mini-wave" aria-hidden="true" />
-            <strong>{statusLabel(status)}</strong>
+            <strong>{liveVoiceState === 'connecting' ? '连接实时语音' : liveVoiceState === 'working' ? '后台任务中' : statusLabel(visualStatus)}</strong>
           </div>
           <div className="agent-presence">
             <span>{emotionLabel(agentEmotion)}</span>
@@ -1430,21 +1797,21 @@ export function RealtimeAgentPage() {
           <div className="section-head compact">
             <div>
               <h1>实时对话</h1>
-              <select aria-label="实时对话模式" value={meetingMode ? 'meeting' : 'chat'} disabled={busy || codexVoiceOpen || meetingBusy} onChange={(event) => {
+              <select aria-label="实时对话模式" value={meetingMode ? 'meeting' : 'chat'} disabled={busy || codexVoiceOpen || meetingBusy || liveActive} onChange={(event) => {
                 const meeting = event.target.value === 'meeting'
                 window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${meeting ? '#meeting' : '#realtime'}`)
                 setMeetingMode(meeting)
               }}><option value="chat">语音对话</option><option value="meeting">会议旁听与解释</option></select>
-              <p>{usingCodex ? `Codex · ${settings.codexModel || '连接中'}` : settings.llmModel || '未选择 LLM 模型'} / {usingCodex ? settings.streamingEngine : settings.offlineEngine}</p>
+              <p>{liveSelected ? `${selectedLiveProvider?.label || settings.agentRealtimeProvider} · ${selectedLiveProvider?.model || '读取配置中'}` : `${usingCodex ? `Codex · ${settings.codexModel || '连接中'}` : settings.llmModel || '未选择 LLM 模型'} / ${usingCodex ? settings.streamingEngine : settings.offlineEngine}`}</p>
             </div>
             {!meetingMode && <div className="agent-actions">
-              <button type="button" onClick={() => void inspectScreen()} disabled={busy || !legacyReady || usingCodex} title={usingCodex ? '屏幕观察暂需切换到原有 Agent' : undefined}>
+              <button type="button" onClick={() => void inspectScreen()} disabled={busy || !legacyReady || usingCodex || liveSelected} title={usingCodex ? '屏幕观察暂需切换到原有 Agent' : undefined}>
                 看屏幕
               </button>
-              <button type="button" onClick={() => void sendToAgent('根据你当前可见的本地上下文，简要说明你现在知道哪些状态。')} disabled={busy}>
+              <button type="button" onClick={() => void sendToAgent('根据你当前可见的本地上下文，简要说明你现在知道哪些状态。')} disabled={liveSelected ? !liveActive || liveVoiceState === 'connecting' : busy}>
                 读状态
               </button>
-              <button type="button" onClick={() => void stopSpeech()} disabled={status !== 'speaking' && !codexPending}>{codexPending ? '取消回答' : '停止朗读'}</button>
+              <button type="button" onClick={() => void stopSpeech()} disabled={liveSelected ? !liveActive || liveVoiceState === 'connecting' : status !== 'speaking' && !codexPending}>{!liveSelected && codexPending ? '取消回答' : '停止朗读'}</button>
               <button type="button" onClick={() => void resetConversation()} disabled={voiceDraining}>清空</button>
             </div>}
           </div>
@@ -1453,7 +1820,7 @@ export function RealtimeAgentPage() {
           <div className="agent-messages">
             {messages.map((message) => (
               <article key={message.id} className={`agent-message ${message.kind === 'tool' ? 'tool' : message.role}`}>
-                <strong>{message.kind === 'tool' ? '工具' : message.role === 'user' ? '你' : usingCodex ? 'Codex' : 'Agent'}</strong>
+                <strong>{message.kind === 'tool' ? '工具' : message.role === 'user' ? '你' : liveSelected ? '艾米斯' : usingCodex ? 'Codex' : 'Agent'}</strong>
                 <p>{message.content || '...'}</p>
                 {message.codex && <small>{message.codex.model} · {message.codex.elapsed_sec.toFixed(1)} 秒 · {message.codex.usage ? `${message.codex.usage.total_tokens.toLocaleString()} tokens` : '用量暂不可用'}</small>}
               </article>
@@ -1461,24 +1828,25 @@ export function RealtimeAgentPage() {
           </div>
 
           <div className="agent-input-row">
-            <button type="button" className={(usingCodex ? codexVoiceOpen && !voiceDraining : status === 'listening') ? 'primary record-button recording' : 'record-button'} onClick={() => void toggleVoice()} disabled={usingCodex && (!canChat || voiceDraining || (!codexVoiceOpen && busy))}>
+            <button type="button" className={(liveSelected ? liveActive : usingCodex ? codexVoiceOpen && !voiceDraining : status === 'listening') ? 'primary record-button recording' : 'record-button'} onClick={() => void toggleVoice()} disabled={liveSelected ? liveVoiceState === 'connecting' || (!liveActive && !selectedLiveProviderReady) : usingCodex && (!canChat || voiceDraining || (!codexVoiceOpen && busy))}>
               <span aria-hidden="true">●</span>
-              {usingCodex ? voiceDraining ? '完成回答中' : codexVoiceOpen ? '结束语音' : '语音' : status === 'listening' ? '结束语音' : status === 'responding' || status === 'speaking' ? '打断' : '语音'}
+              {liveSelected ? liveActive ? '结束全双工' : '开始全双工' : usingCodex ? voiceDraining ? '完成回答中' : codexVoiceOpen ? '结束语音' : '语音' : status === 'listening' ? '结束语音' : status === 'responding' || status === 'speaking' ? '打断' : '语音'}
             </button>
             <input
               value={draft}
               aria-label="对话消息"
-              maxLength={12000}
-              disabled={usingCodex && (busy || codexVoiceOpen)}
-              placeholder={usingCodex ? '输入消息，或点击语音直接与 Codex 对话' : '输入消息，或点击语音自动填入 ASR 结果'}
+              maxLength={liveSelected ? 2000 : 12000}
+              disabled={liveSelected ? liveVoiceState === 'connecting' : usingCodex && (busy || codexVoiceOpen)}
+              placeholder={liveSelected ? '开始全双工后，也可在此发送文字消息' : usingCodex ? '输入消息，或点击语音直接与 Codex 对话' : '输入消息，或点击语音自动填入 ASR 结果'}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.nativeEvent.isComposing && !busy) void sendToAgent(draft)
+                if (event.key === 'Enter' && !event.nativeEvent.isComposing && (liveSelected ? liveActive && liveVoiceState !== 'connecting' : !busy)) void sendToAgent(draft)
               }}
             />
-            <button type="button" className="primary" disabled={!draft.trim() || busy || !canChat || codexVoiceOpen} onClick={() => void sendToAgent(draft)}>发送</button>
+            <button type="button" className="primary" disabled={!draft.trim() || (liveSelected ? !liveActive || liveVoiceState === 'connecting' : busy || !canChat || codexVoiceOpen)} onClick={() => void sendToAgent(draft)}>发送</button>
           </div>
-          {usingCodex && <p className="agent-transcript">录音期间持续识别，点击「结束语音」后才发送给 Codex。</p>}
+          {liveSelected ? <p className="agent-transcript">实时语音可边听边说，点击「停止朗读」只打断当前回复。{selectedLiveProviderReady ? '会话使用下方所选模型与音色。' : selectedLiveProvider?.unavailable_reason || '请配置所选服务商。'}</p> : usingCodex && <p className="agent-transcript">录音期间持续识别，点击「结束语音」后才发送给 Codex。</p>}
+          {liveCapture && <p className="agent-transcript" aria-label="实时麦克风采集">输入 {Number.isFinite(liveCapture.level) ? liveCapture.level.toFixed(0) : '—'} dB · 已采集 {liveCapture.seconds.toFixed(1)} 秒{liveCapture.serverSeconds != null ? ` · 后端收到 ${liveCapture.serverSeconds.toFixed(1)} 秒` : ''}</p>}
           {aecStatus && <p className="agent-transcript">{aecStatus}</p>}
           {partialTranscript && <p className="agent-transcript">正在识别：{partialTranscript}</p>}
           {lastTranscript && <p className="agent-transcript">ASR：{lastTranscript}</p>}
@@ -1490,15 +1858,17 @@ export function RealtimeAgentPage() {
 
       <section className="agent-config panel">
         <div className="section-head compact">
-          <h2>Agent 设定</h2>
-          <div className="agent-actions">
+          <h2>{liveSelected ? '实时语音设定' : 'Agent 设定'}</h2>
+          {!liveSelected && <div className="agent-actions">
             <button type="button" onClick={() => void extractMemory()} disabled={memoryStatus === 'extracting' || !legacyReady || usingCodex} title={usingCodex ? '自动提取记忆暂需切换到原有 Agent；手动记忆可继续使用' : undefined}>
               {memoryStatus === 'extracting' ? '提取中' : memoryStatus === 'done' ? '已处理' : '提取记忆'}
             </button>
             <button type="button" onClick={() => setPage('models')}>模型管理</button>
-          </div>
+          </div>}
         </div>
         <div className="agent-config-grid">
+          <RealtimeVoiceConfig disabled={liveActive || busy || codexVoiceOpen || meetingBusy} onCatalog={setLiveCatalog} />
+          {!liveSelected && <>
           <label>对话引擎
             <select aria-label="对话引擎" value={settings.agentBackend} disabled={busy || codexVoiceOpen} onChange={(event) => { updateSettings({ agentBackend: event.target.value as 'codex' | 'legacy' }); setError('') }}>
               <option value="codex">Codex</option><option value="legacy">原有 Agent</option>
@@ -1526,19 +1896,29 @@ export function RealtimeAgentPage() {
               {codexUsage && !codexUsage.complete && <p>另有 {codexUsage.missing_usage} 次调用暂无用量，上方为已知小计。</p>}
             </div>
           </>}
+          </>}
 
           <label className="wide">
-            prompt
+            角色设定
             <textarea value={settings.agentPrompt} onChange={(event) => updateSettings({ agentPrompt: event.target.value })} rows={5} />
           </label>
           <label className="wide">
             记忆
             <textarea value={settings.agentMemory} onChange={(event) => updateSettings({ agentMemory: event.target.value })} rows={4} placeholder="写入用户偏好、角色设定、直播间规则或长期目标" />
           </label>
-          <label className="check">
-            <input type="checkbox" checked={settings.agentAutoSpeak} onChange={(event) => updateSettings({ agentAutoSpeak: event.target.checked })} />
+          {!liveSelected && <label className="check">
+            <input type="checkbox" disabled={liveSelected} checked={settings.agentAutoSpeak} onChange={(event) => updateSettings({ agentAutoSpeak: event.target.checked })} />
             自动朗读回复
+          </label>}
+          {(!liveSelected || settings.agentRealtimeProvider === 'openai') && <label className="check wide">
+            <input type="checkbox" checked={settings.agentWorkMode} onChange={(event) => updateSettings({ agentWorkMode: event.target.checked })} />
+            允许全双工后台任务申请本机执行权限（每次执行前确认）
+          </label>}
+          <label className="check">
+            <input type="checkbox" disabled={!window.electronAPI || navigator.platform !== 'Win32'} checked={settings.agentPetEnabled} onChange={(event) => updateSettings({ agentPetEnabled: event.target.checked })} />
+            显示爱弥斯 3D 桌宠
           </label>
+          {!liveSelected && <>
           <label className="check">
             <input type="checkbox" checked={settings.agentUseRuntimeContext} onChange={(event) => updateSettings({ agentUseRuntimeContext: event.target.checked })} />
             注入运行上下文
@@ -1552,11 +1932,11 @@ export function RealtimeAgentPage() {
             本地工具指令
           </label>
           <label className="check">
-            <input type="checkbox" disabled={voiceDraining || (usingCodex && !canChat)} checked={handsFreeStatus !== 'idle' && handsFreeStatus !== 'error'} onChange={() => void toggleHandsFree()} />
+            <input type="checkbox" disabled={liveSelected || voiceDraining || (usingCodex && !canChat)} checked={handsFreeStatus !== 'idle' && handsFreeStatus !== 'error'} onChange={() => void toggleHandsFree()} />
             {usingCodex ? '连续识别（手动结束）' : '免按键监听'}
           </label>
           <label className="check">
-            <input type="checkbox" checked={settings.agentProactive} onChange={(event) => updateSettings({ agentProactive: event.target.checked })} />
+            <input type="checkbox" disabled={liveSelected} checked={settings.agentProactive} onChange={(event) => updateSettings({ agentProactive: event.target.checked })} />
             主动观察
           </label>
           <label>
@@ -1595,12 +1975,13 @@ export function RealtimeAgentPage() {
             语速
             <input type="number" min="0.25" max="4" step="0.05" value={settings.agentTtsSpeed} onChange={(event) => updateSettings({ agentTtsSpeed: Number(event.target.value) || 1 })} />
           </label>
+          </>}
           <label>
             输入设备
             <input value={settings.audioInputDeviceId || '跟随系统'} readOnly />
           </label>
         </div>
-        <div className="agent-task-board">
+        {!liveSelected && <><div className="agent-task-board">
           <div className="section-head compact">
             <h2>任务队列</h2>
             <button type="button" disabled={!settings.agentTasks.length} onClick={() => updateAgentTasks([])}>清空</button>
@@ -1641,6 +2022,7 @@ export function RealtimeAgentPage() {
           </div>
           <pre>{runtimeContext}</pre>
         </div>
+        </>}
       </section>
     </div>
   )

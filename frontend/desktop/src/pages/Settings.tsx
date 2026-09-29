@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { HotkeyCapture, TriggerCapture } from '@/components/TriggerCapture'
+import { LocalRuntimePanel } from '@/components/LocalRuntimePanel'
+import { LocalAvatarPanel } from '@/components/LocalAvatarPanel'
 import { audioRelayMixer, captureSpeakerAudio, listAudioInputDevices, listAudioOutputDevices, testAudioInputDevice, testAudioOutputDevice } from '@/services/audio'
 import { useASRStore } from '@/store/useASRStore'
 
@@ -264,6 +266,9 @@ export function SettingsPage() {
       </nav>
 
       {activeSection === 'general' && (
+        <>
+        <LocalRuntimePanel />
+        <LocalAvatarPanel />
         <section className="panel settings-section">
           <div className="section-head"><div><h2>常规</h2><p>账户标识、后端入口和应用启动行为。</p></div></div>
           <div className="settings-section-grid">
@@ -303,6 +308,7 @@ export function SettingsPage() {
             </div>
           </div>
         </section>
+        </>
       )}
 
       {activeSection === 'audio' && (

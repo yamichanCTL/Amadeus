@@ -1,0 +1,212 @@
+[
+  {
+    "id": "Zephyr",
+    "style": "Bright",
+    "label": "明亮",
+    "gender": "female",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Puck",
+    "style": "Upbeat",
+    "label": "活泼",
+    "gender": "male",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Charon",
+    "style": "Informative",
+    "label": "讲解感",
+    "gender": "male",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Kore",
+    "style": "Firm",
+    "label": "坚定",
+    "gender": "female",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Fenrir",
+    "style": "Excitable",
+    "label": "兴奋",
+    "gender": "male",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Leda",
+    "style": "Youthful",
+    "label": "年轻",
+    "gender": "female",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Orus",
+    "style": "Firm",
+    "label": "坚定",
+    "gender": "male",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Aoede",
+    "style": "Breezy",
+    "label": "轻快",
+    "gender": "female",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Callirrhoe",
+    "style": "Easy-going",
+    "label": "随和",
+    "gender": "female",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Autonoe",
+    "style": "Bright",
+    "label": "明亮",
+    "gender": "female",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Enceladus",
+    "style": "Breathy",
+    "label": "气声",
+    "gender": "male",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Iapetus",
+    "style": "Clear",
+    "label": "清晰",
+    "gender": "male",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Umbriel",
+    "style": "Easy-going",
+    "label": "随和",
+    "gender": "male",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Algieba",
+    "style": "Smooth",
+    "label": "圆润",
+    "gender": "male",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Despina",
+    "style": "Smooth",
+    "label": "圆润",
+    "gender": "female",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Erinome",
+    "style": "Clear",
+    "label": "清晰",
+    "gender": "female",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Algenib",
+    "style": "Gravelly",
+    "label": "沙哑",
+    "gender": "male",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Rasalgethi",
+    "style": "Informative",
+    "label": "讲解感",
+    "gender": "male",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Laomedeia",
+    "style": "Upbeat",
+    "label": "活泼",
+    "gender": "female",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Achernar",
+    "style": "Soft",
+    "label": "柔和",
+    "gender": "female",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Alnilam",
+    "style": "Firm",
+    "label": "坚定",
+    "gender": "male",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Schedar",
+    "style": "Even",
+    "label": "平稳",
+    "gender": "male",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Gacrux",
+    "style": "Mature",
+    "label": "成熟",
+    "gender": "female",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Pulcherrima",
+    "style": "Forward",
+    "label": "鲜明",
+    "gender": "female",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Achird",
+    "style": "Friendly",
+    "label": "亲切",
+    "gender": "male",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Zubenelgenubi",
+    "style": "Casual",
+    "label": "随性",
+    "gender": "male",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Vindemiatrix",
+    "style": "Gentle",
+    "label": "温和",
+    "gender": "female",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Sadachbia",
+    "style": "Lively",
+    "label": "生动",
+    "gender": "male",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Sadaltager",
+    "style": "Knowledgeable",
+    "label": "博学",
+    "gender": "male",
+    "gender_source": "google_cloud_same_name"
+  },
+  {
+    "id": "Sulafat",
+    "style": "Warm",
+    "label": "温暖",
+    "gender": "female",
+    "gender_source": "google_cloud_same_name"
+  }
+]

@@ -282,6 +282,14 @@ def get_model_manager() -> ModelManager:
             torch_dtype=settings.qwen3asr_torch_dtype,
         )
         _manager.configure(
+            "formalasr",
+            model_name=settings.default_formalasr_model,
+            model_dir=str(settings.formalasr_model_dir),
+            device=settings.default_formalasr_device,
+            torch_dtype=settings.formalasr_torch_dtype,
+            max_new_tokens=settings.formalasr_max_new_tokens,
+        )
+        _manager.configure(
             "x-asr",
             model_name=settings.default_x_asr_model,
             model_dir=str(settings.x_asr_model_dir),

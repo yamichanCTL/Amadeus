@@ -433,6 +433,11 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .agent-visual[data-emotion="surprised"] { background: linear-gradient(180deg, rgba(74, 54, 103, .9), rgba(39, 86, 104, .78)); }
 .agent-visual[data-emotion="concerned"] { background: linear-gradient(180deg, rgba(72, 50, 61, .9), rgba(47, 57, 77, .78)); }
 .agent-visual::after { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 42%, rgba(13, 21, 35, .7)); pointer-events: none; }
+.agent-model-3d { position: absolute; inset: 0; display: block; width: 100%; height: 100%; z-index: 1; }
+.agent-model-error { position: absolute; top: 50%; left: 12%; right: 12%; z-index: 2; color: #fff; text-align: center; }
+.agent-avatar-controls { position: absolute; right: 14px; bottom: 18px; z-index: 3; display: flex; gap: 6px; }
+.agent-avatar-controls button { padding: 8px 10px; border: 1px solid rgba(255,255,255,.22); border-radius: 8px; background: rgba(22,34,53,.8); color: #fff; font-size: 12px; backdrop-filter: blur(8px); }
+.agent-avatar-controls button:disabled { opacity: .45; cursor: not-allowed; }
 .agent-figure { position: absolute; right: 2%; bottom: -18px; z-index: 1; width: min(78%, 440px); height: 96%; object-fit: contain; object-position: bottom right; filter: drop-shadow(0 28px 28px rgba(5, 12, 26, .34)); transform-origin: 70% 86%; transition: filter 180ms ease, transform 180ms ease; }
 .agent-figure.emotion-happy { filter: saturate(1.18) brightness(1.08) drop-shadow(0 28px 28px rgba(5, 12, 26, .34)); }
 .agent-figure.emotion-curious { filter: saturate(1.1) hue-rotate(8deg) brightness(1.04) drop-shadow(0 28px 28px rgba(5, 12, 26, .34)); }
@@ -595,6 +600,12 @@ pre { white-space: pre-wrap; word-break: break-word; }
 .agent-config-grid .agent-codex-usage { grid-column: 1 / -1; color: #526171; font-size: 12px; }
 .agent-codex-usage p { margin: 6px 0; }
 .agent-codex-usage button { margin-left: 12px; }
+.agent-config-grid > .realtime-voice-config { grid-column: 1 / -1; padding: 16px; border: 1px solid var(--border, #dce5f1); border-radius: 12px; min-width: 0; }
+.realtime-voice-config .agent-config-grid { grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.realtime-voice-config details { margin: 12px 0; }
+.realtime-voice-config summary { cursor: pointer; font-weight: 600; }
+.realtime-voice-config p { font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.realtime-voice-config details button { margin-top: 12px; }
 
 .meeting-assist { display: grid; gap: 12px; }
 .meeting-assist label { display: grid; gap: 6px; }

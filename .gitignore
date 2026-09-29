@@ -21,6 +21,7 @@ wheels/
 .venv/
 venv/
 env/
+node_modules/
 
 # Local runtime config and generated data
 .env
@@ -36,6 +37,14 @@ backend/app/core/asr/engines/FireRedASR2S/
 
 # Locally downloaded upstream source and ASR model weights
 /thirdparty/X-ASR/
+/models/
+/research/
+# Local evaluation entry points; production tests and documented tools are tracked.
+/scripts/benchmark_gemini_barge_in.py
+/scripts/benchmark_gemini_tool.py
+/scripts/benchmark_qwen_barge_in.py
+/scripts/benchmark_qwen_tool.py
+/scripts/benchmark_realtime_apis.py
 
 # Local agent permissions and temporary worktree copies
 /.claude/settings.local.json
@@ -65,6 +74,7 @@ frontend/desktop/dist/
 frontend/desktop/dist-electron/
 frontend/desktop/build/
 frontend/desktop/release/
+frontend/desktop/release-*/
 frontend/desktop/out/
 frontend/desktop/coverage/
 frontend/desktop/playwright-report/
@@ -99,3 +109,17 @@ Thumbs.db
 *.flac
 *.tmp
 *.log
+
+# Reproducible Blender digital-human previews (scripts and reports stay tracked)
+/assets/digital_human/**/*.blend
+/assets/digital_human/**/*.blend[0-9]*
+/assets/digital_human/**/*.npz
+/assets/digital_human/**/*.png
+/assets/digital_human/**/*.jpg
+/assets/digital_human/**/*.mp4
+/assets/digital_human/**/mouth_timeline.json
+/assets/digital_human/**/audio/speech_envelope.json
+/assets/digital_human/**/audio/speech_events.json
+# Character models are user-supplied locally, not redistributable release assets.
+*.glb
+*.gltf

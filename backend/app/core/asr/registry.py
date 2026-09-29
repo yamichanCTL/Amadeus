@@ -22,12 +22,14 @@ _REGISTRY: dict[str, type] = {}
 
 def _register_defaults() -> None:
     from app.core.asr.engines.fireredasr2 import FireRedASR2Engine
+    from app.core.asr.engines.formalasr import FormalASREngine
     from app.core.asr.engines.qwen3asr import Qwen3ASREngine
     from app.core.asr.engines.sensevoice import SenseVoiceEngine
     from app.core.asr.engines.whisper import WhisperEngine
     from app.core.asr.engines.x_asr import XASREngine
 
     _REGISTRY["fireredasr2"] = FireRedASR2Engine
+    _REGISTRY["formalasr"] = FormalASREngine
     _REGISTRY["sensevoice"] = SenseVoiceEngine
     _REGISTRY["qwen3asr"] = Qwen3ASREngine
     _REGISTRY["whisper"] = WhisperEngine

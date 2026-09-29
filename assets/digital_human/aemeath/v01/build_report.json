@@ -1,0 +1,211 @@
+{
+  "source": "F:\\Project\\Model3D\\Dance_Project\\Wuthering_Waves_V9_AEMEATH_DYNAMIC_REVIEW.blend",
+  "source_sha256": "d50e05f5c4c4924c55fff6429551101d93731b4e556a98726f142a33797b0d93",
+  "source_unchanged": true,
+  "blend": "F:\\Project\\Model3D\\Amadeus\\assets\\digital_human\\aemeath\\v01\\Aemeath_DigitalHuman_v01.blend",
+  "blender": "5.2.2 LTS",
+  "original_vertex_count": 130108,
+  "original_shape_count": 149,
+  "neutral_restore_error_m": 0.0,
+  "driver_problems": {
+    "invalid": [],
+    "missing_targets": []
+  },
+  "audio_duration_s": 15.0515,
+  "fps": 30,
+  "frame_end": 465,
+  "packed_sound": true,
+  "atlas": [
+    {
+      "label": "00_neutral",
+      "weights": {},
+      "actual": {},
+      "render_s": 2.1244128000107594
+    },
+    {
+      "label": "01_A",
+      "weights": {
+        "あ": 0.85
+      },
+      "actual": {
+        "あ": 0.8500000238418579
+      },
+      "render_s": 0.43872460001148283
+    },
+    {
+      "label": "02_I",
+      "weights": {
+        "い": 0.85
+      },
+      "actual": {
+        "い": 0.8500000238418579
+      },
+      "render_s": 0.43358910002280027
+    },
+    {
+      "label": "03_U",
+      "weights": {
+        "う": 0.85
+      },
+      "actual": {
+        "う": 0.8500000238418579
+      },
+      "render_s": 0.4116155000519939
+    },
+    {
+      "label": "04_E",
+      "weights": {
+        "え": 0.85
+      },
+      "actual": {
+        "え": 0.8500000238418579
+      },
+      "render_s": 0.41729990002932027
+    },
+    {
+      "label": "05_O",
+      "weights": {
+        "お": 0.85
+      },
+      "actual": {
+        "お": 0.8500000238418579
+      },
+      "render_s": 0.4353417999809608
+    },
+    {
+      "label": "06_M_candidate",
+      "weights": {
+        "M": 0.8
+      },
+      "actual": {
+        "M": 0.800000011920929
+      },
+      "render_s": 0.45876539999153465
+    },
+    {
+      "label": "07_smile_A",
+      "weights": {
+        "あ": 0.5,
+        "口角上げ": 0.18,
+        "にこり": 0.12
+      },
+      "actual": {
+        "あ": 0.4999999403953552,
+        "口角上げ": 0.18000000715255737,
+        "にこり": 0.11999999731779099
+      },
+      "render_s": 0.4622848000144586
+    },
+    {
+      "label": "08_blink",
+      "weights": {
+        "まばたき": 1
+      },
+      "actual": {
+        "まばたき": 1.0
+      },
+      "render_s": 0.41250490001402795
+    }
+  ],
+  "reference_frames": [
+    1,
+    15.5,
+    30,
+    50.25,
+    88,
+    135.5,
+    177,
+    240.75,
+    300,
+    360.5,
+    465
+  ],
+  "approximate_viseme_mapping": {
+    "1": {
+      "shape": "あ",
+      "strength": 0.75
+    },
+    "2": {
+      "shape": "あ",
+      "strength": 0.85
+    },
+    "3": {
+      "shape": "お",
+      "strength": 0.65
+    },
+    "4": {
+      "shape": "え",
+      "strength": 0.8
+    },
+    "5": {
+      "shape": "え",
+      "strength": 0.7
+    },
+    "6": {
+      "shape": "い",
+      "strength": 0.85
+    },
+    "7": {
+      "shape": "う",
+      "strength": 0.8
+    },
+    "8": {
+      "shape": "お",
+      "strength": 0.8
+    },
+    "9": {
+      "shape": "あ",
+      "strength": 0.75
+    },
+    "10": {
+      "shape": "お",
+      "strength": 0.7
+    },
+    "11": {
+      "shape": "あ",
+      "strength": 0.8
+    },
+    "12": {
+      "shape": "あ",
+      "strength": 0.25
+    },
+    "13": {
+      "shape": "う",
+      "strength": 0.4
+    },
+    "14": {
+      "shape": "い",
+      "strength": 0.4
+    },
+    "15": {
+      "shape": "い",
+      "strength": 0.45
+    },
+    "16": {
+      "shape": "う",
+      "strength": 0.45
+    },
+    "17": {
+      "shape": "い",
+      "strength": 0.4
+    },
+    "18": {
+      "shape": "い",
+      "strength": 0.3
+    },
+    "19": {
+      "shape": "い",
+      "strength": 0.45
+    },
+    "20": {
+      "shape": "え",
+      "strength": 0.45
+    }
+  },
+  "limitations": [
+    "Offline synthetic speech only",
+    "Mandarin viseme identities approximate",
+    "No runtime microphone or interruption integration",
+    "No new cloth/hair physics"
+  ]
+}

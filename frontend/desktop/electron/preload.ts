@@ -7,6 +7,20 @@ const on = <T>(channel: string, callback: (payload: T) => void) => {
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  localAvatarStatus: () => ipcRenderer.invoke('avatar:status'),
+  localAvatarRead: () => ipcRenderer.invoke('avatar:read'),
+  localAvatarImport: () => ipcRenderer.invoke('avatar:import'),
+  localAvatarClear: () => ipcRenderer.invoke('avatar:clear'),
+  onLocalAvatarChanged: (callback: (state: unknown) => void) => on('avatar:changed', callback),
+  localRuntimeStatus: () => ipcRenderer.invoke('runtime:status'),
+  localRuntimeInstall: () => ipcRenderer.invoke('runtime:install'),
+  localRuntimeInstallExtra: (extra: string) => ipcRenderer.invoke('runtime:installExtra', extra),
+  localRuntimeStart: () => ipcRenderer.invoke('runtime:start'),
+  localRuntimeStop: () => ipcRenderer.invoke('runtime:stop'),
+  localRuntimeSetAutoStart: (enabled: boolean) => ipcRenderer.invoke('runtime:autoStart', enabled),
+  localRuntimeOpenLogs: () => ipcRenderer.invoke('runtime:openLogs'),
+  localRuntimeOpenFolder: () => ipcRenderer.invoke('runtime:openFolder'),
+  onLocalRuntimeState: (callback: (state: unknown) => void) => on('runtime:state', callback),
   minimize: () => ipcRenderer.send('win:minimize'),
   maximize: () => ipcRenderer.send('win:maximize'),
   close: () => ipcRenderer.send('win:close'),
@@ -55,5 +69,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAutoLaunch: () => ipcRenderer.invoke('app:autoLaunch:get'),
   setAutoLaunch: (enabled: boolean) => ipcRenderer.invoke('app:autoLaunch:set', enabled),
   onLiveCaptionTrayToggle: (callback: () => void) => on('liveCaption:trayToggle', callback),
-  notifyLiveCaptionState: (active: boolean) => ipcRenderer.send('liveCaption:stateChanged', active)
+  notifyLiveCaptionState: (active: boolean) => ipcRenderer.send('liveCaption:stateChanged', active),
+  setPetEnabled: (enabled: boolean) => ipcRenderer.invoke('pet:setEnabled', enabled),
+  getWorkToken: () => ipcRenderer.invoke('agent:getWorkToken'),
+  publishPetState: (state: unknown) => ipcRenderer.send('pet:state', state),
+  publishPetAudioFrame: (frame: unknown) => ipcRenderer.send('pet:audioFrame', frame),
+  onPetEnabledChanged: (callback: (enabled: boolean) => void) => on('pet:enabledChanged', callback),
+  onPetCommand: (callback: (command: { id: number; type: 'open' | 'voice' | 'text'; text?: string }) => void) => on('pet:command', callback)
 })

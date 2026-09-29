@@ -189,7 +189,7 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
             # ── 7. Post-pipeline ──────────────────────────────────────────
             final_text = result.full_text
 
-            if task.punctuation_enabled:
+            if task.punctuation_enabled and not result.raw.get("native_punctuation", False):
                 punctuation_started = time.perf_counter()
                 final_text = await restore_punctuation(final_text, result.language)
                 result.full_text = final_text
@@ -474,7 +474,7 @@ def _merge_chunk_results(results: list[tuple[AudioInferenceChunk, ASRResult]]) -
                         confidence=segment.confidence,
                     )
                 )
-        elif text:
+        elif text and result.raw.get("supports_timestamps") is not False:
             segments.append(
                 Segment(
                     start=chunk.start_sec,
@@ -495,15 +495,23 @@ def _merge_chunk_results(results: list[tuple[AudioInferenceChunk, ASRResult]]) -
         )
 
     confidence = round(sum(confidences) / len(confidences), 6) if confidences else None
+    raw: dict[str, object] = {
+        "chunked": True,
+        "chunk_count": len(results),
+        "chunks": raw_chunks,
+    }
+    # Preserve output semantics after chunk merging: rewritten text must not
+    # gain invented timestamps or pass through a second punctuation model.
+    for key in ("output_kind", "native_punctuation", "supports_timestamps"):
+        values = [result.raw.get(key) for _, result in results]
+        if values[0] is not None and all(value == values[0] for value in values):
+            raw[key] = values[0]
+
     return ASRResult(
         full_text="\n".join(texts),
         segments=segments,
         language=languages[0] if languages else None,
         engine_name=engine_name,
         confidence=confidence,
-        raw={
-            "chunked": True,
-            "chunk_count": len(results),
-            "chunks": raw_chunks,
-        },
+        raw=raw,
     )

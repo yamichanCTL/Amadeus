@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>爱弥斯桌宠</title>
+</head>
+<body>
+  <canvas id="petCanvas" aria-label="爱弥斯三维桌宠"></canvas>
+  <div id="toast" class="toast hidden" aria-live="polite"></div>
+  <section id="chatPanel" class="chat-panel hidden" aria-label="爱弥斯对话">
+    <div class="panel-head"><div><span class="star">✦</span><strong>爱弥斯</strong><small>Amadeus 实时对话</small></div><button id="closeChat" type="button" title="收起">×</button></div>
+    <div id="chatLog" class="chat-log"><div class="message aemeath">我在这里。点击语音，或者输入消息。</div></div>
+    <div class="quick-actions"><button id="voiceButton" type="button">开始 / 结束语音</button><button id="openButton" type="button">打开实时对话</button></div>
+    <form id="promptForm"><input id="promptInput" maxlength="2000" autocomplete="off" placeholder="通过 Amadeus 会话发送…" aria-label="和爱弥斯说话"><button id="sendButton" type="submit" title="发送">➜</button></form>
+    <div class="panel-foot"><span>左键拖动 · 双击招手 · 右键对话</span></div>
+  </section>
+  <script type="module" src="/src/pet/pet.js"></script>
+</body>
+</html>

@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({ streams: [] as any[], legacyChat: vi.fn() }))
 vi.mock('@/components/AssistantFigure', () => ({ AssistantFigure: () => <img alt="Amadeus 助手" /> }))
+vi.mock('@/components/Aemeath3D', () => ({ Aemeath3D: () => <div aria-label="爱弥斯 3D 模型" /> }))
 vi.mock('@/services/api', async (original) => ({ ...await original<typeof import('@/services/api')>(),
   ASRApi: class { listSkills = async () => ({ skills: [] }); agentChatStream = mocks.legacyChat },
 }))
@@ -23,6 +24,11 @@ import { DEFAULT_SETTINGS, useASRStore } from '@/store/useASRStore'
 const reply = { call_id: 'call-1', status: 'completed', text: '接口回复', model: 'test-codex', elapsed_sec: 1,
   usage: { input_tokens: 90, cached_input_tokens: 20, output_tokens: 10, total_tokens: 100 } }
 const usage = { ...reply.usage, calls: 1, missing_usage: 0, complete: true }
+const streamReply = () => new Response(
+  `data: ${JSON.stringify({ type: 'agent.delta', text: reply.text, call_id: reply.call_id })}\n\n` +
+  `data: ${JSON.stringify({ type: 'agent.completed', result: reply })}\n\n`,
+  { headers: { 'content-type': 'text/event-stream' } },
+)
 let requests: { path: string; method: string; body: any }[]
 let finishTurn: ((response: Response) => void) | undefined
 let holdTurn = false
@@ -43,9 +49,9 @@ beforeEach(() => {
       { id: 'other-codex', efforts: ['low', 'high'], default_effort: 'high' },
     ] })
     if (path.endsWith('/usage')) return Response.json(usage)
-    if (path.endsWith('/turns')) {
+    if (path.endsWith('/turns/stream')) {
       if (holdTurn) return await new Promise<Response>((resolve) => { finishTurn = resolve })
-      return Response.json(reply)
+      return streamReply()
     }
     return Response.json({ reset: true, cancelled: true })
   }))
@@ -55,7 +61,7 @@ const ready = async () => { render(<RealtimeAgentPage />); await screen.findByTe
 const send = async (text: string) => {
   fireEvent.change(screen.getByLabelText('对话消息'), { target: { value: text } })
   fireEvent.click(screen.getByRole('button', { name: '发送' }))
-  await waitFor(() => expect(requests.filter((r) => r.path.endsWith('/turns')).length).toBeGreaterThan(0))
+  await waitFor(() => expect(requests.filter((r) => r.path.endsWith('/turns/stream')).length).toBeGreaterThan(0))
 }
 describe('Codex in the existing realtime UI', () => {
   it('shows login failure and recovers after checking the connection again', async () => {
@@ -81,10 +87,10 @@ describe('Codex in the existing realtime UI', () => {
     expect(migrated.settings.agentPrompt).toBe('用户自己的角色设定')
   })
   it('preserves the character and uses Codex settings, persona and memory without legacy credentials', async () => {
-    await ready(); expect(screen.getByAltText('Amadeus 助手')).toBeTruthy()
+    await ready(); expect(screen.getByLabelText('爱弥斯 3D 模型')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Codex 模型'), { target: { value: 'other-codex' } })
     await send('你好'); expect(await screen.findByText(reply.text)).toBeTruthy()
-    const request = requests.find((r) => r.path.endsWith('/turns'))!.body
+    const request = requests.find((r) => r.path.endsWith('/turns/stream'))!.body
     expect(request).toMatchObject({ text: '你好', model: 'other-codex', effort: 'high' })
     expect(request.context).toContain('用户自己的角色设定'); expect(request.context).toContain('喜欢简短回复')
     expect(request.llm_api_token).toBeUndefined(); expect(mocks.legacyChat).not.toHaveBeenCalled()
@@ -93,15 +99,15 @@ describe('Codex in the existing realtime UI', () => {
   it('keeps the session across turns, resets it, and cancels the current session on unmount', async () => {
     await ready(); await send('第一句'); await screen.findByText(reply.text)
     await send('第二句')
-    await waitFor(() => expect(requests.filter((r) => r.path.endsWith('/turns'))).toHaveLength(2))
-    const first = requests.find((r) => r.path.endsWith('/turns'))!.body.session_id
-    expect(requests.filter((r) => r.path.endsWith('/turns'))[1].body.session_id).toBe(first)
+    await waitFor(() => expect(requests.filter((r) => r.path.endsWith('/turns/stream'))).toHaveLength(2))
+    const first = requests.find((r) => r.path.endsWith('/turns/stream'))!.body.session_id
+    expect(requests.filter((r) => r.path.endsWith('/turns/stream'))[1].body.session_id).toBe(first)
     await waitFor(() => expect((screen.getByLabelText('对话消息') as HTMLInputElement).disabled).toBe(false))
     fireEvent.click(screen.getAllByRole('button', { name: '清空' })[0])
     await screen.findByText('上下文已清空。我们重新开始。')
     expect(requests.some((r) => r.method === 'DELETE' && r.path.endsWith(first))).toBe(true)
     await send('新对话')
-    const latest = requests.filter((r) => r.path.endsWith('/turns')).at(-1)!.body.session_id
+    const latest = requests.filter((r) => r.path.endsWith('/turns/stream')).at(-1)!.body.session_id
     expect(latest).not.toBe(first)
     cleanup(); expect(requests.some((r) => r.path.endsWith(`${latest}/cancel`))).toBe(true)
   })
@@ -118,7 +124,7 @@ describe('Codex in the existing realtime UI', () => {
       stream.config.onAgentEvent({ type: 'agent.started', call_id: 'call-1' })
     })
     expect(screen.getByText('完整语音问题')).toBeTruthy()
-    expect(requests.some((r) => r.path.endsWith('/turns'))).toBe(false)
+    expect(requests.some((r) => r.path.endsWith('/turns/stream'))).toBe(false)
     fireEvent.click(screen.getByRole('button', { name: '结束语音' }))
     expect(stream.finish).toHaveBeenCalledOnce(); expect(stream.stop).not.toHaveBeenCalled()
     act(() => {
@@ -132,10 +138,10 @@ describe('Codex in the existing realtime UI', () => {
   it('blocks duplicate sends and cancels the backend, ignoring a late answer', async () => {
     holdTurn = true; await ready(); await send('等待')
     fireEvent.keyDown(screen.getByLabelText('对话消息'), { key: 'Enter' })
-    expect(requests.filter((r) => r.path.endsWith('/turns'))).toHaveLength(1)
+    expect(requests.filter((r) => r.path.endsWith('/turns/stream'))).toHaveLength(1)
     fireEvent.click(screen.getByRole('button', { name: '取消回答' }))
     await waitFor(() => expect(requests.some((r) => r.path.endsWith('/cancel'))).toBe(true))
-    await act(async () => { finishTurn?.(Response.json(reply)) })
+    await act(async () => { finishTurn?.(streamReply()) })
     expect(screen.queryByText(reply.text)).toBeNull()
   })
   it('keeps microphone capture and TTS playback active together instead of using half duplex', async () => {

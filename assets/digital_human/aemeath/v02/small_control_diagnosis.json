@@ -1,0 +1,34 @@
+{
+  "status": "cause_confirmed",
+  "blender": "5.2.2 LTS",
+  "blend_saved_by_probe": false,
+  "affected_channels_observed": ["あ", "い", "う", "え", "お"],
+  "cause": "Source MMD drivers retain a two-key identity FCurve. FCurve key lookup snaps inputs within 0.0001 of the (0,0) key to that key's output, producing zero for small decaying vowel weights.",
+  "driver_mapping": {
+    "expression": "v1",
+    "points": [[0.0, 0.0], [1.0, 1.0]],
+    "interpolation": "BEZIER",
+    "extrapolation": "LINEAR",
+    "modifiers": []
+  },
+  "all_five_driver_curves_evaluated_identically": [
+    {"input": 0.00005, "output": 0.0},
+    {"input": 0.000099, "output": 0.0},
+    {"input": 0.0001, "output": 0.0},
+    {"input": 0.000101, "output": 0.00010099999781232327},
+    {"input": 0.2, "output": 0.20000000298023224},
+    {"input": 1.0, "output": 1.0}
+  ],
+  "causal_probe": {
+    "frame": 273,
+    "channel": "あ",
+    "before": {"control": 0.00009348981257062405, "display": 0.0},
+    "intervention": "Clear only this driver's two identity FCurve keys in an unsaved memory copy; retain expression, variables and targets; update and seek 274 then 273.",
+    "after": {"control": 0.00009348981257062405, "display": 0.00009348981257062405}
+  },
+  "upstream_source": "https://github.com/blender/blender/blob/main/source/blender/blenkernel/intern/fcurve.cc",
+  "upstream_functions": ["fcurve_eval_keyframes_interpolate: BKE_fcurve_bezt_binarysearch_index_ex threshold 0.0001", "evaluate_fcurve_driver: driver output is the FCurve input; curves with no points default to 1:1 mapping"],
+  "source_version_note": "Upstream main documents the mechanism; the matching boundary and causal intervention were independently observed in the installed Blender 5.2.2 binary.",
+  "recommended_fix": "Remove redundant identity mapping keys only after verifying their endpoints, handles, interpolation, extrapolation and absence of modifiers. Keep all driver expressions and variables. Do not relax validation tolerance.",
+  "v02_other_result": "11 distinct reference times, reverse order and repeated seeks produce exactly matching display weights and evaluated vertices. All 279 drivers and their target paths are valid. Existing failure is the absolute control-to-display transfer near zero."
+}

@@ -1,0 +1,22 @@
+.local-runtime-panel { margin-bottom: 20px; border-color: #b6cdec; }
+.local-runtime-panel p { line-height: 1.65; }
+.local-runtime-intro { color: #3d526e; font-size: 14px; margin: 0 0 16px; }
+.local-runtime-steps { list-style: none; display: flex; flex-wrap: wrap; gap: 12px 28px; padding: 0; margin: 0 0 18px; font-size: 13px; color: #526171; }
+.local-runtime-steps li { display: flex; align-items: center; gap: 8px; }
+.local-runtime-steps span { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 50%; background: #e2edff; color: #1d4e89; font-weight: 700; }
+.local-runtime-status { font-size: 14px; overflow-wrap: anywhere; }
+.local-runtime-panel progress { width: 100%; height: 8px; accent-color: #1d4e89; margin: 0 0 12px; }
+.local-runtime-actions { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 14px 0; }
+.local-runtime-auto { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.local-runtime-auto input { width: auto; }
+.local-runtime-address { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 13px; }
+.local-runtime-hint, .local-runtime-details { color: #65748a; font-size: 12px; overflow-wrap: anywhere; }
+.local-runtime-details { margin-top: 12px; }
+.local-runtime-details summary { cursor: pointer; }
+.local-runtime-details code { word-break: break-all; }
+.local-runtime-error { border: 1px solid #f0b9b4; background: #fff5f3; color: #a32820; border-radius: 8px; padding: 10px 12px; font-size: 13px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.local-runtime-welcome { display: flex; align-items: center; gap: 18px; justify-content: space-between; padding: 16px 20px; margin: 0 0 20px; border: 1px solid #b6cdec; border-radius: 8px; background: rgba(236, 245, 255, .9); }
+.local-runtime-welcome strong { color: #203b5a; font-size: 15px; }
+.local-runtime-welcome p { margin: 6px 0 0; color: #526171; font-size: 13px; }
+.local-runtime-welcome button { flex-shrink: 0; }
+@media (max-width: 760px) { .local-runtime-welcome { align-items: flex-start; flex-direction: column; } }

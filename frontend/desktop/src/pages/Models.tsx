@@ -3,6 +3,8 @@ import { ASRApi, describeRequestError, isAbortError, isAsyncResponse, type Higgs
 import { AudioRecorder } from '@/services/audio'
 import { getProviderPreset, LLM_PROVIDER_PRESETS, type LLMProvider } from '@/services/llmProviders'
 import { useASRStore, type AsrModelConfig } from '@/store/useASRStore'
+import { FormalAsrNotice } from '@/components/FormalAsrNotice'
+import { ModelDownloads } from '@/components/ModelDownloads'
 
 const xAsrVariants = [160, 480, 960, 1920] as const
 type ModelTab = 'asr' | 'llm' | 'tts'
@@ -12,6 +14,7 @@ const defaultAsrConfigs: Record<string, AsrModelConfig> = {
   fireredasr2: { modelName: 'FireRedASR2-AED', device: 'cuda', computeType: '', extraJson: '{"beam_size":3,"batch_size":1}' },
   sensevoice: { modelName: 'SenseVoiceSmall', device: 'cuda:0', computeType: '', extraJson: '{"batch_size_s":60}' },
   qwen3asr: { modelName: 'Qwen/Qwen3-ASR-1.7B', device: 'cuda:0', computeType: 'bfloat16', extraJson: '{}' },
+  formalasr: { modelName: 'TaurenMountain/FormalASR-1.7B', device: 'cuda:0', computeType: 'bfloat16', extraJson: '{}' },
   whisper: { modelName: 'base', device: 'cuda', computeType: 'float16', extraJson: '{}' },
   'x-asr': { modelName: 'chunk-960ms-model', device: 'cuda', computeType: '', extraJson: '{"num_threads":1,"text_format":"none"}' }
 }
@@ -20,6 +23,7 @@ const engineLabels: Record<string, string> = {
   fireredasr2: 'FireRedASR2',
   sensevoice: 'SenseVoice',
   qwen3asr: 'Qwen3-ASR',
+  formalasr: 'FormalASR · 中文口语整理',
   whisper: 'Whisper',
   'x-asr': 'X-ASR'
 }
@@ -666,6 +670,7 @@ export function ModelsPage() {
         {error && <p className="error">{error}</p>}
         {activeTab === 'asr' && (
           <div className="model-section">
+            <ModelDownloads />
             <div className="model-settings-grid">
               <label>
                 离线识别模型
@@ -694,6 +699,7 @@ export function ModelsPage() {
                 标点恢复
               </label>
             </div>
+            {settings.offlineEngine === 'formalasr' && <FormalAsrNotice />}
             <div className="model-table">
               {rows.map((model) => {
                 const config = settings.asrModelConfigs[model.engine] || fallbackAsrConfig(model.engine, model)
@@ -706,6 +712,7 @@ export function ModelsPage() {
                         <strong>{engineLabels[model.engine] || model.engine}</strong>
                         <span>{model.model_name}</span>
                         <small>{modelModes.map((mode) => mode === 'streaming' ? '实时识别' : '离线识别').join(' / ')}</small>
+                        {model.engine === 'formalasr' && <small>语音直接生成书面文本 · 中文 · 离线句段识别</small>}
                       </div>
                       <span className={model.is_loaded ? 'loaded' : 'unloaded'}>{model.is_loaded ? '已加载' : '未加载'}</span>
                       <span>{model.device || config.device || '-'}</span>
@@ -730,6 +737,9 @@ export function ModelsPage() {
                     </div>
                     {isExpanded && (
                       <div className="model-detail-grid">
+                        {model.engine === 'formalasr' && (
+                          <p className="wide">FormalASR 将中文口语整理训练进语音模型，可去除口头禅和重复表达。录音结束或文件上传后输出完整结果，不提供逐字流式字幕。首次加载将下载模型，也可填写本机模型目录。</p>
+                        )}
                         {model.engine === 'x-asr' ? (
                           <fieldset className="xasr-variant-picker wide">
                             <legend>流式窗口模型（选择后点击加载完成切换）</legend>
@@ -769,7 +779,7 @@ export function ModelsPage() {
                         </label>
                         <label>
                           Compute / dtype
-                          <input value={config.computeType} placeholder={model.engine === 'qwen3asr' ? 'bfloat16' : 'int8 / float16 / float32'} onChange={(event) => updateAsrConfig(model.engine, { computeType: event.target.value })} />
+                          <input value={config.computeType} placeholder={model.engine === 'qwen3asr' || model.engine === 'formalasr' ? 'bfloat16' : 'int8 / float16 / float32'} onChange={(event) => updateAsrConfig(model.engine, { computeType: event.target.value })} />
                         </label>
                         <label className="wide">
                           参数 JSON

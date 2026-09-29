@@ -19,6 +19,7 @@ import { audioRelayMixer, runAudioRelayDeviceE2E, speechRecorder } from '@/servi
 import { liveCaptionService } from '@/services/liveCaption'
 import { buildLocalSummaryRecords } from '@/services/summaryRecords'
 import { saveSummaryToLocalLog } from '@/services/summaryLog'
+import { useLocalRuntimeConnection } from '@/services/localRuntimeConnection'
 
 const isE2EMode = new URLSearchParams(window.location.search).get('e2e') === '1'
 
@@ -45,13 +46,18 @@ function isWithinWindow(now: Date, startTime: string, endTime: string) {
 
 function AppTopBar() {
   const settings = useASRStore((state) => state.settings)
+  const page = useASRStore((state) => state.page)
   const setPage = useASRStore((state) => state.setPage)
+  const liveLabels = { off: '', openai: 'GPT Live', qwen: '千问 Audio 3.1 Realtime Plus',
+    gemini_live: 'Gemini 3.8 Live', gemini_thinking: 'Gemini 3.8 Live Extended Thinking',
+    higgs: 'Higgs Realtime', grok: 'Grok Voice Think Fast 2.0' }
+  const liveLabel = page === 'realtime' ? liveLabels[settings.agentRealtimeProvider] : ''
 
   return (
     <div className="app-topbar">
       <div className="mode-pill">
         <span aria-hidden="true">↻</span>
-        <strong>{settings.agentBackend === 'codex' ? `Codex · ${settings.codexModel || '当前配置'}` : settings.llmModel || 'GPT Voice'} / {settings.offlineEngine}</strong>
+        <strong>{liveLabel || `${settings.agentBackend === 'codex' ? `Codex · ${settings.codexModel || '当前配置'}` : settings.llmModel || 'GPT Voice'} / ${settings.offlineEngine}`}</strong>
         <small>⌄</small>
       </div>
       <button type="button" className="icon-button" title="设置" onClick={() => setPage('settings')}>⚙</button>
@@ -61,11 +67,13 @@ function AppTopBar() {
 }
 
 export default function App() {
+  useLocalRuntimeConnection()
   const page = useASRStore((state) => state.page)
   const settings = useASRStore((state) => state.settings)
   const setServerStatus = useASRStore((state) => state.setServerStatus)
   const setPage = useASRStore((state) => state.setPage)
   const updateSettings = useASRStore((state) => state.updateSettings)
+  const setPetCommand = useASRStore((state) => state.setPetCommand)
   const setError = useASRStore((state) => state.setError)
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
 
@@ -111,6 +119,20 @@ export default function App() {
   useEffect(() => {
     window.electronAPI?.setKeepRunningInBackground(settings.keepRunningInBackground)
   }, [settings.keepRunningInBackground])
+
+  useEffect(() => {
+    void window.electronAPI?.setPetEnabled(settings.agentPetEnabled)
+  }, [settings.agentPetEnabled])
+
+  useEffect(() => {
+    const offEnabled = window.electronAPI?.onPetEnabledChanged((enabled) => updateSettings({ agentPetEnabled: enabled }))
+    const offCommand = window.electronAPI?.onPetCommand((command) => {
+      if (!['open', 'voice', 'text'].includes(command.type)) return
+      setPetCommand(command)
+      setPage('realtime')
+    })
+    return () => { offEnabled?.(); offCommand?.() }
+  }, [setPage, setPetCommand, updateSettings])
 
   useEffect(() => {
     if (!isE2EMode) return
@@ -165,6 +187,11 @@ export default function App() {
 
   useEffect(() => {
     if (isE2EMode) return
+    if (page === 'realtime' && settings.agentRealtimeProvider !== 'off') {
+      // Cancel also invalidates a pending getUserMedia prewarm request.
+      speechRecorder.cancel()
+      return
+    }
     if (settings.audioRelayEnabled) {
       speechRecorder.cancel()
       return
@@ -175,7 +202,7 @@ export default function App() {
       return
     }
     void speechRecorder.prepare(settings.audioInputDeviceId || undefined).catch(() => undefined)
-  }, [settings.audioInputDeviceId, settings.audioRelayEnabled, settings.inputSource])
+  }, [page, settings.agentRealtimeProvider, settings.audioInputDeviceId, settings.audioRelayEnabled, settings.inputSource])
 
   useEffect(() => () => {
     audioRelayMixer.stop()
@@ -323,6 +350,12 @@ export default function App() {
         <Sidebar />
         <main className="content">
           <AppTopBar />
+          {page !== 'settings' && (!settings.serverUrl || !settings.backendConfirmed) && window.electronAPI?.localRuntimeStatus && (
+            <section className="local-runtime-welcome" aria-label="本机环境快速开始">
+              <div><strong>第一次使用 Amadeus？</strong><p>一键准备 Windows 本机环境，安装好后直接在这里对话。</p></div>
+              <button type="button" className="primary" onClick={() => setPage('settings')}>安装本机环境</button>
+            </section>
+          )}
           {page === 'home' && <PlaceholderPage kind="home" />}
           {page === 'realtime' && <RealtimeAgentPage />}
           {page === 'transcribe' && <TranscribePage />}

@@ -1,5 +1,6 @@
 appId: com.asrapp.desktop
 productName: Amadeus
+beforePack: scripts/prepare-runtime.cjs
 icon: ../../img/Amadeus/amadeus-icon.png
 directories:
   output: release
@@ -7,7 +8,11 @@ files:
   - dist/**/*
   - dist-electron/**/*
   - "!dist-electron/electron/**/*"
+  - "!**/*.glb"
+  - "!**/*.gltf"
 extraResources:
+  - from: electron/Set-PetTopmost.ps1
+    to: pet/Set-PetTopmost.ps1
   - from: ../../img/Amadeus
     to: img/Amadeus
     filter:
@@ -16,7 +21,31 @@ extraResources:
       - amadeus.ico
 win:
   icon: ../../img/Amadeus/amadeus-icon.png
-  signAndEditExecutable: true
+  extraResources:
+    - from: ../../.runtime/windows-bootstrap
+      to: runtime
+      filter:
+        - uv.exe
+        - manifest.json
+        - LICENSE-APACHE
+        - LICENSE-MIT
+    - from: ../../backend/app
+      to: backend-bundle/backend/app
+      filter:
+        - "**/*.py"
+        - "**/*.json"
+        - "!**/__pycache__/**"
+    - from: ../../runner
+      to: backend-bundle/runner
+      filter:
+        - "**/*.py"
+        - "**/*.json"
+        - "!**/__pycache__/**"
+    - from: ../../pyproject.toml
+      to: backend-bundle/pyproject.toml
+    - from: ../../uv.lock
+      to: backend-bundle/uv.lock
+  signAndEditExecutable: false
   signDlls: false
   target:
     - target: nsis
@@ -27,6 +56,9 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  perMachine: false
+  allowElevation: false
+  artifactName: Amadeus-Windows-Setup-${version}.${ext}
 linux:
   icon: ../../img/Amadeus/amadeus-icon.png
   target:

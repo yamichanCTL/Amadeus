@@ -142,6 +142,9 @@ async def load_model(
             kwargs["model_name"] = body.model_name
             if body.model_name == settings.default_qwen3asr_model:
                 kwargs["model_dir"] = str(settings.qwen3asr_model_dir)
+        elif name == "formalasr":
+            kwargs["model_name"] = body.model_name
+            kwargs["model_dir"] = str(settings.formalasr_model_path(body.model_name))
         elif name == "x-asr":
             kwargs["model_name"] = body.model_name
             if body.model_name == settings.default_x_asr_model:
@@ -151,7 +154,7 @@ async def load_model(
     if body.device:
         kwargs["device"] = body.device
     if body.compute_type and name != "x-asr":
-        if name == "qwen3asr":
+        if name in {"qwen3asr", "formalasr"}:
             kwargs["torch_dtype"] = body.compute_type
         else:
             kwargs["compute_type"] = body.compute_type

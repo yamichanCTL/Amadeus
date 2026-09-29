@@ -115,10 +115,11 @@ class CodexConnection:
     fingerprint: str
     home: Path
     workspace: Path
+    allow_work: bool
     env: dict[str, str] = field(repr=False)
 
 
-def prepare_connection(settings: Settings) -> CodexConnection:
+def prepare_connection(settings: Settings, allow_work: bool = False) -> CodexConnection:
     source = (
         settings.codex_config_home or Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
     ).resolve()
@@ -161,6 +162,7 @@ def prepare_connection(settings: Settings) -> CodexConnection:
                     provider,
                     selected,
                     effort,
+                    allow_work,
                     hashlib.sha256(auth).hexdigest(),
                     {k: env.get(k) for k in credential_keys if k},
                 ],
@@ -168,7 +170,7 @@ def prepare_connection(settings: Settings) -> CodexConnection:
             ).encode()
         ).hexdigest()
         home = runtime / "connections" / fingerprint[:24]
-        workspace = runtime / "workspace"
+        workspace = settings.project_root.resolve() if allow_work else runtime / "workspace"
         home.mkdir(parents=True, exist_ok=True, mode=0o700)
         workspace.mkdir(parents=True, exist_ok=True, mode=0o700)
         isolated = {
@@ -178,8 +180,8 @@ def prepare_connection(settings: Settings) -> CodexConnection:
             "cli_auth_credentials_store": "file",
             "web_search": "disabled",
             "features": {
-                "shell_tool": False,
-                "unified_exec": False,
+                "shell_tool": allow_work,
+                "unified_exec": allow_work,
                 "shell_snapshot": False,
                 "apps": False,
                 "plugins": False,
@@ -189,9 +191,14 @@ def prepare_connection(settings: Settings) -> CodexConnection:
             },
             "developer_instructions": (
                 "You are Amadeus, a voice assistant. User text may be an ASR transcript. "
-                "Answer the user's request concisely in their language. Ask for clarification "
-                "when speech is ambiguous. Do not claim to execute actions or change files. "
-                "Do not use shell, filesystem, browser, MCP or other external tools."
+                "Answer concisely in the user's language and clarify ambiguous speech. "
+                + (
+                    "The user approved this task for work in the Amadeus workspace. "
+                    "Use available tools to complete the stated task there. Report what changed and what was verified. "
+                    "Do not modify files outside that workspace or run destructive commands."
+                    if allow_work else
+                    "Do not claim to execute actions or change files. Do not use shell, filesystem, browser, MCP or other external tools."
+                )
             ),
         }
         if selected:
@@ -205,7 +212,7 @@ def prepare_connection(settings: Settings) -> CodexConnection:
         if selected.get("base_url"):
             url = urlsplit(selected["base_url"])
             endpoint = urlunsplit((url.scheme, url.hostname or "", url.path, "", ""))
-        return CodexConnection(model, provider, effort, endpoint, fingerprint, home, workspace, env)
+        return CodexConnection(model, provider, effort, endpoint, fingerprint, home, workspace, allow_work, env)
     except CodexError:
         raise
     except (OSError, ValueError, TypeError, AttributeError):

@@ -345,7 +345,7 @@ async def transcribe(
         result = await _run_with_timeout(load_and_transcribe, opts.timeout_sec)
 
         # Post-pipeline
-        if punc_on:
+        if punc_on and not result.raw.get("native_punctuation", False):
             punctuation_started = time.perf_counter()
             result.full_text = await restore_punctuation(result.full_text, result.language)
             timing["punctuation_sec"] = round(time.perf_counter() - punctuation_started, 6)

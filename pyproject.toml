@@ -13,7 +13,8 @@ dependencies = [
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.30.0",
     "python-multipart>=0.0.9",      # file upload
-    "websockets>=12.0",
+    "websockets>=14.0",            # native realtime adapters use additional_headers
+    "tzdata>=2024.1",             # IANA timezone data on Windows
 
     # Config & validation
     "pydantic>=2.7.0",
@@ -88,6 +89,9 @@ qwen3asr = [
     "transformers>=4.51.3",
     "accelerate>=0.30.0",
 ]
+formalasr = [
+    "asr-backend[qwen3asr]",
+]
 vad = [
     "silero-vad>=5.1.0",           # reserved — not wired in yet
 ]
@@ -112,6 +116,9 @@ all = [
 [tool.setuptools.packages.find]
 where = [".", "backend"]
 include = ["runner*", "app*"]
+
+[tool.setuptools.package-data]
+app = ["core/live_voice/*.json", "core/model_catalog.json"]
 
 [tool.ruff]
 line-length = 100

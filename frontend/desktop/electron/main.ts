@@ -13,8 +13,9 @@ import {
   shell,
   Tray
 } from 'electron'
-import { spawn, ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, execFile, ChildProcessWithoutNullStreams } from 'node:child_process'
 import fs from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { runAmadeusWindowsE2E } from './e2e'
@@ -25,6 +26,9 @@ import { calculateInitialWindowBounds } from './window-layout'
 import { localArchiveDay, safeArchiveStem, writeTranscriptionArchive } from './archive-layout'
 import { listSummaryLogs } from './summary-log-layout'
 import { extractAudioForUpload } from './media-upload'
+import { sanitizePetAudioFrame, type PetAudioFrame } from './pet-audio'
+import { LocalRuntimeManager } from './local-runtime'
+import { LocalAvatarStore } from './local-avatar'
 
 type CaptionOverlayOptions = {
   fontSize: number
@@ -79,15 +83,27 @@ function loadAppIcon(): Electron.NativeImage | undefined {
 const isE2EMode = process.argv.includes('--amadeus-e2e')
 if (isE2EMode) app.commandLine.appendSwitch('force-renderer-accessibility')
 const e2eUserData = process.argv.find((arg) => arg.startsWith('--amadeus-e2e-user-data='))?.slice('--amadeus-e2e-user-data='.length)
+const previewUserData = process.argv.find((arg) => arg.startsWith('--amadeus-preview-user-data='))?.slice('--amadeus-preview-user-data='.length)
 
 let mainWindow: BrowserWindow | null = null
 let statusOverlay: BrowserWindow | null = null
 let captionOverlay: BrowserWindow | null = null
+let petWindow: BrowserWindow | null = null
+let lastPetAudioFrame: PetAudioFrame | null = null
+let petEnabled = false
+let petDragging: { cursor: Electron.Point; position: number[] } | null = null
+let petMouseIgnored = true
+let petPositionSaveTimer: ReturnType<typeof setTimeout> | null = null
+let petState: Record<string, string> = { status: 'idle', emotion: 'neutral', action: 'idle', reply: '', error: '' }
 // User-dragged position of the status overlay, kept across phase transitions
 // within a session so recording→thinking→result don't snap back to center.
 let statusOverlayPos: { x: number; y: number } | null = null
 let tray: Tray | null = null
 let forceQuit = false
+let localRuntime: LocalRuntimeManager | null = null
+let localAvatar: LocalAvatarStore | null = null
+let runtimeQuitFinished = false
+let runtimeQuitPending = false
 let keepRunningInBackground = false
 let mouseHook: ChildProcessWithoutNullStreams | null = null
 let keyboardHook: ChildProcessWithoutNullStreams | null = null
@@ -126,7 +142,9 @@ function emitHotkeyTriggered() {
   mainWindow?.webContents.send('hotkey:triggered')
 }
 
-if (isE2EMode && e2eUserData) {
+if (previewUserData) {
+  app.setPath('userData', path.resolve(previewUserData))
+} else if (isE2EMode && e2eUserData) {
   app.setPath('userData', path.resolve(e2eUserData))
 } else if (isDev) {
   app.setPath('userData', path.join(os.tmpdir(), 'amadeus-desktop-dev'))
@@ -149,7 +167,8 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      backgroundThrottling: false
     }
   })
 
@@ -166,7 +185,8 @@ function createWindow() {
   } else {
     mainWindow.loadFile(
       path.join(__dirname, '..', 'dist', 'index.html'),
-      isE2EMode ? { query: { e2e: '1' } } : undefined
+      { ...(isE2EMode ? { query: { e2e: '1' } } : {}),
+        ...(process.argv.includes('--amadeus-realtime') ? { hash: 'realtime' } : {}) }
     )
   }
 
@@ -224,6 +244,10 @@ let liveCaptionActive = false
 function buildTrayMenu(): Electron.Menu {
   return Menu.buildFromTemplate([
     { label: '显示窗口', click: () => showMainWindow() },
+    { label: '爱弥斯桌宠', type: 'checkbox', checked: petEnabled, click: () => {
+      setPetEnabled(!petEnabled)
+      mainWindow?.webContents.send('pet:enabledChanged', petEnabled)
+    } },
     { type: 'separator' },
     {
       label: liveCaptionActive ? '停止实时识别' : '开启实时识别',
@@ -264,6 +288,177 @@ function showMainWindow() {
   mainWindow.restore()
   mainWindow.show()
   mainWindow.focus()
+}
+
+const petPositionFile = () => path.join(app.getPath('userData'), 'aemeath-pet-position.json')
+
+function petPosition(x: number, y: number, width: number, height: number) {
+  const area = screen.getDisplayNearestPoint({ x, y }).workArea
+  return {
+    x: Math.round(clamp(x, area.x - width * .45, area.x + area.width - width * .55)),
+    y: Math.round(clamp(y, area.y - height * .4, area.y + area.height - height * .6))
+  }
+}
+
+function savePetPosition() {
+  if (!petWindow || petWindow.isDestroyed()) return
+  const { x, y } = petWindow.getBounds()
+  void fs.writeFile(petPositionFile(), JSON.stringify({ x, y }), 'utf8').catch(() => undefined)
+}
+
+function schedulePetPositionSave() {
+  if (petPositionSaveTimer) clearTimeout(petPositionSaveTimer)
+  petPositionSaveTimer = setTimeout(() => {
+    petPositionSaveTimer = null
+    savePetPosition()
+  }, 350)
+}
+
+function applyNativePetTopmost() {
+  if (!isWindows || !petWindow || petWindow.isDestroyed()) return
+  const script = isDev
+    ? path.join(__dirname, '..', 'electron', 'Set-PetTopmost.ps1')
+    : path.join(process.resourcesPath, 'pet', 'Set-PetTopmost.ps1')
+  const handle = String(petWindow.getNativeWindowHandle().readBigUInt64LE())
+  execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-File', script, '-Handle', handle, '-Apply'],
+    { windowsHide: true, timeout: 5000 }, (error) => {
+      if (error) console.warn('Pet topmost helper:', error.message)
+    })
+}
+
+function createPetWindow() {
+  if (!isWindows || isE2EMode || petWindow) return
+  const area = screen.getPrimaryDisplay().workArea
+  const width = Math.min(620, Math.max(460, Math.round(area.width * .27)))
+  const height = Math.min(840, Math.max(580, Math.round(area.height * .82)))
+  let x = area.x + area.width - width - 24
+  let y = area.y + area.height - height - 5
+  try {
+    const saved = JSON.parse(readFileSync(petPositionFile(), 'utf8')) as { x?: number; y?: number }
+    if (Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+      x = saved.x!
+      y = saved.y!
+    }
+  } catch { /* first launch */ }
+  const position = petPosition(x, y, width, height)
+  petWindow = new BrowserWindow({
+    ...position, width, height, show: false, frame: false, transparent: true,
+    backgroundColor: '#00000000', hasShadow: false, resizable: false,
+    alwaysOnTop: true, skipTaskbar: true, autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'pet-preload.js'), contextIsolation: true,
+      nodeIntegration: false, sandbox: true, backgroundThrottling: false
+    }
+  })
+  const window = petWindow
+  petMouseIgnored = true
+  window.setAlwaysOnTop(true, 'screen-saver')
+  window.setIgnoreMouseEvents(true, { forward: true })
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  window.webContents.on('will-navigate', (event) => event.preventDefault())
+  window.webContents.on('did-finish-load', () => window.webContents.send('pet:state', petState))
+  window.once('ready-to-show', () => {
+    window.showInactive()
+    window.setAlwaysOnTop(true, 'screen-saver')
+    applyNativePetTopmost()
+  })
+  window.on('close', savePetPosition)
+  window.on('closed', () => {
+    if (petWindow !== window) return
+    petWindow = null
+    if (petEnabled) {
+      petEnabled = false
+      mainWindow?.webContents.send('pet:enabledChanged', false)
+      if (tray && !tray.isDestroyed()) tray.setContextMenu(buildTrayMenu())
+    }
+  })
+  if (isDev) void window.loadURL(`${process.env.VITE_DEV_SERVER_URL!.replace(/\/$/, '')}/pet.html`)
+  else void window.loadFile(path.join(__dirname, '..', 'dist', 'pet.html'))
+}
+
+function setPetEnabled(enabled: boolean) {
+  petEnabled = Boolean(enabled) && isWindows && !isE2EMode
+  if (petEnabled) createPetWindow()
+  else {
+    petDragging = null
+    petWindow?.close()
+    petWindow = null
+  }
+  if (tray && !tray.isDestroyed()) tray.setContextMenu(buildTrayMenu())
+  return petEnabled
+}
+
+function registerPetIpc() {
+  const fromMain = (event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) => event.sender === mainWindow?.webContents
+  const fromPet = (event: Electron.IpcMainEvent) => event.sender === petWindow?.webContents
+  ipcMain.handle('agent:getWorkToken', (event) => {
+    if (!fromMain(event)) return ''
+    try {
+      const local = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local')
+      return readFileSync(path.join(local, 'Amadeus', 'work-token'), 'utf8').trim()
+    } catch { return '' }
+  })
+  ipcMain.handle('pet:setEnabled', (event, enabled: boolean) => fromMain(event) ? setPetEnabled(enabled) : false)
+  ipcMain.on('pet:audioFrame', (event, raw: unknown) => {
+    if (!fromMain(event)) return
+    const frame = sanitizePetAudioFrame(raw)
+    if (!frame || (lastPetAudioFrame && (frame.epoch < lastPetAudioFrame.epoch
+      || frame.timestamp < lastPetAudioFrame.timestamp))) return
+    lastPetAudioFrame = frame
+    petWindow?.webContents.send('pet:audioFrame', frame)
+  })
+  ipcMain.on('pet:state', (event, raw: unknown) => {
+    if (!fromMain(event) || !raw || typeof raw !== 'object') return
+    const state = raw as Record<string, unknown>
+    const valid = (value: unknown, choices: string[], fallback: string) => choices.includes(String(value)) ? String(value) : fallback
+    petState = {
+      status: valid(state.status, ['idle', 'listening', 'transcribing', 'thinking', 'responding', 'speaking', 'error'], 'idle'),
+      emotion: valid(state.emotion, ['neutral', 'happy', 'curious', 'focused', 'surprised', 'concerned'], 'neutral'),
+      action: valid(state.action, ['idle', 'listening', 'thinking', 'speaking', 'observing'], 'idle'),
+      reply: typeof state.reply === 'string' ? state.reply.slice(0, 240) : '',
+      error: typeof state.error === 'string' ? state.error.slice(0, 180) : '',
+      gesture: valid(state.gesture, ['none', 'wave', 'dance', 'step_left', 'step_right', 'come_closer', 'step_back', 'turn_left', 'turn_right'], 'none'),
+      gestureId: typeof state.gestureId === 'string' ? state.gestureId.slice(0, 80) : ''
+    }
+    petWindow?.webContents.send('pet:state', petState)
+  })
+  ipcMain.on('pet:interactive', (event, interactive: boolean) => {
+    if (!fromPet(event) || !petWindow) return
+    const ignore = !Boolean(interactive)
+    if (ignore !== petMouseIgnored) {
+      petWindow.setIgnoreMouseEvents(ignore, { forward: true })
+      petMouseIgnored = ignore
+    }
+  })
+  ipcMain.on('pet:dragStart', (event) => {
+    if (fromPet(event) && petWindow) petDragging = { cursor: screen.getCursorScreenPoint(), position: petWindow.getPosition() }
+  })
+  ipcMain.on('pet:dragMove', (event) => {
+    if (!fromPet(event) || !petWindow || !petDragging) return
+    const point = screen.getCursorScreenPoint()
+    const [width, height] = petWindow.getSize()
+    const next = petPosition(petDragging.position[0] + point.x - petDragging.cursor.x,
+      petDragging.position[1] + point.y - petDragging.cursor.y, width, height)
+    petWindow.setPosition(next.x, next.y)
+  })
+  ipcMain.on('pet:dragEnd', (event) => { if (fromPet(event)) { petDragging = null; savePetPosition() } })
+  ipcMain.on('pet:moveBy', (event, dx: number, dy: number) => {
+    if (!fromPet(event) || !petWindow) return
+    const [x, y] = petWindow.getPosition()
+    const [width, height] = petWindow.getSize()
+    const next = petPosition(x + clamp(Number(dx) || 0, -200, 200), y + clamp(Number(dy) || 0, -200, 200), width, height)
+    petWindow.setPosition(next.x, next.y)
+    schedulePetPositionSave()
+  })
+  ipcMain.on('pet:command', (event, raw: unknown) => {
+    if (!fromPet(event) || !raw || typeof raw !== 'object') return
+    const command = raw as { type?: string; text?: string }
+    if (!['open', 'voice', 'text'].includes(command.type || '')) return
+    const type = command.type as 'open' | 'voice' | 'text'
+    if (type === 'open') showMainWindow()
+    mainWindow?.webContents.send('pet:command', { id: Date.now(), type,
+      text: type === 'text' && typeof command.text === 'string' ? command.text.trim().slice(0, 2000) : '' })
+  })
 }
 
 function clamp(value: number, min: number, max: number) {
@@ -1113,6 +1308,59 @@ async function injectText(text: string) {
 }
 
 function registerIpc() {
+  registerPetIpc()
+  const avatarSender = (event: Electron.IpcMainInvokeEvent, mainOnly = false) => {
+    const window = event.sender === mainWindow?.webContents ? mainWindow : !mainOnly && event.sender === petWindow?.webContents ? petWindow : null
+    if (!window || event.senderFrame !== window.webContents.mainFrame || !localAvatar) throw new Error('Only Amadeus windows can access the imported model')
+  }
+  ipcMain.handle('avatar:status', (event) => { avatarSender(event); return localAvatar!.status() })
+  ipcMain.handle('avatar:read', (event) => { avatarSender(event); return localAvatar!.read() })
+  ipcMain.handle('avatar:clear', (event) => { avatarSender(event, true); return localAvatar!.clear() })
+  ipcMain.handle('avatar:import', async (event) => {
+    avatarSender(event, true)
+    const selection = await dialog.showOpenDialog(mainWindow!, {
+      title: '导入你自己的 GLB 模型', buttonLabel: '导入模型',
+      filters: [{ name: 'GLB 3D 模型', extensions: ['glb'] }], properties: ['openFile'],
+    })
+    if (selection.canceled || !selection.filePaths[0]) return { ...await localAvatar!.status(), cancelled: true }
+    try { return await localAvatar!.importFile(selection.filePaths[0]) } catch (error) {
+      return { ...await localAvatar!.status(), error: error instanceof Error ? error.message : '模型导入失败，请检查文件。' }
+    }
+  })
+  const runtimeAction = (channel: string, action: (...args: unknown[]) => unknown) => {
+    ipcMain.handle(channel, (event, ...args: unknown[]) => {
+      if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+        throw new Error('Only the main Amadeus window can manage the local environment')
+      }
+      if (!localRuntime) throw new Error('本机一键安装目前支持 Windows 桌面版')
+      return action(...args)
+    })
+  }
+  runtimeAction('runtime:status', () => localRuntime!.status())
+  runtimeAction('runtime:install', () => localRuntime!.install())
+  runtimeAction('runtime:installExtra', (extra) => {
+    if (typeof extra !== 'string') throw new Error('Invalid runtime component')
+    return localRuntime!.installExtra(extra)
+  })
+  runtimeAction('runtime:start', () => localRuntime!.start())
+  runtimeAction('runtime:stop', () => localRuntime!.stop())
+  runtimeAction('runtime:autoStart', (enabled) => {
+    if (typeof enabled !== 'boolean') throw new Error('Invalid auto-start preference')
+    return localRuntime!.setAutoStart(enabled)
+  })
+  runtimeAction('runtime:openLogs', async () => {
+    const state = await localRuntime!.status()
+    await fs.mkdir(path.dirname(state.logPath), { recursive: true })
+    await fs.appendFile(state.logPath, '')
+    const error = await shell.openPath(state.logPath)
+    if (error) throw new Error(error)
+  })
+  runtimeAction('runtime:openFolder', async () => {
+    const state = await localRuntime!.status()
+    await fs.mkdir(state.root, { recursive: true })
+    const error = await shell.openPath(state.root)
+    if (error) throw new Error(error)
+  })
   ipcMain.on('win:minimize', () => mainWindow?.minimize())
   ipcMain.on('win:maximize', () => {
     if (!mainWindow) return
@@ -1244,13 +1492,32 @@ function registerIpc() {
   })
 }
 
-const gotLock = isE2EMode || app.requestSingleInstanceLock()
+const gotLock = isE2EMode || Boolean(previewUserData) || app.requestSingleInstanceLock()
 if (!gotLock) app.quit()
 
 app.on('second-instance', showMainWindow)
 
 app.whenReady().then(() => {
   if (isE2EMode) app.setAccessibilitySupportEnabled(true)
+  localAvatar = new LocalAvatarStore(path.join(app.getPath('userData'), 'avatars'), (status) => {
+    for (const window of [mainWindow, petWindow]) {
+      if (window && !window.isDestroyed()) window.webContents.send('avatar:changed', status)
+    }
+  })
+  if (isWindows) {
+    const projectRoot = path.resolve(__dirname, '../../..')
+    localRuntime = new LocalRuntimeManager({
+      root: path.join(app.getPath('userData'), 'local-runtime'),
+      bundlePath: app.isPackaged ? path.join(process.resourcesPath, 'backend-bundle') : projectRoot,
+      uvPath: app.isPackaged ? path.join(process.resourcesPath, 'runtime', 'uv.exe') : path.join(projectRoot, '.runtime/windows-bootstrap/uv.exe'),
+      onChange: (state) => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('runtime:state', state)
+      },
+    })
+    void localRuntime.status().then((state) => {
+      if (state.autoStart && state.installed) return localRuntime!.start()
+    }).catch((error) => console.error('Local runtime startup failed:', error instanceof Error ? error.message : 'Unknown error'))
+  }
   configureDisplayMediaCapture()
   registerIpc()
   if (isWindows) void ensureTextInjectHelper()
@@ -1310,9 +1577,23 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  petWindow?.destroy()
   globalShortcut.unregisterAll()
   stopMouseHook()
   stopKeyboardHook()
   stopTextInjectHelper()
   tray?.destroy()
+})
+
+// Keep the Electron event loop alive until the owned installer/backend has exited.
+app.on('before-quit', (event) => {
+  if (!localRuntime || runtimeQuitFinished) return
+  event.preventDefault()
+  if (runtimeQuitPending) return
+  runtimeQuitPending = true
+  forceQuit = true
+  void localRuntime.dispose().finally(() => {
+    runtimeQuitFinished = true
+    app.quit()
+  })
 })

@@ -1,0 +1,28 @@
+:root { color-scheme: dark; font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent !important; }
+body { position: relative; user-select: none; -webkit-user-select: none; }
+#petCanvas { display: block; width: 100%; height: 100%; background: transparent; outline: none; }
+.hidden { display: none !important; }
+.toast { position: absolute; right: 14%; top: 8%; max-width: 260px; padding: 11px 15px; border: 1px solid rgba(230,204,255,.66); border-radius: 18px 18px 5px 18px; color: #332842; background: rgba(255,248,255,.96); box-shadow: 0 6px 24px rgba(30,12,42,.17); font-size: 13px; line-height: 1.45; pointer-events: none; }
+.chat-panel { position: absolute; left: 8px; bottom: 20px; width: min(320px, calc(100% - 16px)); padding: 13px; border: 1px solid rgba(224,196,255,.55); border-radius: 19px; color: #f8f3ff; background: rgba(28,20,43,.94); box-shadow: 0 12px 34px rgba(14,8,25,.38); backdrop-filter: blur(18px); user-select: text; -webkit-user-select: text; }
+button { cursor: pointer; font: inherit; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px; }
+.panel-head > div { display: flex; align-items: center; gap: 7px; }
+.panel-head strong { font-size: 15px; }
+.panel-head small { margin-left: 5px; color: #c9b9da; font-size: 10px; }
+.star { color: #e7c2ff; font-size: 19px; }
+#closeChat { width: 26px; height: 26px; border: 0; border-radius: 50%; color: #eee4f5; background: rgba(255,255,255,.09); font-size: 20px; line-height: 1; }
+.chat-log { min-height: 92px; max-height: 142px; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; margin-bottom: 10px; scrollbar-width: thin; }
+.message { max-width: 94%; padding: 8px 10px; border-radius: 12px; font-size: 12px; line-height: 1.5; word-wrap: break-word; }
+.message.aemeath { align-self: flex-start; color: #f6ebff; background: rgba(171,126,222,.21); }
+.message.user { align-self: flex-end; color: #31243d; background: #e9d5ff; }
+.quick-actions { display: flex; gap: 6px; margin-bottom: 9px; }
+.quick-actions button { padding: 6px 9px; border: 1px solid rgba(214,185,246,.32); border-radius: 999px; color: #e9d8f9; background: rgba(255,255,255,.07); font-size: 11px; }
+form { display: flex; gap: 7px; }
+input { min-width: 0; flex: 1; height: 35px; padding: 0 10px; border: 1px solid rgba(225,199,255,.3); border-radius: 10px; color: white; background: rgba(255,255,255,.1); outline: none; font: inherit; font-size: 12px; }
+input:focus { border-color: #d9abf9; }
+input::placeholder { color: #b6a4c5; }
+#sendButton { width: 35px; height: 35px; border: 0; border-radius: 10px; color: #271834; background: #e7c6ff; font-size: 18px; }
+.panel-foot { display: flex; justify-content: space-between; align-items: center; padding-top: 10px; color: #a695b6; font-size: 10px; }
+.panel-foot button { border: 0; color: #cbb6db; background: none; font-size: 10px; }

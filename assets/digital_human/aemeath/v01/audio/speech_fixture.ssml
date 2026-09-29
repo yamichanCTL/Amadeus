@@ -1,0 +1,7 @@
+<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xml:lang="zh-CN">
+  <break time="350ms"/>
+  <mark name="greeting_start"/>你好，我是艾米斯。很高兴见到你。
+  <mark name="greeting_end"/><break time="850ms"/>
+  <mark name="explanation_start"/>现在我会跟着声音说话。停一下，<break time="650ms"/>再继续。我们慢慢把这些动作做好。
+  <mark name="explanation_end"/><break time="600ms"/>
+</speak>

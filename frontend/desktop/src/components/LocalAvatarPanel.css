@@ -1,0 +1,8 @@
+.local-avatar-panel { padding: 16px; border: 1px solid var(--border-color, #d6dfed); border-radius: 12px; margin: 16px 0; }
+.local-avatar-panel p { font-size: 13px; line-height: 1.6; margin: 8px 0; overflow-wrap: anywhere; }
+.local-avatar-panel strong { display: block; overflow-wrap: anywhere; }
+.local-avatar-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.local-avatar-panel.compact { color: #fff; background: rgba(22, 34, 53, .88); border-color: rgba(255,255,255,.22); max-width: 330px; margin: 0; }
+.agent-local-avatar-empty { position: absolute; inset: 70px 20px 86px; display: flex; align-items: center; justify-content: center; z-index: 4; }
+.agent-local-avatar-empty > div { max-width: 100%; }
+.agent-local-avatar-empty [role=alert] { color: #ffb9b9; font-size: 13px; overflow-wrap: anywhere; }

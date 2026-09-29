@@ -1,0 +1,473 @@
+{
+  "passed": true,
+  "checks": {
+    "model": {
+      "main": {
+        "loaded": "true",
+        "count": 12,
+        "mouth": 0,
+        "voiced": "false",
+        "error": ""
+      },
+      "pet": {
+        "loaded": true,
+        "count": 12,
+        "mouth": 0,
+        "voiced": false
+      }
+    },
+    "preview": {
+      "maxima": {
+        "main": 0.7476850390370614,
+        "pet": 0.7476145124039049
+      },
+      "samples": [
+        {
+          "elapsedMs": 4,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 51,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 99,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 145,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 192,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 237,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 284,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 332,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 382,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 429,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 475,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 521,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 568,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 615,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 662,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 709,
+          "main": 0.046707208910245164,
+          "pet": 0.03887840338872901
+        },
+        {
+          "elapsedMs": 755,
+          "main": 0.16532700317993623,
+          "pet": 0.16395319961151114
+        },
+        {
+          "elapsedMs": 994,
+          "main": 0.726601192481195,
+          "pet": 0.6884152465548325
+        },
+        {
+          "elapsedMs": 1040,
+          "main": 0.6955768233831,
+          "pet": 0.6992814022709103
+        },
+        {
+          "elapsedMs": 1091,
+          "main": 0.3795886885480396,
+          "pet": 0.3802883931187341
+        },
+        {
+          "elapsedMs": 1137,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 1182,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 1229,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 1274,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 1321,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 1367,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 1415,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 1461,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 1507,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 1554,
+          "main": 0.327501777245992,
+          "pet": 0.327501777245992
+        },
+        {
+          "elapsedMs": 1601,
+          "main": 0.5662179026334718,
+          "pet": 0.5957440902609624
+        },
+        {
+          "elapsedMs": 1649,
+          "main": 0.3208105041138995,
+          "pet": 0.3756303379771994
+        },
+        {
+          "elapsedMs": 1695,
+          "main": 0.23501499635042708,
+          "pet": 0.24145234795569037
+        },
+        {
+          "elapsedMs": 1740,
+          "main": 0.20664607409032967,
+          "pet": 0.20796081176809295
+        },
+        {
+          "elapsedMs": 1790,
+          "main": 0.24513947753646248,
+          "pet": 0.24538779940792327
+        },
+        {
+          "elapsedMs": 1836,
+          "main": 0.2635119588654966,
+          "pet": 0.2651340590316569
+        },
+        {
+          "elapsedMs": 1882,
+          "main": 0.24413400102277755,
+          "pet": 0.24448407470541839
+        },
+        {
+          "elapsedMs": 1928,
+          "main": 0.3862508886436951,
+          "pet": 0.37577701838552013
+        },
+        {
+          "elapsedMs": 1974,
+          "main": 0.6554237898779071,
+          "pet": 0.6489455542617248
+        },
+        {
+          "elapsedMs": 2021,
+          "main": 0.6090935222253464,
+          "pet": 0.6076954212655636
+        },
+        {
+          "elapsedMs": 2067,
+          "main": 0.43396920619336676,
+          "pet": 0.44296787968106044
+        },
+        {
+          "elapsedMs": 2115,
+          "main": 0.2059260127445368,
+          "pet": 0.21156248581791423
+        },
+        {
+          "elapsedMs": 2161,
+          "main": 0.17754179343651075,
+          "pet": 0.17727228588514418
+        },
+        {
+          "elapsedMs": 2207,
+          "main": 0.13644556031662414,
+          "pet": 0.13638739652194942
+        },
+        {
+          "elapsedMs": 2253,
+          "main": 0.13993603986953476,
+          "pet": 0.13992348724533626
+        },
+        {
+          "elapsedMs": 2300,
+          "main": 0.15533846725531428,
+          "pet": 0.15517765932597047
+        },
+        {
+          "elapsedMs": 2346,
+          "main": 0.12587691219903677,
+          "pet": 0.1243327244466156
+        },
+        {
+          "elapsedMs": 2394,
+          "main": 0.1659696208002142,
+          "pet": 0.16343873026407835
+        },
+        {
+          "elapsedMs": 2444,
+          "main": 0.2330134034588569,
+          "pet": 0.23256703773090803
+        },
+        {
+          "elapsedMs": 2492,
+          "main": 0.17934008221137035,
+          "pet": 0.18078374475445855
+        },
+        {
+          "elapsedMs": 2540,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 2587,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 2633,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 2682,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 2728,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 2775,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 2821,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 2867,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 2915,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 2962,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 3008,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 3054,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 3101,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 3147,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 3194,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 3241,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 3290,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 3336,
+          "main": 0.01650995024059485,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 3384,
+          "main": 0.16290722492780543,
+          "pet": 0.1635310954928759
+        },
+        {
+          "elapsedMs": 3432,
+          "main": 0.4236634417715694,
+          "pet": 0.4091726015501653
+        },
+        {
+          "elapsedMs": 3478,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 3528,
+          "main": 0.042267131820358905,
+          "pet": 0.03953857426757677
+        },
+        {
+          "elapsedMs": 3574,
+          "main": 0.31587219544696477,
+          "pet": 0.3160557562115528
+        },
+        {
+          "elapsedMs": 3621,
+          "main": 0.7019259042521021,
+          "pet": 0.6984449031026141
+        },
+        {
+          "elapsedMs": 3666,
+          "main": 0.7476850390370614,
+          "pet": 0.7476145124039049
+        },
+        {
+          "elapsedMs": 3712,
+          "main": 0.36532301819307567,
+          "pet": 0.3614824961700871
+        },
+        {
+          "elapsedMs": 3759,
+          "main": 0.28085896786245945,
+          "pet": 0.28003012528177373
+        },
+        {
+          "elapsedMs": 3808,
+          "main": 0.19468066799442948,
+          "pet": 0.19568552061757005
+        },
+        {
+          "elapsedMs": 3854,
+          "main": 0.2178408965831638,
+          "pet": 0.21805775893583026
+        },
+        {
+          "elapsedMs": 3901,
+          "main": 0.20881205249146415,
+          "pet": 0.20880813262574754
+        },
+        {
+          "elapsedMs": 3949,
+          "main": 0.12422736123189808,
+          "pet": 0.12386313608371137
+        },
+        {
+          "elapsedMs": 3995,
+          "main": 0,
+          "pet": 0
+        },
+        {
+          "elapsedMs": 4042,
+          "main": 0.15132585710871396,
+          "pet": 0.14162044757121905
+        },
+        {
+          "elapsedMs": 4088,
+          "main": 0.2759502585026954,
+          "pet": 0.2723656949646995
+        },
+        {
+          "elapsedMs": 4136,
+          "main": 0.384622302948664,
+          "pet": 0.42822505581549913
+        },
+        {
+          "elapsedMs": 4182,
+          "main": 0.1803841597416653,
+          "pet": 0.17957474899802375
+        }
+      ]
+    },
+    "manual_stop": {
+      "observedClosureMs": 8,
+      "note": "UI stop to inspected rendered weights, not acoustic/model barge-in latency"
+    },
+    "minimized": {
+      "petMax": 0.7336984141085647
+    },
+    "live_gemini": {
+      "mainMax": 0.13638742508019358,
+      "petMax": 0.13638742508019358,
+      "firstObservedBothMs": 2317,
+      "syntheticMic": true
+    }
+  },
+  "source": "packaged Electron, real PCM playback, actual Three morph weights",
+  "microphone": "synthetic silent fixture"
+}

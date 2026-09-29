@@ -27,6 +27,7 @@ export type CodexOptions = {
   effort?: string
   context?: string
   timeout_sec?: number
+  allow_work?: boolean
 }
 export type CodexVoiceEvent = {
   type: string
@@ -47,6 +48,46 @@ export async function codexRequest<T>(base: string, path: string, init?: Request
     throw new Error(typeof detail === 'string' ? detail : detail?.message || `请求失败 (${response.status})`)
   }
   return body as T
+}
+
+export async function streamCodexTurn(
+  base: string, body: object, signal: AbortSignal,
+  onEvent: (event: CodexVoiceEvent) => void,
+): Promise<CodexReply> {
+  const response = await fetch(`${base.replace(/\/$/, '')}/v1/agents/codex/turns/stream`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify(body), signal,
+  })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}))
+    throw new Error(payload.detail?.message || payload.detail || `Codex 请求失败 (${response.status})`)
+  }
+  if (!response.body) throw new Error('后端未返回流式响应')
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      buffer += decoder.decode(value, { stream: !done })
+      let boundary: RegExpExecArray | null
+      while ((boundary = /\r?\n\r?\n/.exec(buffer))) {
+        const packet = buffer.slice(0, boundary.index)
+        buffer = buffer.slice(boundary.index + boundary[0].length)
+        const data = packet.split(/\r?\n/).filter((line) => line.startsWith('data:')).map((line) => line.slice(5).trimStart()).join('\n')
+        if (!data) continue
+        const event = JSON.parse(data) as CodexVoiceEvent
+        onEvent(event)
+        if (event.type === 'agent.error') throw new Error(event.message || 'Codex 请求失败')
+        if (event.type === 'agent.completed' && event.result) return event.result
+      }
+      if (buffer.length > 1000000) throw new Error('流式响应格式异常')
+      if (done) throw new Error('Codex 流式连接提前结束')
+    }
+  } finally {
+    await reader.cancel().catch(() => {})
+    reader.releaseLock()
+  }
 }
 
 

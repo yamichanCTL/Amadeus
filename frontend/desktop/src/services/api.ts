@@ -1,3 +1,5 @@
+import type { DownloadRegion, DownloadSource, ModelDownloadCatalog, ModelDownloadJob } from './modelDownloads'
+
 export type Segment = {
   start: number
   end: number
@@ -538,6 +540,22 @@ export class ASRApi {
 
   health() {
     return fetch(this.url('/v1/health')).then((res) => parseResponse<{ status: string; uptime_sec: number }>(res))
+  }
+
+  modelDownloadCatalog(signal?: AbortSignal) {
+    return fetch(this.url('/v1/model-downloads/catalog'), { signal })
+      .then(res => parseResponse<ModelDownloadCatalog>(res))
+  }
+
+  startModelDownload(id: string, region: DownloadRegion, source: DownloadSource) {
+    return fetch(this.url(`/v1/model-downloads/${encodeURIComponent(id)}/start`), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ region, source }),
+    }).then(res => parseResponse<ModelDownloadJob>(res))
+  }
+
+  cancelModelDownload(id: string) {
+    return fetch(this.url(`/v1/model-downloads/${encodeURIComponent(id)}/cancel`), { method: 'POST' })
+      .then(res => parseResponse<ModelDownloadJob>(res))
   }
 
   async models(options: { signal?: AbortSignal; timeoutMs?: number } = {}) {

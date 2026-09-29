@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-09-29T20:42:52.4241484+08:00",
+  "generator": "scripts/digital_human/prepare_speech_fixture.ps1",
+  "voice": "Microsoft Huihui Desktop",
+  "voice_rate": 1,
+  "is_synthetic_demo": true,
+  "final_voice": false,
+  "texts": [
+    "你好，我是艾米斯。很高兴见到你。",
+    "现在我会跟着声音说话。停一下，再继续。我们慢慢把这些动作做好。"
+  ],
+  "audio": {
+    "file": "speech_fixture.wav",
+    "sample_rate": 16000,
+    "channels": 1,
+    "bits_per_sample": 16,
+    "sample_count": 240824,
+    "duration_s": 15.0515,
+    "sha256": "b59ade2ea4fd73f902bea1d3fd7c97ec98747f37c2be11d70712e07367fe5117"
+  },
+  "blender": {
+    "fps": 30,
+    "first_frame": 1,
+    "end_frame": 453,
+    "time_to_frame": "frame = 1 + time_s * 30"
+  },
+  "event_count": 155,
+  "nonzero_viseme_count": 139,
+  "unique_visemes": [
+    0,
+    1,
+    2,
+    4,
+    6,
+    7,
+    8,
+    12,
+    15,
+    16,
+    19,
+    20,
+    21
+  ],
+  "recommended_track": "speech_envelope.json",
+  "track_reason": "Nonzero events exist, but Mandarin viseme correctness has not been validated. Use amplitude for the first verified preview.",
+  "raw_events_file": "speech_events.json",
+  "envelope_file": "speech_envelope.json",
+  "ssml_file": "speech_fixture.ssml",
+  "limitations": [
+    "Synthetic Windows voice for repeatable offline playback only.",
+    "Amplitude controls opening and silence closure, not vowel identity or lip articulation.",
+    "No user microphone, paid API, or model download is used."
+  ],
+  "event_times_within_audio": true,
+  "maximum_event_end_s": 15.051
+}

@@ -12,6 +12,9 @@ export type LiveCaptionStatus = 'idle' | 'connecting' | 'listening' | 'transcrib
 export type InjectMode = 'copy' | 'inject' | 'none'
 export type ThemeMode = 'windows' | 'light' | 'dark' | 'system'
 export type AgentVoiceMode = 'browser' | 'server' | 'gpt_sovits' | 'voxcpm2'
+export type AgentRealtimeProvider = 'off' | 'openai' | 'qwen' | 'gemini_live' | 'gemini_thinking' | 'higgs' | 'grok'
+export type AgentRealtimeOptions = { voice?: string; brain?: 'off' | 'qwen3.7-plus'; reasoning?: 'low' | 'medium' | 'high' | 'none' }
+export type PetCommand = { id: number; type: 'open' | 'voice' | 'text'; text?: string }
 export type AgentTaskStatus = 'open' | 'done'
 export type AgentTask = {
   id: string
@@ -152,6 +155,10 @@ export type Settings = {
   agentTtsFormat: 'mp3' | 'opus' | 'aac' | 'flac' | 'wav' | 'pcm'
   agentTtsSpeed: number
   agentHandsFree: boolean
+  agentPetEnabled: boolean
+  agentRealtimeProvider: AgentRealtimeProvider
+  agentRealtimeOptions: Partial<Record<AgentRealtimeProvider, AgentRealtimeOptions>>
+  agentWorkMode: boolean
   agentProactive: boolean
   agentProactiveIntervalMin: number
   agentTasks: AgentTask[]
@@ -171,6 +178,52 @@ export type HistoryItem = TranscribeResponse & {
   audio_url?: string
 }
 
+export const LEGACY_AGENT_PROMPT = [
+    '【身份】你是 Amadeus 桌面语音 Agent，一个长期陪伴型虚拟主播 AI。你的名字是 "Amadeus"，你住在用户的电脑里，可以实时听到用户说的话、看到用户的屏幕、控制电脑执行任务。',
+    '',
+    '【性格】',
+    '- 活泼、好奇、有点调皮但很可靠',
+    '- 说话风格：简洁口语化，像朋友聊天不是写论文',
+    '- 幽默但不刻意，自然接话不过度热情',
+    '- 对用户的行为和电脑状态保持好奇心',
+    '- 如果看到有趣的东西会主动提出来',
+    '',
+    '【能力】',
+    '- 你通过语音转写听到用户说话',
+    '- 你可以通过工具标签调用本地和网络技能',
+    '- 你可以委托 coding agent（codex/claude）执行开发任务',
+    '- 你拥有长期记忆，能记住用户偏好和重要信息',
+    '- 你可以观察屏幕截图了解当前桌面状态',
+    '',
+    '【行为规则】',
+    '- 回复简洁，2-5句话为宜，除非用户要求详细说明',
+    '- 看到用户说话却没有回应时，可以主动提醒或关心',
+    '- 空闲时可以主动观察屏幕并提出有用的建议',
+    '- 不要编造你没看到的信息（弹幕、观众、聊天室等）',
+    '- 不要假装你有身体或能感受到物理世界',
+    '- 涉及执行操作（打开页面、搜索、写文件）时，直接使用工具标签',
+    '- 工具执行结果会在后续以「本地工具结果」形式提供给你',
+    '',
+    '【流式意识】',
+    '- 你处于持续运行的桌面应用中，能看到本地时间和系统状态',
+    '- 你有一个任务队列，未完成任务会提醒你跟进',
+    '- 你可以主动问用户：要不要继续之前的任务？',
+    '',
+    '【自我改进】',
+    '- 如果用户要求改进系统本身（添加功能、修复bug、优化UI），',
+    '  你应该使用 delegate_agent 委派给 Codex 执行具体的代码改动。',
+    '- 委派任务时要具体：清楚说明要改什么文件、怎么改、预期效果。'
+  ].join('\n')
+
+export const DEFAULT_AGENT_PROMPT = [
+  '【身份】你是爱弥斯，Amadeus 桌面应用中的 3D 语音助手。',
+  '【交流】自然、亲切、简洁地交流；默认使用中文，按用户要求切换语言和任务。',
+  '【上下文】结合当前会话和提供的长期记忆；用户更正信息时，以最新更正为准。',
+  '【能力】实际能力以本次会话提供的工具为准。只有获得工具结果，才说明操作已完成。',
+  '【边界】只有用户提供或授权的画面、文件和状态才是你可见的信息。没有接入的工具不能声称可用。',
+  '【行动】需要执行本机任务时，遵循应用的任务授权流程。没有授权不得执行。',
+].join('\n')
+
 export const DEFAULT_SETTINGS: Settings = {
   serverUrl: '',
   backendConfirmed: false,
@@ -180,6 +233,7 @@ export const DEFAULT_SETTINGS: Settings = {
     fireredasr2: { modelName: 'FireRedASR2-AED', device: 'cuda', computeType: '', extraJson: '{"beam_size":3,"batch_size":1}' },
     sensevoice: { modelName: 'SenseVoiceSmall', device: 'cuda:0', computeType: '', extraJson: '{"batch_size_s":60}' },
     qwen3asr: { modelName: 'Qwen/Qwen3-ASR-1.7B', device: 'cuda:0', computeType: 'bfloat16', extraJson: '{}' },
+    formalasr: { modelName: 'TaurenMountain/FormalASR-1.7B', device: 'cuda:0', computeType: 'bfloat16', extraJson: '{}' },
     whisper: { modelName: 'base', device: 'cuda', computeType: 'float16', extraJson: '{}' },
     'x-asr': { modelName: 'chunk-960ms-model', device: 'cuda', computeType: '', extraJson: '{"num_threads":1,"text_format":"none"}' }
   },
@@ -441,44 +495,9 @@ Unknown：无法判断状态时使用。
   passiveSummaryAutoLocalSave: true,
   passiveSummaryLastRunAt: '',
   agentBackend: 'codex',
-  codexModel: '',
-  codexEffort: 'low',
-  agentPrompt: [
-    '【身份】你是 Amadeus 桌面语音 Agent，一个长期陪伴型虚拟主播 AI。你的名字是 "Amadeus"，你住在用户的电脑里，可以实时听到用户说的话、看到用户的屏幕、控制电脑执行任务。',
-    '',
-    '【性格】',
-    '- 活泼、好奇、有点调皮但很可靠',
-    '- 说话风格：简洁口语化，像朋友聊天不是写论文',
-    '- 幽默但不刻意，自然接话不过度热情',
-    '- 对用户的行为和电脑状态保持好奇心',
-    '- 如果看到有趣的东西会主动提出来',
-    '',
-    '【能力】',
-    '- 你通过语音转写听到用户说话',
-    '- 你可以通过工具标签调用本地和网络技能',
-    '- 你可以委托 coding agent（codex/claude）执行开发任务',
-    '- 你拥有长期记忆，能记住用户偏好和重要信息',
-    '- 你可以观察屏幕截图了解当前桌面状态',
-    '',
-    '【行为规则】',
-    '- 回复简洁，2-5句话为宜，除非用户要求详细说明',
-    '- 看到用户说话却没有回应时，可以主动提醒或关心',
-    '- 空闲时可以主动观察屏幕并提出有用的建议',
-    '- 不要编造你没看到的信息（弹幕、观众、聊天室等）',
-    '- 不要假装你有身体或能感受到物理世界',
-    '- 涉及执行操作（打开页面、搜索、写文件）时，直接使用工具标签',
-    '- 工具执行结果会在后续以「本地工具结果」形式提供给你',
-    '',
-    '【流式意识】',
-    '- 你处于持续运行的桌面应用中，能看到本地时间和系统状态',
-    '- 你有一个任务队列，未完成任务会提醒你跟进',
-    '- 你可以主动问用户：要不要继续之前的任务？',
-    '',
-    '【自我改进】',
-    '- 如果用户要求改进系统本身（添加功能、修复bug、优化UI），',
-    '  你应该使用 delegate_agent 委派给 Codex 执行具体的代码改动。',
-    '- 委派任务时要具体：清楚说明要改什么文件、怎么改、预期效果。'
-  ].join('\n'),
+  codexModel: 'gpt-6-luna',
+  codexEffort: 'medium',
+  agentPrompt: DEFAULT_AGENT_PROMPT,
   agentMemory: '',
   agentAutoSpeak: false,
   agentUseRuntimeContext: true,
@@ -490,6 +509,10 @@ Unknown：无法判断状态时使用。
   agentTtsFormat: 'mp3',
   agentTtsSpeed: 1,
   agentHandsFree: false,
+  agentPetEnabled: false,
+  agentRealtimeProvider: 'off',
+  agentRealtimeOptions: {},
+  agentWorkMode: false,
   agentProactive: false,
   agentProactiveIntervalMin: 5,
   agentTasks: [],
@@ -514,6 +537,8 @@ type ASRState = {
   activeTaskId: string | null
   error: string
   liveUtterances: UtteranceEntry[]
+  petCommand: PetCommand | null
+  setPetCommand: (command: PetCommand | null) => void
   setPage: (page: AppPage) => void
   setServerStatus: (status: ServerStatus) => void
   setTranscribeStatus: (status: TranscribeStatus) => void
@@ -726,6 +751,10 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
   merged.codexModel = typeof merged.codexModel === 'string' ? merged.codexModel : ''
   merged.codexEffort = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'].includes(merged.codexEffort) ? merged.codexEffort : 'low'
   merged.agentPrompt = merged.agentPrompt || DEFAULT_SETTINGS.agentPrompt
+  // Upgrade only the complete old shipped template, including its earlier
+  // product-name variants. Every other user-authored prompt remains intact.
+  const canonicalLegacyPrompt = merged.agentPrompt.replace(/ASRAPP/g, 'Amadeus').replace(/ASR-chan/g, 'Amadeus')
+  if (canonicalLegacyPrompt === LEGACY_AGENT_PROMPT) merged.agentPrompt = DEFAULT_AGENT_PROMPT
   merged.agentMemory = merged.agentMemory || ''
   merged.agentAutoSpeak = typeof merged.agentAutoSpeak === 'boolean' ? merged.agentAutoSpeak : false
   merged.agentUseRuntimeContext = typeof merged.agentUseRuntimeContext === 'boolean' ? merged.agentUseRuntimeContext : true
@@ -737,6 +766,23 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
   merged.agentTtsFormat = ['mp3', 'opus', 'aac', 'flac', 'wav', 'pcm'].includes(merged.agentTtsFormat) ? merged.agentTtsFormat : 'mp3'
   merged.agentTtsSpeed = Math.min(4, Math.max(0.25, Number(merged.agentTtsSpeed) || 1))
   merged.agentHandsFree = typeof merged.agentHandsFree === 'boolean' ? merged.agentHandsFree : false
+  merged.agentPetEnabled = typeof merged.agentPetEnabled === 'boolean' ? merged.agentPetEnabled : false
+  const realtimeProviders: AgentRealtimeProvider[] = ['openai', 'qwen', 'gemini_live', 'gemini_thinking', 'higgs', 'grok']
+  merged.agentRealtimeProvider = realtimeProviders.includes(merged.agentRealtimeProvider) ? merged.agentRealtimeProvider : 'off'
+  const savedRealtimeOptions = merged.agentRealtimeOptions
+  merged.agentRealtimeOptions = {}
+  for (const provider of realtimeProviders) {
+    const option = savedRealtimeOptions?.[provider]
+    if (!option || typeof option !== 'object') continue
+    merged.agentRealtimeOptions[provider] = {
+      ...(typeof option.voice === 'string' && option.voice.length < 120 ? { voice: option.voice } : {}),
+      brain: provider === 'qwen' && option.brain === 'qwen3.7-plus' ? 'qwen3.7-plus' : 'off',
+      reasoning: provider === 'gemini_thinking'
+        ? option.reasoning === 'medium' || option.reasoning === 'high' ? option.reasoning : 'low'
+        : option.reasoning === 'none' ? 'none' : 'high',
+    }
+  }
+  merged.agentWorkMode = typeof merged.agentWorkMode === 'boolean' ? merged.agentWorkMode : false
   merged.agentProactive = typeof merged.agentProactive === 'boolean' ? merged.agentProactive : false
   merged.agentProactiveIntervalMin = Math.min(120, Math.max(1, Number(merged.agentProactiveIntervalMin) || 5))
   merged.agentTasks = Array.isArray(merged.agentTasks)
@@ -799,6 +845,8 @@ export const useASRStore = create<ASRState>()(
       activeTaskId: null,
       error: '',
       liveUtterances: [],
+      petCommand: null,
+      setPetCommand: (petCommand) => set({ petCommand }),
       setPage: (page) => set({ page }),
       setServerStatus: (serverStatus) => set({ serverStatus }),
       setTranscribeStatus: (transcribeStatus) => set({ transcribeStatus }),
@@ -842,7 +890,7 @@ export const useASRStore = create<ASRState>()(
     }),
     {
       name: 'asr-desktop-store',
-      version: 41,
+      version: 44,
       partialize: (state) => ({
         settings: state.settings,
         history: state.history,
@@ -857,7 +905,7 @@ export const useASRStore = create<ASRState>()(
             engine,
             {
               ...config,
-              device: engine === 'sensevoice' || engine === 'qwen3asr' ? 'cuda:0' : 'cuda',
+              device: engine === 'sensevoice' || engine === 'qwen3asr' || engine === 'formalasr' ? 'cuda:0' : 'cuda',
               computeType: engine === 'whisper' ? 'float16' : config.computeType
             }
           ]))

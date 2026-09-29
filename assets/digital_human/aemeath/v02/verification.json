@@ -1,0 +1,1369 @@
+{
+  "status": "fail",
+  "blend": "F:\\Project\\Model3D\\Amadeus\\assets\\digital_human\\aemeath\\v02\\Aemeath_DigitalHuman_v02.blend",
+  "blender": "5.2.2 LTS",
+  "fresh_process": true,
+  "autoexec_disabled": true,
+  "source": "F:\\Project\\Model3D\\Dance_Project\\Wuthering_Waves_V9_AEMEATH_DYNAMIC_REVIEW.blend",
+  "checks": {
+    "source_hash_matches_build": {
+      "pass": true,
+      "evidence": "d50e05f5c4c4924c55fff6429551101d93731b4e556a98726f142a33797b0d93"
+    },
+    "disabled_autoexec": {
+      "pass": true,
+      "evidence": {
+        "argv_flag": true
+      }
+    },
+    "original_counts": {
+      "pass": true,
+      "evidence": {
+        "vertices": 130108,
+        "shape_keys": 149
+      }
+    },
+    "fresh_reopen_all_reference_frames_reverse_repeat": {
+      "pass": false,
+      "evidence": [
+        {
+          "frame": 1.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 15.5,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 30.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 7.487548145945766e-07,
+          "finite": true
+        },
+        {
+          "frame": 50.25,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 4.9402886361349374e-05,
+          "finite": true
+        },
+        {
+          "frame": 88.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 135.5,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 177.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 240.75,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 4.247653123456985e-05,
+          "finite": true
+        },
+        {
+          "frame": 300.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 360.5,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 465.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 465.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 360.5,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 300.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 240.75,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 4.247653123456985e-05,
+          "finite": true
+        },
+        {
+          "frame": 177.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 135.5,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 88.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 50.25,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 4.9402886361349374e-05,
+          "finite": true
+        },
+        {
+          "frame": 30.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 7.487548145945766e-07,
+          "finite": true
+        },
+        {
+          "frame": 15.5,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 1.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 88.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 1.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 88.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 465.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        }
+      ]
+    },
+    "timeline_timebase_and_native_actions": {
+      "pass": false,
+      "evidence": {
+        "fps": 30.0,
+        "rows": 465,
+        "frame_start": 1,
+        "frame_end": 465,
+        "invalid_timebase_frames": [],
+        "all_frame_control_max_error": 9.348980943787389e-05,
+        "interpolated_envelope_max_error": 0.0,
+        "control_differences_above_1e6": [
+          {
+            "frame": 26,
+            "channel": "い",
+            "expected": 4.9896198847639904e-05,
+            "control": 4.989619992556982e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 27,
+            "channel": "い",
+            "expected": 1.7463669596673964e-05,
+            "control": 1.7463669792050496e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 28,
+            "channel": "い",
+            "expected": 6.112284358835888e-06,
+            "control": 6.112284154369263e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 29,
+            "channel": "い",
+            "expected": 2.1392995255925604e-06,
+            "control": 2.1392995677160798e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 50,
+            "channel": "お",
+            "expected": 5.89885206561767e-05,
+            "control": 5.898852032260038e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 51,
+            "channel": "お",
+            "expected": 2.0645982229661846e-05,
+            "control": 2.0645982658606954e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 52,
+            "channel": "お",
+            "expected": 7.226093780381645e-06,
+            "control": 7.226093657664023e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 53,
+            "channel": "お",
+            "expected": 2.5291328231335756e-06,
+            "control": 2.5291328711318783e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 61,
+            "channel": "あ",
+            "expected": 5.878661449438473e-05,
+            "control": 5.8786616136785597e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 62,
+            "channel": "あ",
+            "expected": 2.057531507303465e-05,
+            "control": 2.0575314920279197e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 63,
+            "channel": "あ",
+            "expected": 7.201360275562128e-06,
+            "control": 7.2013604039966594e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 63,
+            "channel": "え",
+            "expected": 5.532857834765625e-05,
+            "control": 5.5328579037450254e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 64,
+            "channel": "あ",
+            "expected": 2.520476096446744e-06,
+            "control": 2.520476073186728e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 64,
+            "channel": "え",
+            "expected": 1.9365002421679687e-05,
+            "control": 1.936500302690547e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 65,
+            "channel": "え",
+            "expected": 6.777750847587891e-06,
+            "control": 6.777750968467444e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 66,
+            "channel": "え",
+            "expected": 2.3722127966557612e-06,
+            "control": 2.3722127480141353e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 106,
+            "channel": "え",
+            "expected": 6.848494385961504e-05,
+            "control": 6.848494376754388e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 107,
+            "channel": "え",
+            "expected": 2.3969730350865262e-05,
+            "control": 2.396973104623612e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 108,
+            "channel": "え",
+            "expected": 8.38940562280284e-06,
+            "control": 8.389405593334232e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 112,
+            "channel": "お",
+            "expected": 6.0349134531054646e-05,
+            "control": 6.03491353103891e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 113,
+            "channel": "お",
+            "expected": 2.1122197085869128e-05,
+            "control": 2.1122197722434066e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 114,
+            "channel": "お",
+            "expected": 7.392768980054195e-06,
+            "control": 7.392769020952983e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 115,
+            "channel": "お",
+            "expected": 2.5874691430189682e-06,
+            "control": 2.5874692255456466e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 119,
+            "channel": "え",
+            "expected": 4.730914032083575e-05,
+            "control": 4.7309138608397916e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 120,
+            "channel": "え",
+            "expected": 1.655819911229251e-05,
+            "control": 1.655819869483821e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 121,
+            "channel": "え",
+            "expected": 5.795369689302379e-06,
+            "control": 5.795369816041784e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 122,
+            "channel": "え",
+            "expected": 2.0283793912558326e-06,
+            "control": 2.028379412877257e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 129,
+            "channel": "あ",
+            "expected": 5.1271309009899744e-05,
+            "control": 5.127130862092599e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 130,
+            "channel": "あ",
+            "expected": 1.794495815346491e-05,
+            "control": 1.7944958017324097e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 131,
+            "channel": "あ",
+            "expected": 6.280735353712719e-06,
+            "control": 6.280735306063434e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 131,
+            "channel": "お",
+            "expected": 5.532857847886531e-05,
+            "control": 5.5328579037450254e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 132,
+            "channel": "あ",
+            "expected": 2.1982573737994518e-06,
+            "control": 2.1982573343848344e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 132,
+            "channel": "お",
+            "expected": 1.936500246760286e-05,
+            "control": 1.936500302690547e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 133,
+            "channel": "お",
+            "expected": 6.777750863661e-06,
+            "control": 6.777750968467444e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 193,
+            "channel": "い",
+            "expected": 6.714210516934832e-05,
+            "control": 6.714210758218542e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 194,
+            "channel": "い",
+            "expected": 2.3499736809271907e-05,
+            "control": 2.3499736926169135e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 195,
+            "channel": "い",
+            "expected": 8.224907883245167e-06,
+            "control": 8.224908015108667e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 196,
+            "channel": "あ",
+            "expected": 5.421497678353324e-05,
+            "control": 5.4214975534705445e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 196,
+            "channel": "い",
+            "expected": 2.878717759135808e-06,
+            "control": 2.8787178507627686e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 197,
+            "channel": "あ",
+            "expected": 1.8975241874236637e-05,
+            "control": 1.8975242710439488e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 197,
+            "channel": "い",
+            "expected": 1.0075512156975327e-06,
+            "control": 1.0075511909235502e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 198,
+            "channel": "あ",
+            "expected": 6.641334655982823e-06,
+            "control": 6.64133449390647e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 199,
+            "channel": "あ",
+            "expected": 2.324467129593988e-06,
+            "control": 2.3244672320288373e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 204,
+            "channel": "お",
+            "expected": 4.930428129765439e-05,
+            "control": 4.930428258376196e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 205,
+            "channel": "お",
+            "expected": 1.7256498454179034e-05,
+            "control": 1.7256497812923044e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 206,
+            "channel": "う",
+            "expected": 8.58637492778456e-05,
+            "control": 8.586375042796135e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 206,
+            "channel": "お",
+            "expected": 6.039774458962661e-06,
+            "control": 6.039774234523065e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 207,
+            "channel": "う",
+            "expected": 3.005231224724596e-05,
+            "control": 3.005231155839283e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 207,
+            "channel": "お",
+            "expected": 2.1139210606369315e-06,
+            "control": 2.113921027557808e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 208,
+            "channel": "う",
+            "expected": 1.0518309286536086e-05,
+            "control": 1.051830895448802e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 209,
+            "channel": "う",
+            "expected": 3.6814082502876296e-06,
+            "control": 3.6814083159697475e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 210,
+            "channel": "う",
+            "expected": 1.2884928876006702e-06,
+            "control": 1.2884928537459928e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 211,
+            "channel": "え",
+            "expected": 4.234387571937986e-05,
+            "control": 4.2343875975348055e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 212,
+            "channel": "え",
+            "expected": 1.4820356501782952e-05,
+            "control": 1.4820356227573939e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 213,
+            "channel": "え",
+            "expected": 5.187124775624033e-06,
+            "control": 5.187124770600349e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 214,
+            "channel": "え",
+            "expected": 1.8154936714684116e-06,
+            "control": 1.8154936469727545e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 226,
+            "channel": "あ",
+            "expected": 3.953242143603647e-05,
+            "control": 3.953242048737593e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 227,
+            "channel": "あ",
+            "expected": 1.3836347502612766e-05,
+            "control": 1.3836347534379456e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 227,
+            "channel": "え",
+            "expected": 7.037548501125416e-05,
+            "control": 7.037548493826762e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 228,
+            "channel": "あ",
+            "expected": 4.842721625914467e-06,
+            "control": 4.842721409659134e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 228,
+            "channel": "え",
+            "expected": 2.4631419753938952e-05,
+            "control": 2.4631419364595786e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 229,
+            "channel": "あ",
+            "expected": 1.6949525690700633e-06,
+            "control": 1.6949525161180645e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 229,
+            "channel": "え",
+            "expected": 8.620996913878633e-06,
+            "control": 8.620996595709585e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 230,
+            "channel": "え",
+            "expected": 3.017348919857521e-06,
+            "control": 3.01734894492256e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 231,
+            "channel": "え",
+            "expected": 1.0560721219501324e-06,
+            "control": 1.0560721648289473e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 232,
+            "channel": "い",
+            "expected": 7.636684620066766e-05,
+            "control": 7.63668431318365e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 233,
+            "channel": "い",
+            "expected": 2.6728396170233682e-05,
+            "control": 2.6728395823738538e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 234,
+            "channel": "い",
+            "expected": 9.35493865958179e-06,
+            "control": 9.354938811156899e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 235,
+            "channel": "い",
+            "expected": 3.274228530853626e-06,
+            "control": 3.2742284474807093e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 236,
+            "channel": "い",
+            "expected": 1.1459799857987693e-06,
+            "control": 1.1459800361990347e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 239,
+            "channel": "お",
+            "expected": 5.97190088191949e-05,
+            "control": 5.971900827717036e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 240,
+            "channel": "う",
+            "expected": 8.288102866293325e-05,
+            "control": 8.288102981168777e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 240,
+            "channel": "お",
+            "expected": 2.090165308671821e-05,
+            "control": 2.0901652533211745e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 241,
+            "channel": "う",
+            "expected": 2.9008360032026636e-05,
+            "control": 2.90083607978886e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 241,
+            "channel": "お",
+            "expected": 7.315578580351374e-06,
+            "control": 7.315578386624111e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 273,
+            "channel": "あ",
+            "expected": 9.348980943787389e-05,
+            "control": 9.348981257062405e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 275,
+            "channel": "え",
+            "expected": 6.0990278449139137e-05,
+            "control": 6.099027814343572e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 276,
+            "channel": "え",
+            "expected": 2.13465974571987e-05,
+            "control": 2.13465973502025e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 277,
+            "channel": "え",
+            "expected": 7.471309110019545e-06,
+            "control": 7.471308890671935e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 278,
+            "channel": "え",
+            "expected": 2.6149581885068407e-06,
+            "control": 2.6149582481593825e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 282,
+            "channel": "い",
+            "expected": 3.685906219619617e-05,
+            "control": 3.6859062674921006e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 283,
+            "channel": "い",
+            "expected": 1.2900671768668658e-05,
+            "control": 1.2900672118121292e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 284,
+            "channel": "い",
+            "expected": 4.515235119034031e-06,
+            "control": 4.515235104918247e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 320,
+            "channel": "あ",
+            "expected": 4.643231098461331e-05,
+            "control": 4.6432309318333864e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 321,
+            "channel": "あ",
+            "expected": 1.6251308844614658e-05,
+            "control": 1.6251309716608375e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 322,
+            "channel": "あ",
+            "expected": 5.6879580956151294e-06,
+            "control": 5.687958037015051e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 323,
+            "channel": "あ",
+            "expected": 1.9907853334652952e-06,
+            "control": 1.9907852220057976e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 327,
+            "channel": "い",
+            "expected": 4.2831336105914514e-05,
+            "control": 4.283133603166789e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 328,
+            "channel": "い",
+            "expected": 1.499096763707008e-05,
+            "control": 1.499096742918482e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 329,
+            "channel": "い",
+            "expected": 5.246838672974528e-06,
+            "control": 5.246838554739952e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 362,
+            "channel": "お",
+            "expected": 5.2323156635335406e-05,
+            "control": 5.232315743342042e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 363,
+            "channel": "お",
+            "expected": 1.8313104822367392e-05,
+            "control": 1.8313105101697147e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 364,
+            "channel": "お",
+            "expected": 6.409586687828587e-06,
+            "control": 6.409586603695061e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 365,
+            "channel": "お",
+            "expected": 2.243355340740005e-06,
+            "control": 2.2433553112932714e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 392,
+            "channel": "あ",
+            "expected": 5.038090489106848e-05,
+            "control": 5.038090603193268e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 393,
+            "channel": "あ",
+            "expected": 1.7633316711873963e-05,
+            "control": 1.7633316019782797e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 394,
+            "channel": "あ",
+            "expected": 6.171660849155887e-06,
+            "control": 6.1716609707218595e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 395,
+            "channel": "あ",
+            "expected": 2.1600812972045603e-06,
+            "control": 2.1600812942779157e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 395,
+            "channel": "い",
+            "expected": 4.1800405494264413e-05,
+            "control": 4.180040559731424e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 396,
+            "channel": "い",
+            "expected": 1.4630141922992544e-05,
+            "control": 1.4630141777161043e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 397,
+            "channel": "い",
+            "expected": 5.120549673047389e-06,
+            "control": 5.12054975843057e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 398,
+            "channel": "い",
+            "expected": 1.792192385566586e-06,
+            "control": 1.792192392713332e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 404,
+            "channel": "え",
+            "expected": 7.893757080631474e-05,
+            "control": 7.893756992416456e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 405,
+            "channel": "え",
+            "expected": 2.7628149782210154e-05,
+            "control": 2.7628149837255478e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 406,
+            "channel": "え",
+            "expected": 9.669852423773554e-06,
+            "control": 9.669852261140477e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 407,
+            "channel": "え",
+            "expected": 3.384448348320744e-06,
+            "control": 3.384448291399167e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 408,
+            "channel": "え",
+            "expected": 1.1845569219122604e-06,
+            "control": 1.1845569360957597e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 411,
+            "channel": "う",
+            "expected": 9.263157102693529e-05,
+            "control": 9.263156971428543e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 412,
+            "channel": "う",
+            "expected": 3.242104985942735e-05,
+            "control": 3.242104867240414e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 413,
+            "channel": "う",
+            "expected": 1.1347367450799573e-05,
+            "control": 1.1347367035341449e-05,
+            "display": 0.0
+          },
+          {
+            "frame": 414,
+            "channel": "う",
+            "expected": 3.971578607779851e-06,
+            "control": 3.971578735217918e-06,
+            "display": 0.0
+          },
+          {
+            "frame": 415,
+            "channel": "う",
+            "expected": 1.3900525127229479e-06,
+            "control": 1.3900524891141686e-06,
+            "display": 0.0
+          }
+        ]
+      }
+    },
+    "silence_closes_vowel_controls": {
+      "pass": true,
+      "evidence": {
+        "silent_frame_count": 198,
+        "max_vowel_value": 0.0
+      }
+    },
+    "neutral_start_and_end": {
+      "pass": true,
+      "evidence": [
+        {
+          "frame": 1,
+          "neutral_vertex_max_error_m": 0.0
+        },
+        {
+          "frame": 465,
+          "neutral_vertex_max_error_m": 0.0
+        }
+      ]
+    },
+    "drivers_valid_with_resolvable_targets": {
+      "pass": true,
+      "evidence": {
+        "count": 279,
+        "invalid": [],
+        "missing_targets": [],
+        "unresolved_paths": [],
+        "scripted_expressions": {
+          "(u1+g3*w4)*s2": 13,
+          "-pi*(b1)": 12,
+          "pi*(b1)": 12,
+          "-100*(b1)": 12,
+          "100*(b1)": 12,
+          "v1+g2*w3": 2,
+          "v1": 135,
+          "v1+g2*w3+g4*w5": 5,
+          "v1+g2*w3+g4*w5+g6*w7": 3,
+          "v1+g2*w3+g4*w5+g6*w7+g8*w9+g10*w11+g12*w13+g14*w15": 2,
+          "v1+g2*w3+g4*w5+g6*w7+g8*w9+g10*w11+g12*w13+g14*w15+g16*w17": 1,
+          "m1": 25
+        }
+      }
+    },
+    "native_actions_without_frame_handlers": {
+      "pass": true,
+      "evidence": {
+        "mouth_action": "Aemeath_AudioTimed_Mouth_Blink_v02",
+        "rig_action": "Aemeath_Subtle_Head_Beats_v02",
+        "key_light_action": null,
+        "enabled_embedded_scripts": [],
+        "handlers": {
+          "frame_change_pre": [],
+          "frame_change_post": [],
+          "depsgraph_update_pre": [],
+          "depsgraph_update_post": []
+        }
+      }
+    },
+    "images_packed": {
+      "pass": true,
+      "evidence": [
+        {
+          "name": "cheek_00.tga",
+          "packed": true,
+          "size": [
+            256,
+            256
+          ]
+        },
+        {
+          "name": "emo1010.png",
+          "packed": true,
+          "size": [
+            1024,
+            1024
+          ]
+        },
+        {
+          "name": "eye set emo.png",
+          "packed": true,
+          "size": [
+            1024,
+            1024
+          ]
+        },
+        {
+          "name": "eyehi.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "eyehi2.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "hair hi light.png",
+          "packed": true,
+          "size": [
+            1024,
+            1024
+          ]
+        },
+        {
+          "name": "hair spa.png",
+          "packed": true,
+          "size": [
+            512,
+            512
+          ]
+        },
+        {
+          "name": "hi li.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "m.png",
+          "packed": true,
+          "size": [
+            500,
+            500
+          ]
+        },
+        {
+          "name": "mc12.png",
+          "packed": true,
+          "size": [
+            512,
+            512
+          ]
+        },
+        {
+          "name": "mc123.png",
+          "packed": true,
+          "size": [
+            1024,
+            1024
+          ]
+        },
+        {
+          "name": "sink2.bmp",
+          "packed": true,
+          "size": [
+            256,
+            256
+          ]
+        },
+        {
+          "name": "sink22.png",
+          "packed": true,
+          "size": [
+            512,
+            512
+          ]
+        },
+        {
+          "name": "skin.bmp",
+          "packed": true,
+          "size": [
+            256,
+            256
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Bangs_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Down01_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Eye_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Face_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011FaceShy_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Fx01_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Hair_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Hair_Dhi.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Item_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Up01_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Up02_Dal.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "toon01.bmp",
+          "packed": true,
+          "size": [
+            32,
+            32
+          ]
+        },
+        {
+          "name": "toon04.bmp",
+          "packed": true,
+          "size": [
+            32,
+            32
+          ]
+        },
+        {
+          "name": "toon05.bmp",
+          "packed": true,
+          "size": [
+            32,
+            32
+          ]
+        },
+        {
+          "name": "toon07.bmp",
+          "packed": true,
+          "size": [
+            32,
+            32
+          ]
+        },
+        {
+          "name": "前发高光 hi.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "后发高光hi.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        }
+      ]
+    },
+    "audio_packed_and_zero_offset_timebase": {
+      "pass": true,
+      "evidence": {
+        "audio": [
+          {
+            "name": "Offline timing reference - Huihui",
+            "packed": true,
+            "path": "//..\\..\\..\\..\\..\\Dance_Project\\audio\\speech_fixture.wav",
+            "frame_start": 1.0,
+            "frame_offset_start": 0.0,
+            "frame_final_start": 1,
+            "frame_final_duration": 452,
+            "mute": false,
+            "volume": 1.0
+          }
+        ],
+        "wav_seconds": 15.0515,
+        "envelope_seconds": 15.0515,
+        "sync_mode": "AUDIO_SYNC"
+      }
+    },
+    "source_geometry_uv_all_149_shapes_material_slots_preserved": {
+      "pass": true,
+      "evidence": {
+        "mismatched_fields": [],
+        "shape_count": 149,
+        "vertex_count": 130108,
+        "material_count": 44
+      }
+    },
+    "files_not_modified_by_verification": {
+      "pass": true,
+      "evidence": {
+        "source_sha256": "d50e05f5c4c4924c55fff6429551101d93731b4e556a98726f142a33797b0d93",
+        "preview_sha256": "142aca958fc5011ddf046251d9b2fe0960dfaf5e7122b0cb5d3dc67955980f56"
+      }
+    }
+  },
+  "failures": [
+    "fresh_reopen_all_reference_frames_reverse_repeat",
+    "timeline_timebase_and_native_actions"
+  ],
+  "limits": [
+    "No Mandarin phonetic accuracy or subjective synchronization claim",
+    "No realtime microphone, interruption, or app integration test",
+    "Control silence means vowel channels zero; a small smile remains in internal pauses"
+  ]
+}

@@ -84,6 +84,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # ── Shutdown ──────────────────────────────────────────────────────────────
     logger.info("Shutting down ASR backend …")
+    from app.core.model_downloads import close_model_download_manager
+    await close_model_download_manager()
     from app.core.codex_runtime import close_codex_runtime
     await close_codex_runtime()
     from app.core.model_manager import get_model_manager as _mgr

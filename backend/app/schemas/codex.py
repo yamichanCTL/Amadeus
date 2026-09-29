@@ -15,6 +15,7 @@ class CodexOptions(BaseModel):
     )
     context: str = Field(default="", max_length=16000)
     timeout_sec: int = Field(180, ge=5, le=900)
+    allow_work: bool = False
 
 
 class CodexTurnRequest(CodexOptions):

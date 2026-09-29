@@ -1,0 +1,92 @@
+{
+  "source": "F:\\Project\\Model3D\\Amadeus\\assets\\digital_human\\aemeath\\v03\\Aemeath_DigitalHuman_v03.blend",
+  "source_sha256": "1765c1487a09d50560142d4a2fef98fef3c60981884f9f2156ea6e08dee26bc6",
+  "source_unchanged": true,
+  "previous_runtime": "F:\\Project\\Model3D\\Amadeus\\frontend\\desktop\\public\\pet\\aemeath.glb",
+  "previous_runtime_sha256": "01b617833c0bc6de2f1277da8824d4ab75f79b953d2ae376e7caa3f219e5fb5c",
+  "previous_runtime_unchanged": true,
+  "output": "F:\\Project\\Model3D\\Amadeus\\frontend\\desktop\\public\\pet\\aemeath-digital-human.glb",
+  "blender": "5.2.2 LTS",
+  "display_mmd_drivers_removed": 148,
+  "exported_display_drivers": 0,
+  "verification": {
+    "file_bytes": 38560612,
+    "sha256": "1f5e7e0487fb5a9c73b54d1c7b52a1c6e3f1582f13023891782311ae775efbfa",
+    "target_names": [
+      "にこり",
+      "まばたき",
+      "笑い",
+      "びっくり",
+      "あ",
+      "い",
+      "う",
+      "え",
+      "お",
+      "口",
+      "口角上げ",
+      "M"
+    ],
+    "initial_weights": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "animations": 0,
+    "primitives": 44,
+    "joints": 987,
+    "split_vertex_count": 130147,
+    "bounds_y_up_min": [
+      -0.5440413355827332,
+      -8.20928398752585e-05,
+      -0.49515265226364136
+    ],
+    "bounds_y_up_max": [
+      0.571940541267395,
+      1.6430498361587524,
+      0.10101006925106049
+    ],
+    "morph_max_delta_m": {
+      "にこり": 0.004011728800833225,
+      "まばたき": 0.019705167040228844,
+      "笑い": 0.0084689287468791,
+      "びっくり": 0.0030526737682521343,
+      "あ": 0.0062675452791154385,
+      "い": 0.0026239389553666115,
+      "う": 0.0023451948072761297,
+      "え": 0.004239396192133427,
+      "お": 0.00866030901670456,
+      "口": 0.009365285746753216,
+      "口角上げ": 0.002027127891778946,
+      "M": 0.0025852008257061243
+    },
+    "max_skin_weight_sum_error": 1.7881393432617188e-07,
+    "previous_attribute_max_error": {
+      "POSITION": 0.0,
+      "NORMAL": 0.0,
+      "TEXCOORD_0": 0.0,
+      "JOINTS_0": 0.0,
+      "WEIGHTS_0": 0.0
+    },
+    "indices_equal_previous": true,
+    "node_hierarchy_transforms_equal_previous": true,
+    "inverse_bind_matrices_equal_previous": true,
+    "material_settings_equal_previous": true,
+    "embedded_images": 19,
+    "image_bytes_equal_previous": true
+  },
+  "limitations": [
+    "Direct native delta shapes, no phoneme recognition included",
+    "Runtime keeps the prior texture/PBR material conversion",
+    "No shape-normal or tangent deltas, matching prior runtime",
+    "No offline speech clip, audio or additional physics exported"
+  ]
+}

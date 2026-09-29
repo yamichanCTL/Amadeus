@@ -1,0 +1,627 @@
+{
+  "source": "F:\\Project\\Model3D\\Dance_Project\\Wuthering_Waves_V9_AEMEATH_DYNAMIC_REVIEW.blend",
+  "source_sha256": "d50e05f5c4c4924c55fff6429551101d93731b4e556a98726f142a33797b0d93",
+  "source_unchanged": true,
+  "blend": "F:\\Project\\Model3D\\Amadeus\\assets\\digital_human\\aemeath\\v02\\Aemeath_DigitalHuman_v02.blend",
+  "blender": "5.2.2 LTS",
+  "original_vertex_count": 130108,
+  "original_shape_count": 149,
+  "neutral_restore_error_m": 0.0,
+  "driver_problems": {
+    "invalid": [],
+    "missing_targets": []
+  },
+  "plugin_coefficients_migrated": [
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.uv_morphs[\"nu\"].vertex_group_scale",
+      "native_path": "[\"dh_source_coefficient_000\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.group_morphs[\"(#｀皿´)\"].data[\"nu\"].factor",
+      "native_path": "[\"dh_source_coefficient_001\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.uv_morphs[\"haha\"].vertex_group_scale",
+      "native_path": "[\"dh_source_coefficient_002\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.group_morphs[\"O(∩_∩)O\"].data[\"haha\"].factor",
+      "native_path": "[\"dh_source_coefficient_003\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.uv_morphs[\"han\"].vertex_group_scale",
+      "native_path": "[\"dh_source_coefficient_004\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.group_morphs[\"(-ω-；)\"].data[\"han\"].factor",
+      "native_path": "[\"dh_source_coefficient_005\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.uv_morphs[\"xin\"].vertex_group_scale",
+      "native_path": "[\"dh_source_coefficient_006\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.group_morphs[\"喜(=゜ω゜)ノ\"].data[\"xin\"].factor",
+      "native_path": "[\"dh_source_coefficient_007\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.uv_morphs[\"jing\"].vertex_group_scale",
+      "native_path": "[\"dh_source_coefficient_008\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.group_morphs[\"∑(´△｀)！\"].data[\"jing\"].factor",
+      "native_path": "[\"dh_source_coefficient_009\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.uv_morphs[\"heixian\"].vertex_group_scale",
+      "native_path": "[\"dh_source_coefficient_010\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.group_morphs[\"-﹏-|||\"].data[\"heixian\"].factor",
+      "native_path": "[\"dh_source_coefficient_011\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.uv_morphs[\"wenhao\"].vertex_group_scale",
+      "native_path": "[\"dh_source_coefficient_012\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.group_morphs[\"[・_・?]\"].data[\"wenhao\"].factor",
+      "native_path": "[\"dh_source_coefficient_013\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.uv_morphs[\"handi\"].vertex_group_scale",
+      "native_path": "[\"dh_source_coefficient_014\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.group_morphs[\"(｡ω｡；)\"].data[\"handi\"].factor",
+      "native_path": "[\"dh_source_coefficient_015\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.uv_morphs[\"jingtanhao\"].vertex_group_scale",
+      "native_path": "[\"dh_source_coefficient_016\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.group_morphs[\"(´△｀)！\"].data[\"jingtanhao\"].factor",
+      "native_path": "[\"dh_source_coefficient_017\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.uv_morphs[\"zhuyi\"].vertex_group_scale",
+      "native_path": "[\"dh_source_coefficient_018\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.group_morphs[\"d(^^*)\"].data[\"zhuyi\"].factor",
+      "native_path": "[\"dh_source_coefficient_019\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.uv_morphs[\"luanma\"].vertex_group_scale",
+      "native_path": "[\"dh_source_coefficient_020\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.group_morphs[\"彡(-_-;)彡\"].data[\"luanma\"].factor",
+      "native_path": "[\"dh_source_coefficient_021\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.uv_morphs[\"keshui\"].vertex_group_scale",
+      "native_path": "[\"dh_source_coefficient_022\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.group_morphs[\"(。-ω-)zzz\"].data[\"keshui\"].factor",
+      "native_path": "[\"dh_source_coefficient_023\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.uv_morphs[\"shenluehao\"].vertex_group_scale",
+      "native_path": "[\"dh_source_coefficient_024\"]",
+      "value": 1.0
+    },
+    {
+      "owner": ".dummy_armature",
+      "original_path": "mmd_root.group_morphs[\"(¬_¬)ﾉ…\"].data[\"shenluehao\"].factor",
+      "native_path": "[\"dh_source_coefficient_025\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"真面目A\"].data[\"真面目\"].factor",
+      "native_path": "[\"dh_source_coefficient_026\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"怒りB\"].data[\"怒り\"].factor",
+      "native_path": "[\"dh_source_coefficient_027\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"怒りA\"].data[\"怒り\"].factor",
+      "native_path": "[\"dh_source_coefficient_028\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"にこりB\"].data[\"にこり\"].factor",
+      "native_path": "[\"dh_source_coefficient_029\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"にこりA\"].data[\"にこり\"].factor",
+      "native_path": "[\"dh_source_coefficient_030\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"困るB\"].data[\"困る\"].factor",
+      "native_path": "[\"dh_source_coefficient_031\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"困るA\"].data[\"困る\"].factor",
+      "native_path": "[\"dh_source_coefficient_032\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"見開く\"].data[\"上\"].factor",
+      "native_path": "[\"dh_source_coefficient_033\"]",
+      "value": 0.10000000149011612
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"にこりB\"].data[\"上\"].factor",
+      "native_path": "[\"dh_source_coefficient_034\"]",
+      "value": 0.20000000298023224
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"にこりA\"].data[\"上\"].factor",
+      "native_path": "[\"dh_source_coefficient_035\"]",
+      "value": 0.20000000298023224
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"困るB\"].data[\"下\"].factor",
+      "native_path": "[\"dh_source_coefficient_036\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"怒りB\"].data[\"下\"].factor",
+      "native_path": "[\"dh_source_coefficient_037\"]",
+      "value": 0.800000011920929
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"真面目A\"].data[\"下\"].factor",
+      "native_path": "[\"dh_source_coefficient_038\"]",
+      "value": 0.20000000298023224
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"困るA\"].data[\"下\"].factor",
+      "native_path": "[\"dh_source_coefficient_039\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"怒りA\"].data[\"下\"].factor",
+      "native_path": "[\"dh_source_coefficient_040\"]",
+      "value": 0.800000011920929
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"笑いA\"].data[\"下\"].factor",
+      "native_path": "[\"dh_source_coefficient_041\"]",
+      "value": 0.800000011920929
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"まばたきA\"].data[\"下\"].factor",
+      "native_path": "[\"dh_source_coefficient_042\"]",
+      "value": 0.800000011920929
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"見開く\"].data[\"まばたき\"].factor",
+      "native_path": "[\"dh_source_coefficient_043\"]",
+      "value": -0.10000000149011612
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"困るB\"].data[\"まばたき\"].factor",
+      "native_path": "[\"dh_source_coefficient_044\"]",
+      "value": 0.5
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"怒りB\"].data[\"まばたき\"].factor",
+      "native_path": "[\"dh_source_coefficient_045\"]",
+      "value": 0.20000000298023224
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"真面目A\"].data[\"まばたき\"].factor",
+      "native_path": "[\"dh_source_coefficient_046\"]",
+      "value": 0.20000000298023224
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"困るA\"].data[\"まばたき\"].factor",
+      "native_path": "[\"dh_source_coefficient_047\"]",
+      "value": 0.5
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"怒りA\"].data[\"まばたき\"].factor",
+      "native_path": "[\"dh_source_coefficient_048\"]",
+      "value": 0.20000000298023224
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"まばたきA\"].data[\"まばたき\"].factor",
+      "native_path": "[\"dh_source_coefficient_049\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"にこりB\"].data[\"笑い\"].factor",
+      "native_path": "[\"dh_source_coefficient_050\"]",
+      "value": 0.20000000298023224
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"にこりA\"].data[\"笑い\"].factor",
+      "native_path": "[\"dh_source_coefficient_051\"]",
+      "value": 0.20000000298023224
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"笑いA\"].data[\"笑い\"].factor",
+      "native_path": "[\"dh_source_coefficient_052\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"困るB\"].data[\"∧\"].factor",
+      "native_path": "[\"dh_source_coefficient_053\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"怒りB\"].data[\"∧\"].factor",
+      "native_path": "[\"dh_source_coefficient_054\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"にこりB\"].data[\"にやり\"].factor",
+      "native_path": "[\"dh_source_coefficient_055\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"(#｀皿´)\"].data[\"emo3左\"].factor",
+      "native_path": "[\"dh_source_coefficient_056\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"O(∩_∩)O\"].data[\"emo3左\"].factor",
+      "native_path": "[\"dh_source_coefficient_057\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"(-ω-；)\"].data[\"emo3左\"].factor",
+      "native_path": "[\"dh_source_coefficient_058\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"∑(´△｀)！\"].data[\"emo3左\"].factor",
+      "native_path": "[\"dh_source_coefficient_059\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"-﹏-|||\"].data[\"emo3左\"].factor",
+      "native_path": "[\"dh_source_coefficient_060\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"(｡ω｡；)\"].data[\"emo3左\"].factor",
+      "native_path": "[\"dh_source_coefficient_061\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"d(^^*)\"].data[\"emo3左\"].factor",
+      "native_path": "[\"dh_source_coefficient_062\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"(。-ω-)zzz\"].data[\"emo3左\"].factor",
+      "native_path": "[\"dh_source_coefficient_063\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"喜(=゜ω゜)ノ\"].data[\"emo3右\"].factor",
+      "native_path": "[\"dh_source_coefficient_064\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"彡(-_-;)彡\"].data[\"emo3右\"].factor",
+      "native_path": "[\"dh_source_coefficient_065\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"(¬_¬)ﾉ…\"].data[\"emo3右\"].factor",
+      "native_path": "[\"dh_source_coefficient_066\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"[・_・?]\"].data[\"emo3上\"].factor",
+      "native_path": "[\"dh_source_coefficient_067\"]",
+      "value": 1.0
+    },
+    {
+      "owner": "Key",
+      "original_path": "mmd_root.group_morphs[\"(´△｀)！\"].data[\"emo3上\"].factor",
+      "native_path": "[\"dh_source_coefficient_068\"]",
+      "value": 1.0
+    }
+  ],
+  "audio_duration_s": 15.0515,
+  "fps": 30,
+  "frame_end": 465,
+  "packed_sound": true,
+  "atlas": [
+    {
+      "label": "00_neutral",
+      "weights": {},
+      "actual": {},
+      "render_s": 1.9490026000421494
+    },
+    {
+      "label": "01_A",
+      "weights": {
+        "あ": 0.85
+      },
+      "actual": {
+        "あ": 0.8500000238418579
+      },
+      "render_s": 0.5342901999829337
+    },
+    {
+      "label": "02_I",
+      "weights": {
+        "い": 0.85
+      },
+      "actual": {
+        "い": 0.8500000238418579
+      },
+      "render_s": 0.4470922000473365
+    },
+    {
+      "label": "03_U",
+      "weights": {
+        "う": 0.85
+      },
+      "actual": {
+        "う": 0.8500000238418579
+      },
+      "render_s": 0.4687167000374757
+    },
+    {
+      "label": "04_E",
+      "weights": {
+        "え": 0.85
+      },
+      "actual": {
+        "え": 0.8500000238418579
+      },
+      "render_s": 0.4960319999954663
+    },
+    {
+      "label": "05_O",
+      "weights": {
+        "お": 0.85
+      },
+      "actual": {
+        "お": 0.8500000238418579
+      },
+      "render_s": 0.4936239999951795
+    },
+    {
+      "label": "06_M_candidate",
+      "weights": {
+        "M": 0.8
+      },
+      "actual": {
+        "M": 0.800000011920929
+      },
+      "render_s": 0.4980809999979101
+    },
+    {
+      "label": "07_smile_A",
+      "weights": {
+        "あ": 0.5,
+        "口角上げ": 0.18,
+        "にこり": 0.12
+      },
+      "actual": {
+        "あ": 0.4999999403953552,
+        "口角上げ": 0.18000000715255737,
+        "にこり": 0.11999999731779099
+      },
+      "render_s": 0.46146540000336245
+    },
+    {
+      "label": "08_blink",
+      "weights": {
+        "まばたき": 1
+      },
+      "actual": {
+        "まばたき": 1.0
+      },
+      "render_s": 0.4700468999799341
+    }
+  ],
+  "reference_frames": [
+    1,
+    15.5,
+    30,
+    50.25,
+    88,
+    135.5,
+    177,
+    240.75,
+    300,
+    360.5,
+    465
+  ],
+  "approximate_viseme_mapping": {
+    "1": {
+      "shape": "あ",
+      "strength": 0.75
+    },
+    "2": {
+      "shape": "あ",
+      "strength": 0.85
+    },
+    "3": {
+      "shape": "お",
+      "strength": 0.65
+    },
+    "4": {
+      "shape": "え",
+      "strength": 0.8
+    },
+    "5": {
+      "shape": "え",
+      "strength": 0.7
+    },
+    "6": {
+      "shape": "い",
+      "strength": 0.85
+    },
+    "7": {
+      "shape": "う",
+      "strength": 0.8
+    },
+    "8": {
+      "shape": "お",
+      "strength": 0.8
+    },
+    "9": {
+      "shape": "あ",
+      "strength": 0.75
+    },
+    "10": {
+      "shape": "お",
+      "strength": 0.7
+    },
+    "11": {
+      "shape": "あ",
+      "strength": 0.8
+    },
+    "12": {
+      "shape": "あ",
+      "strength": 0.25
+    },
+    "13": {
+      "shape": "う",
+      "strength": 0.4
+    },
+    "14": {
+      "shape": "い",
+      "strength": 0.4
+    },
+    "15": {
+      "shape": "い",
+      "strength": 0.45
+    },
+    "16": {
+      "shape": "う",
+      "strength": 0.45
+    },
+    "17": {
+      "shape": "い",
+      "strength": 0.4
+    },
+    "18": {
+      "shape": "い",
+      "strength": 0.3
+    },
+    "19": {
+      "shape": "い",
+      "strength": 0.45
+    },
+    "20": {
+      "shape": "え",
+      "strength": 0.45
+    }
+  },
+  "limitations": [
+    "Offline synthetic speech only",
+    "Mandarin viseme identities approximate",
+    "No runtime microphone or interruption integration",
+    "No new cloth/hair physics"
+  ]
+}

@@ -13,7 +13,9 @@ from app.api.v1 import (
     health,
     hotwords,
     llm,
+    live_voice,
     models,
+    model_downloads,
     records,
     skills,
     stream,
@@ -26,6 +28,7 @@ from fastapi import APIRouter
 
 api_router = APIRouter(prefix="/v1")
 api_router.include_router(codex.router)
+api_router.include_router(live_voice.router)
 
 api_router.include_router(health.router)
 api_router.include_router(hotwords.router)
@@ -37,6 +40,7 @@ api_router.include_router(transcribe.router)
 api_router.include_router(llm.router)
 api_router.include_router(tasks.router)
 api_router.include_router(models.router)
+api_router.include_router(model_downloads.router)
 api_router.include_router(stream.router)
 api_router.include_router(records.router)
 api_router.include_router(tts_api.router)

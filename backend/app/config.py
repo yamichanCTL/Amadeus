@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     codex_max_sessions: int = Field(16, ge=1, le=64)
     codex_max_active_turns: int = Field(2, ge=1, le=8)
 
+    # Optional paid full-duplex voice providers. Leave blank until explicitly chosen.
+    openai_api_key: str = ""
+    dashscope_api_key: str = ""
+    dashscope_workspace_id: str = ""
+    dashscope_region: Literal["cn-beijing", "ap-southeast-1"] = "cn-beijing"
+
     # ── ASR engine defaults ───────────────────────────────────────────────────
     default_engine: str = "fireredasr2"
     default_stream_engine: str = "x-asr"
@@ -96,6 +102,13 @@ class Settings(BaseSettings):
     qwen3asr_model_dir: Path = Path("models/Qwen3-ASR-1.7B")
     default_qwen3asr_device: str = "cuda:0"
     qwen3asr_torch_dtype: str = "bfloat16"
+
+    # FormalASR: Chinese speech directly to written text (offline only).
+    default_formalasr_model: str = "TaurenMountain/FormalASR-1.7B"
+    formalasr_model_dir: Path = Path("models/FormalASR-1.7B")
+    default_formalasr_device: str = "cuda:0"
+    formalasr_torch_dtype: str = "bfloat16"
+    formalasr_max_new_tokens: int = Field(1024, ge=64, le=8192)
 
     # X-ASR true streaming Zipformer
     default_x_asr_model: str = "chunk-960ms-model"
@@ -176,7 +189,7 @@ class Settings(BaseSettings):
         ):
             path.mkdir(parents=True, exist_ok=True)
         # Create per-engine model subdirs
-        for engine in ("fireredasr2", "whisper", "sensevoice", "qwen3asr"):
+        for engine in ("fireredasr2", "whisper", "sensevoice", "qwen3asr", "formalasr"):
             (self.models_dir / engine).mkdir(parents=True, exist_ok=True)
         # DB directory
         if self.database_url.startswith("sqlite"):
@@ -203,6 +216,7 @@ class Settings(BaseSettings):
             "fireredasr2_model_dir",
             "firered_vad_model_dir",
             "qwen3asr_model_dir",
+            "formalasr_model_dir",
             "x_asr_model_dir",
         )
         for name in data_path_fields:
@@ -273,6 +287,11 @@ class Settings(BaseSettings):
         if model_name is None or model_name == self.default_qwen3asr_model:
             return self.qwen3asr_model_dir
         return self.models_dir / "qwen3asr" / model_name
+
+    def formalasr_model_path(self, model_name: str | None = None) -> Path:
+        if model_name is None or model_name == self.default_formalasr_model:
+            return self.formalasr_model_dir
+        return self.models_dir / "formalasr" / model_name
 
 
 @lru_cache(maxsize=1)

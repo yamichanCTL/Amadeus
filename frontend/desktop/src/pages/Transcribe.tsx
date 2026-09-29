@@ -3,6 +3,7 @@ import { AudioPlayer } from '@/components/AudioPlayer'
 import { DropZone, type LocalAudioFile } from '@/components/DropZone'
 import { RecordButton } from '@/components/RecordButton'
 import { PromptCardEditor } from '@/components/PromptCardEditor'
+import { FormalAsrNotice } from '@/components/FormalAsrNotice'
 import { ASRApi, type LLMOperation, type TranscribeResponse } from '@/services/api'
 import { liveCaptionService } from '@/services/liveCaption'
 import { recordingService, selectDeliveryText } from '@/services/recordingService'
@@ -268,6 +269,7 @@ export function TranscribePage() {
                 <small>{settings.llmAutoPolish || settings.llmAutoTranslate ? settings.llmModel || '已开启' : '点击开启'}</small>
               </button>
             </div>
+            {settings.offlineEngine === 'formalasr' && <FormalAsrNotice />}
             <PromptCardEditor
               title="LLM Prompt 卡片"
               description="点击卡片立即切换自动与手动处理使用的 Prompt。"

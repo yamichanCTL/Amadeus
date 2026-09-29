@@ -1,0 +1,1167 @@
+{
+  "version": 1,
+  "verified_at": "2026-09-29",
+  "verification_scope": "official metadata and small-file HTTP checks; not all full-weight inference",
+  "models": [
+    {
+      "id": "sensevoice-small",
+      "engine": "sensevoice",
+      "model_name": "SenseVoiceSmall",
+      "label": "SenseVoiceSmall",
+      "directory": "SenseVoiceSmall",
+      "required_files": [
+        "model.pt",
+        "config.yaml",
+        "configuration.json",
+        "am.mvn",
+        "chn_jpn_yue_eng_ko_spectok.bpe.model"
+      ],
+      "runtime_extra": "sensevoice",
+      "estimated_size_bytes": 936694116,
+      "sources": [
+        {
+          "id": "modelscope",
+          "repo": "iic/SenseVoiceSmall",
+          "revision": "master",
+          "label": "ModelScope（作者官方·国内）",
+          "official": true,
+          "include": [
+            "model.pt",
+            "config.yaml",
+            "configuration.json",
+            "am.mvn",
+            "chn_jpn_yue_eng_ko_spectok.bpe.model",
+            "README.md",
+            "LICENSE*"
+          ],
+          "exclude": []
+        },
+        {
+          "id": "huggingface",
+          "repo": "FunAudioLLM/SenseVoiceSmall",
+          "revision": "3847d57b6bdf2dd8875cb1508d2af43d80a16bf7",
+          "label": "Hugging Face（作者官方）",
+          "official": true,
+          "include": [
+            "model.pt",
+            "config.yaml",
+            "configuration.json",
+            "am.mvn",
+            "chn_jpn_yue_eng_ko_spectok.bpe.model",
+            "README.md",
+            "LICENSE*"
+          ],
+          "exclude": []
+        },
+        {
+          "id": "hf-mirror",
+          "repo": "FunAudioLLM/SenseVoiceSmall",
+          "revision": "3847d57b6bdf2dd8875cb1508d2af43d80a16bf7",
+          "label": "HF-Mirror（第三方镜像，按官方校验）",
+          "official": false,
+          "include": [
+            "model.pt",
+            "config.yaml",
+            "configuration.json",
+            "am.mvn",
+            "chn_jpn_yue_eng_ko_spectok.bpe.model",
+            "README.md",
+            "LICENSE*"
+          ],
+          "exclude": [],
+          "snapshot": {
+            "revision": "3847d57b6bdf2dd8875cb1508d2af43d80a16bf7",
+            "files": [
+              {
+                "path": "README.md",
+                "size": 11952,
+                "git_sha1": "21ccb8d3bd78b977f6915ec907f866a217406c6a"
+              },
+              {
+                "path": "am.mvn",
+                "size": 11203,
+                "git_sha1": "681910cd1ab6458b61474cdbf0d1ac5e810f7b0d"
+              },
+              {
+                "path": "chn_jpn_yue_eng_ko_spectok.bpe.model",
+                "size": 377341,
+                "sha256": "aa87f86064c3730d799ddf7af3c04659151102cba548bce325cf06ba4da4e6a8"
+              },
+              {
+                "path": "config.yaml",
+                "size": 1855,
+                "git_sha1": "26bb9d3d20a09ff389c1ddb24865771d2312fc0f"
+              },
+              {
+                "path": "configuration.json",
+                "size": 396,
+                "git_sha1": "264d8171d2d6bfebf3c48d04bd325b34d9be1d9a"
+              },
+              {
+                "path": "model.pt",
+                "size": 936291369,
+                "sha256": "833ca2dcfdf8ec91bd4f31cfac36d6124e0c459074d5e909aec9cabe6204a3ea"
+              }
+            ]
+          }
+        }
+      ],
+      "notes": [
+        "FunASR / PyTorch 权重；不使用 GGUF 或 ONNX 变体。",
+        "现有适配器还需要官方 SenseVoice model.py，SENSEVOICE_SRC_PATH 应指向配套源码目录。"
+      ],
+      "runtime_source_url": "https://github.com/QwenAudio/SenseVoice",
+      "settings_field": "sensevoice_model_dir"
+    },
+    {
+      "id": "fireredasr2-aed",
+      "engine": "fireredasr2",
+      "model_name": "FireRedASR2-AED",
+      "label": "FireRedASR2-AED",
+      "directory": "fireredasr2/FireRedASR2-AED",
+      "required_files": [
+        "model.pth.tar",
+        "cmvn.ark",
+        "dict.txt",
+        "train_bpe1000.model"
+      ],
+      "runtime_extra": "firered",
+      "estimated_size_bytes": 4731893833,
+      "sources": [
+        {
+          "id": "modelscope",
+          "repo": "xukaituo/FireRedASR2-AED",
+          "revision": "master",
+          "label": "ModelScope（作者官方·国内）",
+          "official": true,
+          "include": [
+            "model.pth.tar",
+            "cmvn.ark",
+            "dict.txt",
+            "train_bpe1000.model",
+            "README.md",
+            "LICENSE*"
+          ],
+          "exclude": []
+        },
+        {
+          "id": "huggingface",
+          "repo": "FireRedTeam/FireRedASR2-AED",
+          "revision": "2304afed56eacfee6256dee5937ed22ffa0b64ec",
+          "label": "Hugging Face（作者官方）",
+          "official": true,
+          "include": [
+            "model.pth.tar",
+            "cmvn.ark",
+            "dict.txt",
+            "train_bpe1000.model",
+            "README.md",
+            "LICENSE*"
+          ],
+          "exclude": []
+        },
+        {
+          "id": "hf-mirror",
+          "repo": "FireRedTeam/FireRedASR2-AED",
+          "revision": "2304afed56eacfee6256dee5937ed22ffa0b64ec",
+          "label": "HF-Mirror（第三方镜像，按官方校验）",
+          "official": false,
+          "include": [
+            "model.pth.tar",
+            "cmvn.ark",
+            "dict.txt",
+            "train_bpe1000.model",
+            "README.md",
+            "LICENSE*"
+          ],
+          "exclude": [],
+          "snapshot": {
+            "revision": "2304afed56eacfee6256dee5937ed22ffa0b64ec",
+            "files": [
+              {
+                "path": "README.md",
+                "size": 3137,
+                "git_sha1": "0276e23683c4089ff8eb94684c675f3bcb6a8f42"
+              },
+              {
+                "path": "cmvn.ark",
+                "size": 1311,
+                "git_sha1": "e26b4a310132492d05bfdd506ab3f6bbf89d9059"
+              },
+              {
+                "path": "dict.txt",
+                "size": 79172,
+                "git_sha1": "50ac9cbd43d638b58f875e90b118ad8c9be51718"
+              },
+              {
+                "path": "model.pth.tar",
+                "size": 4731558506,
+                "sha256": "4677cbd30988d63ed3e777f6a42a1e5260a3865317f6e15e488bef40954f7054"
+              },
+              {
+                "path": "train_bpe1000.model",
+                "size": 251707,
+                "sha256": "473bbc157cb4eade2059b30a3c877a1c29bd50cadbfbed869ae36eeade7fee07"
+              }
+            ]
+          }
+        }
+      ],
+      "notes": [
+        "独立 AED 识别模型，不下载 FireRedASR2-LLM 或 Qwen2-7B。",
+        "现有适配器需要 FireRedASR2S 配套源码，FIREREDASR2_SRC_PATH 指向包含 fireredasr2s 的目录。",
+        "FireRedVAD 是独立可选端点检测模型；离线 AED 识别不要求它，当前流式会话缺少它时使用能量端点检测。"
+      ],
+      "runtime_source_url": "https://github.com/FireRedTeam/FireRedASR2S",
+      "settings_field": "fireredasr2_model_dir"
+    },
+    {
+      "id": "qwen3-asr-1.7b",
+      "engine": "qwen3asr",
+      "model_name": "Qwen/Qwen3-ASR-1.7B",
+      "label": "Qwen3-ASR-1.7B",
+      "directory": "Qwen3-ASR-1.7B",
+      "required_files": [
+        "config.json",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "vocab.json",
+        "merges.txt",
+        "model.safetensors.index.json",
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors"
+      ],
+      "runtime_extra": "qwen3asr",
+      "estimated_size_bytes": 4703112789,
+      "sources": [
+        {
+          "id": "modelscope",
+          "repo": "Qwen/Qwen3-ASR-1.7B",
+          "revision": "master",
+          "label": "ModelScope（作者官方·国内）",
+          "official": true,
+          "include": [
+            "*.json",
+            "*.txt",
+            "*.jinja",
+            "*.safetensors",
+            "README.md",
+            "LICENSE*"
+          ],
+          "exclude": []
+        },
+        {
+          "id": "huggingface",
+          "repo": "Qwen/Qwen3-ASR-1.7B",
+          "revision": "7278e1e70fe206f11671096ffdd38061171dd6e5",
+          "label": "Hugging Face（作者官方）",
+          "official": true,
+          "include": [
+            "*.json",
+            "*.txt",
+            "*.jinja",
+            "*.safetensors",
+            "README.md",
+            "LICENSE*"
+          ],
+          "exclude": []
+        },
+        {
+          "id": "hf-mirror",
+          "repo": "Qwen/Qwen3-ASR-1.7B",
+          "revision": "7278e1e70fe206f11671096ffdd38061171dd6e5",
+          "label": "HF-Mirror（第三方镜像，按官方校验）",
+          "official": false,
+          "include": [
+            "*.json",
+            "*.txt",
+            "*.jinja",
+            "*.safetensors",
+            "README.md",
+            "LICENSE*"
+          ],
+          "exclude": [],
+          "snapshot": {
+            "revision": "7278e1e70fe206f11671096ffdd38061171dd6e5",
+            "files": [
+              {
+                "path": "README.md",
+                "size": 57456,
+                "git_sha1": "3a67d43f21febda213ff36efdb60ef10019af7f3"
+              },
+              {
+                "path": "chat_template.json",
+                "size": 1161,
+                "git_sha1": "c44736493efd71ec96218cc626904698cdb13235"
+              },
+              {
+                "path": "config.json",
+                "size": 6194,
+                "git_sha1": "2bc16c9d4ca08963715cfb94d879799b9adbd0e9"
+              },
+              {
+                "path": "generation_config.json",
+                "size": 142,
+                "git_sha1": "7382a4d347c0a865b76bb1b8277f66a5ac312854"
+              },
+              {
+                "path": "merges.txt",
+                "size": 1671853,
+                "git_sha1": "31349551d90c7606f325fe0f11bbb8bd5fa0d7c7"
+              },
+              {
+                "path": "model-00001-of-00002.safetensors",
+                "size": 4220320824,
+                "sha256": "a4cd1f1a04d90b757dc7f7dd26254e69a013b19e80efe590a83c6a3bde8608d6"
+              },
+              {
+                "path": "model-00002-of-00002.safetensors",
+                "size": 478200688,
+                "sha256": "6e0b9d9e09e2e0238e7ef3cc8a484ab387e91b90f1900bedf88bc92d7929ccfc"
+              },
+              {
+                "path": "model.safetensors.index.json",
+                "size": 64821,
+                "git_sha1": "1048a4eb4f21fef9aea06d8568a784b2b5595689"
+              },
+              {
+                "path": "preprocessor_config.json",
+                "size": 330,
+                "git_sha1": "8f7f07346466d5d494ec0d4969d1c3d0190eed72"
+              },
+              {
+                "path": "tokenizer_config.json",
+                "size": 12487,
+                "git_sha1": "b93109843922a40c6654c5449d3bf95372267c66"
+              },
+              {
+                "path": "vocab.json",
+                "size": 2776833,
+                "git_sha1": "4783fe10ac3adce15ac8f358ef5462739852c569"
+              }
+            ]
+          }
+        }
+      ],
+      "notes": [
+        "使用当前适配器的 qwen-asr 格式；不替换成 Qwen3-ASR-1.7B-hf 原生 Transformers 变体。",
+        "只下载识别模型；不额外下载 ForcedAligner。"
+      ],
+      "settings_field": "qwen3asr_model_dir"
+    },
+    {
+      "id": "formalasr-1.7b",
+      "engine": "formalasr",
+      "model_name": "TaurenMountain/FormalASR-1.7B",
+      "label": "FormalASR-1.7B",
+      "directory": "FormalASR-1.7B",
+      "required_files": [
+        "config.json",
+        "preprocessor_config.json",
+        "tokenizer_config.json",
+        "tokenizer.json",
+        "model.safetensors"
+      ],
+      "runtime_extra": "formalasr",
+      "estimated_size_bytes": 4092095567,
+      "sources": [
+        {
+          "id": "modelscope",
+          "repo": "TaurenMountain/FormalASR-1.7B",
+          "revision": "master",
+          "label": "ModelScope（作者官方·国内）",
+          "official": true,
+          "include": [
+            "*.json",
+            "*.txt",
+            "*.jinja",
+            "*.safetensors",
+            "README.md",
+            "LICENSE*"
+          ],
+          "exclude": []
+        },
+        {
+          "id": "huggingface",
+          "repo": "TaurenMountain/FormalASR-1.7B",
+          "revision": "2b91091772f7c406c0fc2e4df2b3829329fae46b",
+          "label": "Hugging Face（作者官方）",
+          "official": true,
+          "include": [
+            "*.json",
+            "*.txt",
+            "*.jinja",
+            "*.safetensors",
+            "README.md",
+            "LICENSE*"
+          ],
+          "exclude": []
+        },
+        {
+          "id": "hf-mirror",
+          "repo": "TaurenMountain/FormalASR-1.7B",
+          "revision": "2b91091772f7c406c0fc2e4df2b3829329fae46b",
+          "label": "HF-Mirror（第三方镜像，按官方校验）",
+          "official": false,
+          "include": [
+            "*.json",
+            "*.txt",
+            "*.jinja",
+            "*.safetensors",
+            "README.md",
+            "LICENSE*"
+          ],
+          "exclude": [],
+          "snapshot": {
+            "revision": "2b91091772f7c406c0fc2e4df2b3829329fae46b",
+            "files": [
+              {
+                "path": "README.md",
+                "size": 3138,
+                "git_sha1": "9c1b47e9ffd0fa96893b26c300a2f1be944bd201"
+              },
+              {
+                "path": "added_tokens.json",
+                "size": 1566,
+                "git_sha1": "0392e6cfed1ceb0679ecad2450fbacc40dfca138"
+              },
+              {
+                "path": "chat_template.jinja",
+                "size": 1099,
+                "git_sha1": "5a49c7491040017bb9018327dc1fcc2d8a993798"
+              },
+              {
+                "path": "config.json",
+                "size": 5820,
+                "git_sha1": "cc2e204350cdf772716b3203cfdb20e1b7bf8e36"
+              },
+              {
+                "path": "generation_config.json",
+                "size": 69,
+                "git_sha1": "9f0f075d45c30308b6d7ffb9fb01e5450063f9c2"
+              },
+              {
+                "path": "merges.txt",
+                "size": 1671853,
+                "git_sha1": "31349551d90c7606f325fe0f11bbb8bd5fa0d7c7"
+              },
+              {
+                "path": "model.safetensors",
+                "size": 4076191640,
+                "sha256": "5de3c112c27cc7f6886c0e0dee37568d79ca836048dc4858d5a5bf3dd8b37060"
+              },
+              {
+                "path": "preprocessor_config.json",
+                "size": 357,
+                "git_sha1": "75e4c8b236a4eb03aff21b82e719030f3b0f8721"
+              },
+              {
+                "path": "special_tokens_map.json",
+                "size": 1008,
+                "git_sha1": "fca9909b535ff91b68474e5ee7258e1574e60d1e"
+              },
+              {
+                "path": "tokenizer.json",
+                "size": 11429667,
+                "sha256": "49f7979b77360c9076e59b42303453f499153f4cd150c22058cc6315eacf6d86"
+              },
+              {
+                "path": "tokenizer_config.json",
+                "size": 12517,
+                "git_sha1": "8a1c2ab6e5e14db2c87839d654915c0d77d41fdb"
+              },
+              {
+                "path": "vocab.json",
+                "size": 2776833,
+                "git_sha1": "4783fe10ac3adce15ac8f358ef5462739852c569"
+              }
+            ]
+          }
+        }
+      ],
+      "notes": [
+        "作者模型卡明确提供同名 ModelScope 仓库与 qwen-asr 加载方式。",
+        "输出中文书面文本；不是通用指令语言模型，也不提供逐字时间戳。"
+      ],
+      "settings_field": "formalasr_model_dir"
+    },
+    {
+      "id": "whisper-tiny",
+      "engine": "whisper",
+      "model_name": "tiny",
+      "label": "Whisper tiny（CTranslate2）",
+      "directory": "whisper/tiny",
+      "required_files": [
+        "model.bin",
+        "config.json",
+        "tokenizer.json",
+        "vocabulary.txt"
+      ],
+      "runtime_extra": "whisper",
+      "estimated_size_bytes": 78205610,
+      "sources": [
+        {
+          "id": "huggingface",
+          "repo": "Systran/faster-whisper-tiny",
+          "revision": "d90ca5fe260221311c53c58e660288d3deb8d356",
+          "label": "Hugging Face（作者官方）",
+          "official": true,
+          "include": [
+            "model.bin",
+            "config.json",
+            "tokenizer.json",
+            "vocabulary.txt",
+            "README.md",
+            "LICENSE*"
+          ],
+          "exclude": []
+        },
+        {
+          "id": "hf-mirror",
+          "repo": "Systran/faster-whisper-tiny",
+          "revision": "d90ca5fe260221311c53c58e660288d3deb8d356",
+          "label": "HF-Mirror（第三方镜像，按官方校验）",
+          "official": false,
+          "include": [
+            "model.bin",
+            "config.json",
+            "tokenizer.json",
+            "vocabulary.txt",
+            "README.md",
+            "LICENSE*"
+          ],
+          "exclude": [],
+          "snapshot": {
+            "revision": "d90ca5fe260221311c53c58e660288d3deb8d356",
+            "files": [
+              {
+                "path": "README.md",
+                "size": 1991,
+                "git_sha1": "7e9bc5761a3e88762273fb1011479f2e501266c4"
+              },
+              {
+                "path": "config.json",
+                "size": 2249,
+                "git_sha1": "3baa18e2b321a2f489614607852a729fcd516480"
+              },
+              {
+                "path": "model.bin",
+                "size": 75538270,
+                "sha256": "dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1"
+              },
+              {
+                "path": "tokenizer.json",
+                "size": 2203239,
+                "git_sha1": "7818adb6de9fa3064d3ff81226fdd675be1f6344"
+              },
+              {
+                "path": "vocabulary.txt",
+                "size": 459861,
+                "git_sha1": "c9074644d9d1205686f16d411564729461324b75"
+              }
+            ]
+          }
+        }
+      ],
+      "notes": [
+        "faster-whisper 维护方 SYSTRAN 发布的 CTranslate2 转换权重；不使用 openai/whisper-* 原始 PyTorch 权重。",
+        "CPU 可选择 int8；tiny 用于小体积安装验证，中文质量不代表大模型表现。"
+      ]
+    },
+    {
+      "id": "whisper-base",
+      "engine": "whisper",
+      "model_name": "base",
+      "label": "Whisper base（CTranslate2）",
+      "directory": "whisper/base",
+      "required_files": [
+        "model.bin",
+        "config.json",
+        "tokenizer.json",
+        "vocabulary.txt"
+      ],
+      "runtime_extra": "whisper",
+      "estimated_size_bytes": 147884932,
+      "sources": [
+        {
+          "id": "huggingface",
+          "repo": "Systran/faster-whisper-base",
+          "revision": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+          "label": "Hugging Face（作者官方）",
+          "official": true,
+          "include": [
+            "model.bin",
+            "config.json",
+            "tokenizer.json",
+            "vocabulary.txt",
+            "README.md",
+            "LICENSE*"
+          ],
+          "exclude": []
+        },
+        {
+          "id": "hf-mirror",
+          "repo": "Systran/faster-whisper-base",
+          "revision": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+          "label": "HF-Mirror（第三方镜像，按官方校验）",
+          "official": false,
+          "include": [
+            "model.bin",
+            "config.json",
+            "tokenizer.json",
+            "vocabulary.txt",
+            "README.md",
+            "LICENSE*"
+          ],
+          "exclude": [],
+          "snapshot": {
+            "revision": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+            "files": [
+              {
+                "path": "README.md",
+                "size": 1991,
+                "git_sha1": "cddfec65ffb3e3df45d2234f09f3d261bf9a9c0a"
+              },
+              {
+                "path": "config.json",
+                "size": 2309,
+                "git_sha1": "867cf1a0fece1394e01d55e287ba2f09a577c046"
+              },
+              {
+                "path": "model.bin",
+                "size": 145217532,
+                "sha256": "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9"
+              },
+              {
+                "path": "tokenizer.json",
+                "size": 2203239,
+                "git_sha1": "7818adb6de9fa3064d3ff81226fdd675be1f6344"
+              },
+              {
+                "path": "vocabulary.txt",
+                "size": 459861,
+                "git_sha1": "c9074644d9d1205686f16d411564729461324b75"
+              }
+            ]
+          }
+        }
+      ],
+      "notes": [
+        "faster-whisper 维护方 SYSTRAN 发布的 CTranslate2 转换权重；不使用 openai/whisper-* 原始 PyTorch 权重。",
+        "base 是当前应用的默认 Whisper 型号。"
+      ]
+    },
+    {
+      "id": "x-asr-160",
+      "engine": "x-asr",
+      "model_name": "chunk-160ms-model",
+      "label": "X-ASR 中文/英文 · 160 ms",
+      "directory": "x-asr/chunk-160ms-model",
+      "required_files": [
+        "encoder-160ms.onnx",
+        "decoder-160ms.onnx",
+        "joiner-160ms.onnx",
+        "tokens.txt"
+      ],
+      "runtime_extra": "x-asr",
+      "estimated_size_bytes": 614595410,
+      "sources": [
+        {
+          "id": "modelscope",
+          "repo": "Gilgamesh-J/X-ASR-zh-en",
+          "revision": "master",
+          "label": "ModelScope（作者官方·国际站）",
+          "official": true,
+          "include": [
+            "deployment/models/chunk-160ms-model/encoder-160ms.onnx",
+            "deployment/models/chunk-160ms-model/decoder-160ms.onnx",
+            "deployment/models/chunk-160ms-model/joiner-160ms.onnx",
+            "deployment/models/chunk-160ms-model/tokens.txt"
+          ],
+          "exclude": [],
+          "strip_prefix": "deployment/models/chunk-160ms-model/",
+          "api_base": "https://www.modelscope.ai",
+          "download_base": "https://www.modelscope.ai"
+        },
+        {
+          "id": "huggingface",
+          "repo": "GilgameshWind/X-ASR-zh-en",
+          "revision": "689ff18c584d29910da37b6fe904db0c1489c9d1",
+          "label": "Hugging Face（作者官方）",
+          "official": true,
+          "include": [
+            "deployment/models/chunk-160ms-model/encoder-160ms.onnx",
+            "deployment/models/chunk-160ms-model/decoder-160ms.onnx",
+            "deployment/models/chunk-160ms-model/joiner-160ms.onnx",
+            "deployment/models/chunk-160ms-model/tokens.txt"
+          ],
+          "exclude": [],
+          "strip_prefix": "deployment/models/chunk-160ms-model/"
+        },
+        {
+          "id": "github",
+          "repo": "Gilgamesh-J/X-ASR",
+          "revision": "838297cd47fed858e6cf72eaf5a52f948a3edd73",
+          "label": "GitHub（作者官方·已校验文件）",
+          "official": true,
+          "files": [
+            {
+              "path": "encoder-160ms.onnx",
+              "url": "https://media.githubusercontent.com/media/Gilgamesh-J/X-ASR/838297cd47fed858e6cf72eaf5a52f948a3edd73/X-ASR-zh-en/deployment/models/chunk-160ms-model/encoder-160ms.onnx",
+              "size": 592967053,
+              "sha256": "821a1dfb9027915ca014080abfa658346be0e2d0bf8b2027f0b6dd29fffe0c4b"
+            },
+            {
+              "path": "decoder-160ms.onnx",
+              "url": "https://media.githubusercontent.com/media/Gilgamesh-J/X-ASR/838297cd47fed858e6cf72eaf5a52f948a3edd73/X-ASR-zh-en/deployment/models/chunk-160ms-model/decoder-160ms.onnx",
+              "size": 11309084,
+              "sha256": "3658368d274a5d5fd39a7ac20c46bed0ad9cfea1f0feddef30d5d89797c1f499"
+            },
+            {
+              "path": "joiner-160ms.onnx",
+              "url": "https://media.githubusercontent.com/media/Gilgamesh-J/X-ASR/838297cd47fed858e6cf72eaf5a52f948a3edd73/X-ASR-zh-en/deployment/models/chunk-160ms-model/joiner-160ms.onnx",
+              "size": 10260467,
+              "sha256": "03781c98165a2385024c9cecdd2b6b13310d81db23a62c7da420782c2915cf81"
+            },
+            {
+              "path": "tokens.txt",
+              "url": "https://raw.githubusercontent.com/Gilgamesh-J/X-ASR/838297cd47fed858e6cf72eaf5a52f948a3edd73/X-ASR-zh-en/deployment/models/chunk-160ms-model/tokens.txt",
+              "size": 58806,
+              "sha256": "b818a60878b9aae978cbb8ad594acbd403d76d1af2e31ef4197c84e2dbdba27c"
+            }
+          ]
+        },
+        {
+          "id": "hf-mirror",
+          "repo": "GilgameshWind/X-ASR-zh-en",
+          "revision": "689ff18c584d29910da37b6fe904db0c1489c9d1",
+          "label": "HF-Mirror（第三方镜像，按官方校验）",
+          "official": false,
+          "include": [
+            "deployment/models/chunk-160ms-model/encoder-160ms.onnx",
+            "deployment/models/chunk-160ms-model/decoder-160ms.onnx",
+            "deployment/models/chunk-160ms-model/joiner-160ms.onnx",
+            "deployment/models/chunk-160ms-model/tokens.txt"
+          ],
+          "exclude": [],
+          "snapshot": {
+            "revision": "689ff18c584d29910da37b6fe904db0c1489c9d1",
+            "files": [
+              {
+                "path": "deployment/models/chunk-160ms-model/decoder-160ms.onnx",
+                "size": 11309084,
+                "sha256": "3658368d274a5d5fd39a7ac20c46bed0ad9cfea1f0feddef30d5d89797c1f499"
+              },
+              {
+                "path": "deployment/models/chunk-160ms-model/encoder-160ms.onnx",
+                "size": 592967053,
+                "sha256": "821a1dfb9027915ca014080abfa658346be0e2d0bf8b2027f0b6dd29fffe0c4b"
+              },
+              {
+                "path": "deployment/models/chunk-160ms-model/joiner-160ms.onnx",
+                "size": 10260467,
+                "sha256": "03781c98165a2385024c9cecdd2b6b13310d81db23a62c7da420782c2915cf81"
+              },
+              {
+                "path": "deployment/models/chunk-160ms-model/tokens.txt",
+                "size": 58806,
+                "git_sha1": "8ab5e8e441ec0c2028fa05b200ad1514d19b134e"
+              }
+            ]
+          },
+          "strip_prefix": "deployment/models/chunk-160ms-model/"
+        }
+      ],
+      "notes": [
+        "仅下载所选块长的三个 ONNX 与 tokens.txt；不下载训练 checkpoint、其他块长、演示视频或桌面安装包。",
+        "安装到 X_ASR_MODEL_DIR 的父目录下同名 chunk 目录，与现有引擎切换逻辑一致。",
+        "作者 ModelScope 仓库位于国际站 .ai；本次核验国内站 .cn 对同仓库返回 404。"
+      ],
+      "settings_field": "x_asr_model_dir"
+    },
+    {
+      "id": "x-asr-480",
+      "engine": "x-asr",
+      "model_name": "chunk-480ms-model",
+      "label": "X-ASR 中文/英文 · 480 ms",
+      "directory": "x-asr/chunk-480ms-model",
+      "required_files": [
+        "encoder-480ms.onnx",
+        "decoder-480ms.onnx",
+        "joiner-480ms.onnx",
+        "tokens.txt"
+      ],
+      "runtime_extra": "x-asr",
+      "estimated_size_bytes": 614596718,
+      "sources": [
+        {
+          "id": "modelscope",
+          "repo": "Gilgamesh-J/X-ASR-zh-en",
+          "revision": "master",
+          "label": "ModelScope（作者官方·国际站）",
+          "official": true,
+          "include": [
+            "deployment/models/chunk-480ms-model/encoder-480ms.onnx",
+            "deployment/models/chunk-480ms-model/decoder-480ms.onnx",
+            "deployment/models/chunk-480ms-model/joiner-480ms.onnx",
+            "deployment/models/chunk-480ms-model/tokens.txt"
+          ],
+          "exclude": [],
+          "strip_prefix": "deployment/models/chunk-480ms-model/",
+          "api_base": "https://www.modelscope.ai",
+          "download_base": "https://www.modelscope.ai"
+        },
+        {
+          "id": "huggingface",
+          "repo": "GilgameshWind/X-ASR-zh-en",
+          "revision": "689ff18c584d29910da37b6fe904db0c1489c9d1",
+          "label": "Hugging Face（作者官方）",
+          "official": true,
+          "include": [
+            "deployment/models/chunk-480ms-model/encoder-480ms.onnx",
+            "deployment/models/chunk-480ms-model/decoder-480ms.onnx",
+            "deployment/models/chunk-480ms-model/joiner-480ms.onnx",
+            "deployment/models/chunk-480ms-model/tokens.txt"
+          ],
+          "exclude": [],
+          "strip_prefix": "deployment/models/chunk-480ms-model/"
+        },
+        {
+          "id": "github",
+          "repo": "Gilgamesh-J/X-ASR",
+          "revision": "838297cd47fed858e6cf72eaf5a52f948a3edd73",
+          "label": "GitHub（作者官方·已校验文件）",
+          "official": true,
+          "files": [
+            {
+              "path": "encoder-480ms.onnx",
+              "url": "https://media.githubusercontent.com/media/Gilgamesh-J/X-ASR/838297cd47fed858e6cf72eaf5a52f948a3edd73/X-ASR-zh-en/deployment/models/chunk-480ms-model/encoder-480ms.onnx",
+              "size": 592968361,
+              "sha256": "0c3454033d249081df124ddcd7adaf3deca07d0b999b26f2ee5d2475d37abc74"
+            },
+            {
+              "path": "decoder-480ms.onnx",
+              "url": "https://media.githubusercontent.com/media/Gilgamesh-J/X-ASR/838297cd47fed858e6cf72eaf5a52f948a3edd73/X-ASR-zh-en/deployment/models/chunk-480ms-model/decoder-480ms.onnx",
+              "size": 11309084,
+              "sha256": "3658368d274a5d5fd39a7ac20c46bed0ad9cfea1f0feddef30d5d89797c1f499"
+            },
+            {
+              "path": "joiner-480ms.onnx",
+              "url": "https://media.githubusercontent.com/media/Gilgamesh-J/X-ASR/838297cd47fed858e6cf72eaf5a52f948a3edd73/X-ASR-zh-en/deployment/models/chunk-480ms-model/joiner-480ms.onnx",
+              "size": 10260467,
+              "sha256": "03781c98165a2385024c9cecdd2b6b13310d81db23a62c7da420782c2915cf81"
+            },
+            {
+              "path": "tokens.txt",
+              "url": "https://raw.githubusercontent.com/Gilgamesh-J/X-ASR/838297cd47fed858e6cf72eaf5a52f948a3edd73/X-ASR-zh-en/deployment/models/chunk-480ms-model/tokens.txt",
+              "size": 58806,
+              "sha256": "b818a60878b9aae978cbb8ad594acbd403d76d1af2e31ef4197c84e2dbdba27c"
+            }
+          ]
+        },
+        {
+          "id": "hf-mirror",
+          "repo": "GilgameshWind/X-ASR-zh-en",
+          "revision": "689ff18c584d29910da37b6fe904db0c1489c9d1",
+          "label": "HF-Mirror（第三方镜像，按官方校验）",
+          "official": false,
+          "include": [
+            "deployment/models/chunk-480ms-model/encoder-480ms.onnx",
+            "deployment/models/chunk-480ms-model/decoder-480ms.onnx",
+            "deployment/models/chunk-480ms-model/joiner-480ms.onnx",
+            "deployment/models/chunk-480ms-model/tokens.txt"
+          ],
+          "exclude": [],
+          "snapshot": {
+            "revision": "689ff18c584d29910da37b6fe904db0c1489c9d1",
+            "files": [
+              {
+                "path": "deployment/models/chunk-480ms-model/decoder-480ms.onnx",
+                "size": 11309084,
+                "sha256": "3658368d274a5d5fd39a7ac20c46bed0ad9cfea1f0feddef30d5d89797c1f499"
+              },
+              {
+                "path": "deployment/models/chunk-480ms-model/encoder-480ms.onnx",
+                "size": 592968361,
+                "sha256": "0c3454033d249081df124ddcd7adaf3deca07d0b999b26f2ee5d2475d37abc74"
+              },
+              {
+                "path": "deployment/models/chunk-480ms-model/joiner-480ms.onnx",
+                "size": 10260467,
+                "sha256": "03781c98165a2385024c9cecdd2b6b13310d81db23a62c7da420782c2915cf81"
+              },
+              {
+                "path": "deployment/models/chunk-480ms-model/tokens.txt",
+                "size": 58806,
+                "git_sha1": "8ab5e8e441ec0c2028fa05b200ad1514d19b134e"
+              }
+            ]
+          },
+          "strip_prefix": "deployment/models/chunk-480ms-model/"
+        }
+      ],
+      "notes": [
+        "仅下载所选块长的三个 ONNX 与 tokens.txt；不下载训练 checkpoint、其他块长、演示视频或桌面安装包。",
+        "安装到 X_ASR_MODEL_DIR 的父目录下同名 chunk 目录，与现有引擎切换逻辑一致。",
+        "作者 ModelScope 仓库位于国际站 .ai；本次核验国内站 .cn 对同仓库返回 404。"
+      ],
+      "settings_field": "x_asr_model_dir"
+    },
+    {
+      "id": "x-asr-960",
+      "engine": "x-asr",
+      "model_name": "chunk-960ms-model",
+      "label": "X-ASR 中文/英文 · 960 ms",
+      "directory": "x-asr/chunk-960ms-model",
+      "required_files": [
+        "encoder-960ms.onnx",
+        "decoder-960ms.onnx",
+        "joiner-960ms.onnx",
+        "tokens.txt"
+      ],
+      "runtime_extra": "x-asr",
+      "estimated_size_bytes": 614595317,
+      "sources": [
+        {
+          "id": "modelscope",
+          "repo": "Gilgamesh-J/X-ASR-zh-en",
+          "revision": "master",
+          "label": "ModelScope（作者官方·国际站）",
+          "official": true,
+          "include": [
+            "deployment/models/chunk-960ms-model/encoder-960ms.onnx",
+            "deployment/models/chunk-960ms-model/decoder-960ms.onnx",
+            "deployment/models/chunk-960ms-model/joiner-960ms.onnx",
+            "deployment/models/chunk-960ms-model/tokens.txt"
+          ],
+          "exclude": [],
+          "strip_prefix": "deployment/models/chunk-960ms-model/",
+          "api_base": "https://www.modelscope.ai",
+          "download_base": "https://www.modelscope.ai"
+        },
+        {
+          "id": "huggingface",
+          "repo": "GilgameshWind/X-ASR-zh-en",
+          "revision": "689ff18c584d29910da37b6fe904db0c1489c9d1",
+          "label": "Hugging Face（作者官方）",
+          "official": true,
+          "include": [
+            "deployment/models/chunk-960ms-model/encoder-960ms.onnx",
+            "deployment/models/chunk-960ms-model/decoder-960ms.onnx",
+            "deployment/models/chunk-960ms-model/joiner-960ms.onnx",
+            "deployment/models/chunk-960ms-model/tokens.txt"
+          ],
+          "exclude": [],
+          "strip_prefix": "deployment/models/chunk-960ms-model/"
+        },
+        {
+          "id": "github",
+          "repo": "Gilgamesh-J/X-ASR",
+          "revision": "838297cd47fed858e6cf72eaf5a52f948a3edd73",
+          "label": "GitHub（作者官方·已校验文件）",
+          "official": true,
+          "files": [
+            {
+              "path": "encoder-960ms.onnx",
+              "url": "https://media.githubusercontent.com/media/Gilgamesh-J/X-ASR/838297cd47fed858e6cf72eaf5a52f948a3edd73/X-ASR-zh-en/deployment/models/chunk-960ms-model/encoder-960ms.onnx",
+              "size": 592966960,
+              "sha256": "dd9484b7c34c951495f3420f26f9f2ab706e748bc087cd14dfe0b90d3156264f"
+            },
+            {
+              "path": "decoder-960ms.onnx",
+              "url": "https://media.githubusercontent.com/media/Gilgamesh-J/X-ASR/838297cd47fed858e6cf72eaf5a52f948a3edd73/X-ASR-zh-en/deployment/models/chunk-960ms-model/decoder-960ms.onnx",
+              "size": 11309084,
+              "sha256": "3658368d274a5d5fd39a7ac20c46bed0ad9cfea1f0feddef30d5d89797c1f499"
+            },
+            {
+              "path": "joiner-960ms.onnx",
+              "url": "https://media.githubusercontent.com/media/Gilgamesh-J/X-ASR/838297cd47fed858e6cf72eaf5a52f948a3edd73/X-ASR-zh-en/deployment/models/chunk-960ms-model/joiner-960ms.onnx",
+              "size": 10260467,
+              "sha256": "03781c98165a2385024c9cecdd2b6b13310d81db23a62c7da420782c2915cf81"
+            },
+            {
+              "path": "tokens.txt",
+              "url": "https://raw.githubusercontent.com/Gilgamesh-J/X-ASR/838297cd47fed858e6cf72eaf5a52f948a3edd73/X-ASR-zh-en/deployment/models/chunk-960ms-model/tokens.txt",
+              "size": 58806,
+              "sha256": "b818a60878b9aae978cbb8ad594acbd403d76d1af2e31ef4197c84e2dbdba27c"
+            }
+          ]
+        },
+        {
+          "id": "hf-mirror",
+          "repo": "GilgameshWind/X-ASR-zh-en",
+          "revision": "689ff18c584d29910da37b6fe904db0c1489c9d1",
+          "label": "HF-Mirror（第三方镜像，按官方校验）",
+          "official": false,
+          "include": [
+            "deployment/models/chunk-960ms-model/encoder-960ms.onnx",
+            "deployment/models/chunk-960ms-model/decoder-960ms.onnx",
+            "deployment/models/chunk-960ms-model/joiner-960ms.onnx",
+            "deployment/models/chunk-960ms-model/tokens.txt"
+          ],
+          "exclude": [],
+          "snapshot": {
+            "revision": "689ff18c584d29910da37b6fe904db0c1489c9d1",
+            "files": [
+              {
+                "path": "deployment/models/chunk-960ms-model/decoder-960ms.onnx",
+                "size": 11309084,
+                "sha256": "3658368d274a5d5fd39a7ac20c46bed0ad9cfea1f0feddef30d5d89797c1f499"
+              },
+              {
+                "path": "deployment/models/chunk-960ms-model/encoder-960ms.onnx",
+                "size": 592966960,
+                "sha256": "dd9484b7c34c951495f3420f26f9f2ab706e748bc087cd14dfe0b90d3156264f"
+              },
+              {
+                "path": "deployment/models/chunk-960ms-model/joiner-960ms.onnx",
+                "size": 10260467,
+                "sha256": "03781c98165a2385024c9cecdd2b6b13310d81db23a62c7da420782c2915cf81"
+              },
+              {
+                "path": "deployment/models/chunk-960ms-model/tokens.txt",
+                "size": 58806,
+                "git_sha1": "8ab5e8e441ec0c2028fa05b200ad1514d19b134e"
+              }
+            ]
+          },
+          "strip_prefix": "deployment/models/chunk-960ms-model/"
+        }
+      ],
+      "notes": [
+        "仅下载所选块长的三个 ONNX 与 tokens.txt；不下载训练 checkpoint、其他块长、演示视频或桌面安装包。",
+        "安装到 X_ASR_MODEL_DIR 的父目录下同名 chunk 目录，与现有引擎切换逻辑一致。",
+        "作者 ModelScope 仓库位于国际站 .ai；本次核验国内站 .cn 对同仓库返回 404。"
+      ],
+      "settings_field": "x_asr_model_dir"
+    },
+    {
+      "id": "x-asr-1920",
+      "engine": "x-asr",
+      "model_name": "chunk-1920ms-model",
+      "label": "X-ASR 中文/英文 · 1920 ms",
+      "directory": "x-asr/chunk-1920ms-model",
+      "required_files": [
+        "encoder-1920ms.onnx",
+        "decoder-1920ms.onnx",
+        "joiner-1920ms.onnx",
+        "tokens.txt"
+      ],
+      "runtime_extra": "x-asr",
+      "estimated_size_bytes": 614586885,
+      "sources": [
+        {
+          "id": "modelscope",
+          "repo": "Gilgamesh-J/X-ASR-zh-en",
+          "revision": "master",
+          "label": "ModelScope（作者官方·国际站）",
+          "official": true,
+          "include": [
+            "deployment/models/chunk-1920ms-model/encoder-1920ms.onnx",
+            "deployment/models/chunk-1920ms-model/decoder-1920ms.onnx",
+            "deployment/models/chunk-1920ms-model/joiner-1920ms.onnx",
+            "deployment/models/chunk-1920ms-model/tokens.txt"
+          ],
+          "exclude": [],
+          "strip_prefix": "deployment/models/chunk-1920ms-model/",
+          "api_base": "https://www.modelscope.ai",
+          "download_base": "https://www.modelscope.ai"
+        },
+        {
+          "id": "huggingface",
+          "repo": "GilgameshWind/X-ASR-zh-en",
+          "revision": "689ff18c584d29910da37b6fe904db0c1489c9d1",
+          "label": "Hugging Face（作者官方）",
+          "official": true,
+          "include": [
+            "deployment/models/chunk-1920ms-model/encoder-1920ms.onnx",
+            "deployment/models/chunk-1920ms-model/decoder-1920ms.onnx",
+            "deployment/models/chunk-1920ms-model/joiner-1920ms.onnx",
+            "deployment/models/chunk-1920ms-model/tokens.txt"
+          ],
+          "exclude": [],
+          "strip_prefix": "deployment/models/chunk-1920ms-model/"
+        },
+        {
+          "id": "github",
+          "repo": "Gilgamesh-J/X-ASR",
+          "revision": "838297cd47fed858e6cf72eaf5a52f948a3edd73",
+          "label": "GitHub（作者官方·已校验文件）",
+          "official": true,
+          "files": [
+            {
+              "path": "encoder-1920ms.onnx",
+              "url": "https://media.githubusercontent.com/media/Gilgamesh-J/X-ASR/838297cd47fed858e6cf72eaf5a52f948a3edd73/X-ASR-zh-en/deployment/models/chunk-1920ms-model/encoder-1920ms.onnx",
+              "size": 592958528,
+              "sha256": "4b631cb46ae8d9210e84887d71970bc149eddd49b7bc59a32dba57bc229c9bc5"
+            },
+            {
+              "path": "decoder-1920ms.onnx",
+              "url": "https://media.githubusercontent.com/media/Gilgamesh-J/X-ASR/838297cd47fed858e6cf72eaf5a52f948a3edd73/X-ASR-zh-en/deployment/models/chunk-1920ms-model/decoder-1920ms.onnx",
+              "size": 11309084,
+              "sha256": "3658368d274a5d5fd39a7ac20c46bed0ad9cfea1f0feddef30d5d89797c1f499"
+            },
+            {
+              "path": "joiner-1920ms.onnx",
+              "url": "https://media.githubusercontent.com/media/Gilgamesh-J/X-ASR/838297cd47fed858e6cf72eaf5a52f948a3edd73/X-ASR-zh-en/deployment/models/chunk-1920ms-model/joiner-1920ms.onnx",
+              "size": 10260467,
+              "sha256": "03781c98165a2385024c9cecdd2b6b13310d81db23a62c7da420782c2915cf81"
+            },
+            {
+              "path": "tokens.txt",
+              "url": "https://raw.githubusercontent.com/Gilgamesh-J/X-ASR/838297cd47fed858e6cf72eaf5a52f948a3edd73/X-ASR-zh-en/deployment/models/chunk-1920ms-model/tokens.txt",
+              "size": 58806,
+              "sha256": "b818a60878b9aae978cbb8ad594acbd403d76d1af2e31ef4197c84e2dbdba27c"
+            }
+          ]
+        },
+        {
+          "id": "hf-mirror",
+          "repo": "GilgameshWind/X-ASR-zh-en",
+          "revision": "689ff18c584d29910da37b6fe904db0c1489c9d1",
+          "label": "HF-Mirror（第三方镜像，按官方校验）",
+          "official": false,
+          "include": [
+            "deployment/models/chunk-1920ms-model/encoder-1920ms.onnx",
+            "deployment/models/chunk-1920ms-model/decoder-1920ms.onnx",
+            "deployment/models/chunk-1920ms-model/joiner-1920ms.onnx",
+            "deployment/models/chunk-1920ms-model/tokens.txt"
+          ],
+          "exclude": [],
+          "snapshot": {
+            "revision": "689ff18c584d29910da37b6fe904db0c1489c9d1",
+            "files": [
+              {
+                "path": "deployment/models/chunk-1920ms-model/decoder-1920ms.onnx",
+                "size": 11309084,
+                "sha256": "3658368d274a5d5fd39a7ac20c46bed0ad9cfea1f0feddef30d5d89797c1f499"
+              },
+              {
+                "path": "deployment/models/chunk-1920ms-model/encoder-1920ms.onnx",
+                "size": 592958528,
+                "sha256": "4b631cb46ae8d9210e84887d71970bc149eddd49b7bc59a32dba57bc229c9bc5"
+              },
+              {
+                "path": "deployment/models/chunk-1920ms-model/joiner-1920ms.onnx",
+                "size": 10260467,
+                "sha256": "03781c98165a2385024c9cecdd2b6b13310d81db23a62c7da420782c2915cf81"
+              },
+              {
+                "path": "deployment/models/chunk-1920ms-model/tokens.txt",
+                "size": 58806,
+                "git_sha1": "8ab5e8e441ec0c2028fa05b200ad1514d19b134e"
+              }
+            ]
+          },
+          "strip_prefix": "deployment/models/chunk-1920ms-model/"
+        }
+      ],
+      "notes": [
+        "仅下载所选块长的三个 ONNX 与 tokens.txt；不下载训练 checkpoint、其他块长、演示视频或桌面安装包。",
+        "安装到 X_ASR_MODEL_DIR 的父目录下同名 chunk 目录，与现有引擎切换逻辑一致。",
+        "作者 ModelScope 仓库位于国际站 .ai；本次核验国内站 .cn 对同仓库返回 404。"
+      ],
+      "settings_field": "x_asr_model_dir"
+    }
+  ]
+}

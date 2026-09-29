@@ -22,6 +22,8 @@ class Qwen3ASREngine(BaseASREngine):
     """Adapter for Qwen/Qwen3-ASR-1.7B offline transcription."""
 
     ENGINE_NAME = "qwen3asr"
+    ENGINE_LABEL = "Qwen3-ASR"
+    INSTALL_EXTRA = "qwen3asr"
 
     def __init__(
         self,
@@ -50,8 +52,8 @@ class Qwen3ASREngine(BaseASREngine):
             from qwen_asr import Qwen3ASRModel  # type: ignore[import]
         except ImportError as exc:
             raise RuntimeError(
-                "Qwen3-ASR requires qwen-asr. Install it with: "
-                "pip install 'asr-backend[qwen3asr]'"
+                f"{self.ENGINE_LABEL} requires qwen-asr. Install it with: "
+                f"pip install 'asr-backend[{self.INSTALL_EXTRA}]'"
             ) from exc
 
         model_ref = str(self._model_dir) if _path_has_model_files(self._model_dir) else self._model_name
@@ -61,13 +63,13 @@ class Qwen3ASREngine(BaseASREngine):
         if self._torch_dtype and self._torch_dtype != "auto":
             kwargs.setdefault("dtype", _resolve_torch_dtype(self._torch_dtype))
 
-        logger.info("Loading Qwen3-ASR model '%s' from %s.", self._model_name, model_ref)
+        logger.info("Loading %s model '%s' from %s.", self.ENGINE_LABEL, self._model_name, model_ref)
         loop = asyncio.get_running_loop()
         self._model = await loop.run_in_executor(
             None,
             lambda: _load_qwen_model(Qwen3ASRModel, model_ref, kwargs),
         )
-        logger.info("Qwen3-ASR model loaded.")
+        logger.info("%s model loaded.", self.ENGINE_LABEL)
 
     async def unload(self) -> None:
         if self._model is not None:
@@ -80,7 +82,7 @@ class Qwen3ASREngine(BaseASREngine):
                     torch.cuda.empty_cache()
             except ImportError:
                 pass
-            logger.info("Qwen3-ASR model unloaded.")
+            logger.info("%s model unloaded.", self.ENGINE_LABEL)
 
     @property
     def is_loaded(self) -> bool:
@@ -104,11 +106,19 @@ class Qwen3ASREngine(BaseASREngine):
     def _run_inference(self, audio_bytes: bytes, opts: EngineOptions) -> ASRResult:
         assert self._model is not None
 
-        with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
-            tmp.write(audio_bytes)
-            tmp.flush()
-            duration = _audio_duration_sec(tmp.name)
-            raw = _call_qwen_model(self._model, tmp.name, opts)
+        # Windows disallows reopening an open NamedTemporaryFile. Close the
+        # writer before handing the path to libsndfile / qwen-asr and clean it
+        # up even when decoding or inference fails.
+        audio_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                audio_path = Path(tmp.name)
+                tmp.write(audio_bytes)
+            duration = _audio_duration_sec(str(audio_path))
+            raw = self._call_model(str(audio_path), opts)
+        finally:
+            if audio_path is not None:
+                audio_path.unlink(missing_ok=True)
 
         text = _extract_text(raw).strip()
         segments = [Segment(start=0.0, end=duration, text=text)] if text else []
@@ -127,12 +137,16 @@ class Qwen3ASREngine(BaseASREngine):
             },
         )
 
+    def _call_model(self, audio_path: str, opts: EngineOptions) -> Any:
+        return _call_qwen_model(self._model, audio_path, opts)
+
     def info(self) -> dict[str, Any]:
         base = super().info()
         base.update(
             {
                 "model_name": self._model_name,
                 "device": self._device,
+                "compute_type": self._torch_dtype,
                 "model_dir": str(self._model_dir),
                 "languages": ["zh", "en", "yue", "ja", "ko"],
             }
@@ -141,10 +155,9 @@ class Qwen3ASREngine(BaseASREngine):
 
 
 def _load_qwen_model(model_cls: Any, model_ref: str, kwargs: dict[str, Any]) -> Any:
-    try:
-        return model_cls.from_pretrained(model_ref, **kwargs)
-    except TypeError:
-        return model_cls.from_pretrained(model_ref)
+    # Never silently drop device / dtype / decoder settings after an internal
+    # TypeError: doing so can retry on the wrong device or a larger precision.
+    return model_cls.from_pretrained(model_ref, **kwargs)
 
 
 def _call_qwen_model(model: Any, audio_path: str, opts: EngineOptions) -> Any:

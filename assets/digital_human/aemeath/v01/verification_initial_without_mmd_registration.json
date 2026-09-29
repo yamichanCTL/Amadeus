@@ -1,0 +1,681 @@
+{
+  "status": "fail",
+  "blend": "F:\\Project\\Model3D\\Amadeus\\assets\\digital_human\\aemeath\\v01\\Aemeath_DigitalHuman_v01.blend",
+  "blender": "5.2.2 LTS",
+  "fresh_process": true,
+  "autoexec_disabled": true,
+  "source": "F:\\Project\\Model3D\\Dance_Project\\Wuthering_Waves_V9_AEMEATH_DYNAMIC_REVIEW.blend",
+  "checks": {
+    "source_hash_matches_build": {
+      "pass": true,
+      "evidence": "d50e05f5c4c4924c55fff6429551101d93731b4e556a98726f142a33797b0d93"
+    },
+    "disabled_autoexec": {
+      "pass": true,
+      "evidence": {
+        "argv_flag": true
+      }
+    },
+    "original_counts": {
+      "pass": true,
+      "evidence": {
+        "vertices": 130108,
+        "shape_keys": 149
+      }
+    },
+    "fresh_reopen_all_reference_frames_reverse_repeat": {
+      "pass": false,
+      "evidence": [
+        {
+          "frame": 1.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 15.5,
+          "vertex_max_error_m": 0.0002148151397705078,
+          "mouth_max_error": 0.054999999701976776,
+          "control_display_max_error": 0.054999999701976776,
+          "finite": true
+        },
+        {
+          "frame": 30.0,
+          "vertex_max_error_m": 0.0002143383026123047,
+          "mouth_max_error": 0.054999999701976776,
+          "control_display_max_error": 0.054999999701976776,
+          "finite": true
+        },
+        {
+          "frame": 50.25,
+          "vertex_max_error_m": 0.00021386146545410156,
+          "mouth_max_error": 0.054999999701976776,
+          "control_display_max_error": 0.054999999701976776,
+          "finite": true
+        },
+        {
+          "frame": 88.0,
+          "vertex_max_error_m": 0.019522428512573242,
+          "mouth_max_error": 1.0,
+          "control_display_max_error": 1.0,
+          "finite": true
+        },
+        {
+          "frame": 135.5,
+          "vertex_max_error_m": 0.00021600723266601562,
+          "mouth_max_error": 0.054999999701976776,
+          "control_display_max_error": 0.054999999701976776,
+          "finite": true
+        },
+        {
+          "frame": 177.0,
+          "vertex_max_error_m": 0.00021517276763916016,
+          "mouth_max_error": 0.054999999701976776,
+          "control_display_max_error": 0.054999999701976776,
+          "finite": true
+        },
+        {
+          "frame": 240.75,
+          "vertex_max_error_m": 0.0002148151397705078,
+          "mouth_max_error": 0.054999999701976776,
+          "control_display_max_error": 0.054999999701976776,
+          "finite": true
+        },
+        {
+          "frame": 300.0,
+          "vertex_max_error_m": 0.00021398067474365234,
+          "mouth_max_error": 0.054999999701976776,
+          "control_display_max_error": 0.054999999701976776,
+          "finite": true
+        },
+        {
+          "frame": 360.5,
+          "vertex_max_error_m": 0.0002148151397705078,
+          "mouth_max_error": 0.054999999701976776,
+          "control_display_max_error": 0.054999999701976776,
+          "finite": true
+        },
+        {
+          "frame": 465.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 465.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 360.5,
+          "vertex_max_error_m": 0.0002148151397705078,
+          "mouth_max_error": 0.054999999701976776,
+          "control_display_max_error": 0.054999999701976776,
+          "finite": true
+        },
+        {
+          "frame": 300.0,
+          "vertex_max_error_m": 0.00021398067474365234,
+          "mouth_max_error": 0.054999999701976776,
+          "control_display_max_error": 0.054999999701976776,
+          "finite": true
+        },
+        {
+          "frame": 240.75,
+          "vertex_max_error_m": 0.0002148151397705078,
+          "mouth_max_error": 0.054999999701976776,
+          "control_display_max_error": 0.054999999701976776,
+          "finite": true
+        },
+        {
+          "frame": 177.0,
+          "vertex_max_error_m": 0.00021517276763916016,
+          "mouth_max_error": 0.054999999701976776,
+          "control_display_max_error": 0.054999999701976776,
+          "finite": true
+        },
+        {
+          "frame": 135.5,
+          "vertex_max_error_m": 0.00021600723266601562,
+          "mouth_max_error": 0.054999999701976776,
+          "control_display_max_error": 0.054999999701976776,
+          "finite": true
+        },
+        {
+          "frame": 88.0,
+          "vertex_max_error_m": 0.019522428512573242,
+          "mouth_max_error": 1.0,
+          "control_display_max_error": 1.0,
+          "finite": true
+        },
+        {
+          "frame": 50.25,
+          "vertex_max_error_m": 0.00021386146545410156,
+          "mouth_max_error": 0.054999999701976776,
+          "control_display_max_error": 0.054999999701976776,
+          "finite": true
+        },
+        {
+          "frame": 30.0,
+          "vertex_max_error_m": 0.0002143383026123047,
+          "mouth_max_error": 0.054999999701976776,
+          "control_display_max_error": 0.054999999701976776,
+          "finite": true
+        },
+        {
+          "frame": 15.5,
+          "vertex_max_error_m": 0.0002148151397705078,
+          "mouth_max_error": 0.054999999701976776,
+          "control_display_max_error": 0.054999999701976776,
+          "finite": true
+        },
+        {
+          "frame": 1.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 88.0,
+          "vertex_max_error_m": 0.019522428512573242,
+          "mouth_max_error": 1.0,
+          "control_display_max_error": 1.0,
+          "finite": true
+        },
+        {
+          "frame": 1.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        },
+        {
+          "frame": 88.0,
+          "vertex_max_error_m": 0.019522428512573242,
+          "mouth_max_error": 1.0,
+          "control_display_max_error": 1.0,
+          "finite": true
+        },
+        {
+          "frame": 465.0,
+          "vertex_max_error_m": 0.0,
+          "mouth_max_error": 0.0,
+          "control_display_max_error": 0.0,
+          "finite": true
+        }
+      ]
+    },
+    "timeline_timebase_and_native_actions": {
+      "pass": false,
+      "evidence": {
+        "fps": 30.0,
+        "rows": 465,
+        "frame_start": 1,
+        "frame_end": 465,
+        "invalid_timebase_frames": [],
+        "all_frame_control_max_error": 1.0,
+        "interpolated_envelope_max_error": 0.0
+      }
+    },
+    "silence_closes_vowel_controls": {
+      "pass": true,
+      "evidence": {
+        "silent_frame_count": 198,
+        "max_vowel_value": 0.0
+      }
+    },
+    "neutral_start_and_end": {
+      "pass": true,
+      "evidence": [
+        {
+          "frame": 1,
+          "neutral_vertex_max_error_m": 0.0
+        },
+        {
+          "frame": 465,
+          "neutral_vertex_max_error_m": 0.0
+        }
+      ]
+    },
+    "drivers_valid_with_resolvable_targets": {
+      "pass": false,
+      "evidence": {
+        "count": 279,
+        "invalid": [
+          ".dummy_armature:pose.bones[\"mmd_bind304906915405665498\"].location",
+          ".dummy_armature:pose.bones[\"mmd_bind-900123228923676715\"].location",
+          ".dummy_armature:pose.bones[\"mmd_bind8982400527332609916\"].location",
+          ".dummy_armature:pose.bones[\"mmd_bind3989054890283657638\"].location",
+          ".dummy_armature:pose.bones[\"mmd_bind1246697645754266556\"].location",
+          ".dummy_armature:pose.bones[\"mmd_bind4741886912417092347\"].location",
+          ".dummy_armature:pose.bones[\"mmd_bind-4446668691677241119\"].location",
+          ".dummy_armature:pose.bones[\"mmd_bind-2620860579495028277\"].location",
+          ".dummy_armature:pose.bones[\"mmd_bind-8857058848445415019\"].location",
+          ".dummy_armature:pose.bones[\"mmd_bind-1911638088452929995\"].location",
+          ".dummy_armature:pose.bones[\"mmd_bind5409636241213770228\"].location",
+          ".dummy_armature:pose.bones[\"mmd_bind7051650866927924431\"].location",
+          ".dummy_armature:pose.bones[\"mmd_bind-3874493731929309900\"].location",
+          "Key:key_blocks[\"真面目\"].value",
+          "Key:key_blocks[\"怒り\"].value",
+          "Key:key_blocks[\"にこり\"].value",
+          "Key:key_blocks[\"困る\"].value",
+          "Key:key_blocks[\"上\"].value",
+          "Key:key_blocks[\"下\"].value",
+          "Key:key_blocks[\"まばたき\"].value",
+          "Key:key_blocks[\"笑い\"].value",
+          "Key:key_blocks[\"∧\"].value",
+          "Key:key_blocks[\"にやり\"].value",
+          "Key:key_blocks[\"emo3左\"].value",
+          "Key:key_blocks[\"emo3右\"].value",
+          "Key:key_blocks[\"emo3上\"].value"
+        ],
+        "missing_targets": [],
+        "unresolved_paths": [
+          ".dummy_armature:pose.bones[\"mmd_bind304906915405665498\"].location:mmd_root.uv_morphs[\"nu\"].vertex_group_scale",
+          ".dummy_armature:pose.bones[\"mmd_bind304906915405665498\"].location:mmd_root.group_morphs[\"(#｀皿´)\"].data[\"nu\"].factor",
+          ".dummy_armature:pose.bones[\"mmd_bind-900123228923676715\"].location:mmd_root.uv_morphs[\"haha\"].vertex_group_scale",
+          ".dummy_armature:pose.bones[\"mmd_bind-900123228923676715\"].location:mmd_root.group_morphs[\"O(∩_∩)O\"].data[\"haha\"].factor",
+          ".dummy_armature:pose.bones[\"mmd_bind8982400527332609916\"].location:mmd_root.uv_morphs[\"han\"].vertex_group_scale",
+          ".dummy_armature:pose.bones[\"mmd_bind8982400527332609916\"].location:mmd_root.group_morphs[\"(-ω-；)\"].data[\"han\"].factor",
+          ".dummy_armature:pose.bones[\"mmd_bind3989054890283657638\"].location:mmd_root.uv_morphs[\"xin\"].vertex_group_scale",
+          ".dummy_armature:pose.bones[\"mmd_bind3989054890283657638\"].location:mmd_root.group_morphs[\"喜(=゜ω゜)ノ\"].data[\"xin\"].factor",
+          ".dummy_armature:pose.bones[\"mmd_bind1246697645754266556\"].location:mmd_root.uv_morphs[\"jing\"].vertex_group_scale",
+          ".dummy_armature:pose.bones[\"mmd_bind1246697645754266556\"].location:mmd_root.group_morphs[\"∑(´△｀)！\"].data[\"jing\"].factor",
+          ".dummy_armature:pose.bones[\"mmd_bind4741886912417092347\"].location:mmd_root.uv_morphs[\"heixian\"].vertex_group_scale",
+          ".dummy_armature:pose.bones[\"mmd_bind4741886912417092347\"].location:mmd_root.group_morphs[\"-﹏-|||\"].data[\"heixian\"].factor",
+          ".dummy_armature:pose.bones[\"mmd_bind-4446668691677241119\"].location:mmd_root.uv_morphs[\"wenhao\"].vertex_group_scale",
+          ".dummy_armature:pose.bones[\"mmd_bind-4446668691677241119\"].location:mmd_root.group_morphs[\"[・_・?]\"].data[\"wenhao\"].factor",
+          ".dummy_armature:pose.bones[\"mmd_bind-2620860579495028277\"].location:mmd_root.uv_morphs[\"handi\"].vertex_group_scale",
+          ".dummy_armature:pose.bones[\"mmd_bind-2620860579495028277\"].location:mmd_root.group_morphs[\"(｡ω｡；)\"].data[\"handi\"].factor",
+          ".dummy_armature:pose.bones[\"mmd_bind-8857058848445415019\"].location:mmd_root.uv_morphs[\"jingtanhao\"].vertex_group_scale",
+          ".dummy_armature:pose.bones[\"mmd_bind-8857058848445415019\"].location:mmd_root.group_morphs[\"(´△｀)！\"].data[\"jingtanhao\"].factor",
+          ".dummy_armature:pose.bones[\"mmd_bind-1911638088452929995\"].location:mmd_root.uv_morphs[\"zhuyi\"].vertex_group_scale",
+          ".dummy_armature:pose.bones[\"mmd_bind-1911638088452929995\"].location:mmd_root.group_morphs[\"d(^^*)\"].data[\"zhuyi\"].factor",
+          ".dummy_armature:pose.bones[\"mmd_bind5409636241213770228\"].location:mmd_root.uv_morphs[\"luanma\"].vertex_group_scale",
+          ".dummy_armature:pose.bones[\"mmd_bind5409636241213770228\"].location:mmd_root.group_morphs[\"彡(-_-;)彡\"].data[\"luanma\"].factor",
+          ".dummy_armature:pose.bones[\"mmd_bind7051650866927924431\"].location:mmd_root.uv_morphs[\"keshui\"].vertex_group_scale",
+          ".dummy_armature:pose.bones[\"mmd_bind7051650866927924431\"].location:mmd_root.group_morphs[\"(。-ω-)zzz\"].data[\"keshui\"].factor",
+          ".dummy_armature:pose.bones[\"mmd_bind-3874493731929309900\"].location:mmd_root.uv_morphs[\"shenluehao\"].vertex_group_scale",
+          ".dummy_armature:pose.bones[\"mmd_bind-3874493731929309900\"].location:mmd_root.group_morphs[\"(¬_¬)ﾉ…\"].data[\"shenluehao\"].factor",
+          "Key:key_blocks[\"真面目\"].value:mmd_root.group_morphs[\"真面目A\"].data[\"真面目\"].factor",
+          "Key:key_blocks[\"怒り\"].value:mmd_root.group_morphs[\"怒りB\"].data[\"怒り\"].factor",
+          "Key:key_blocks[\"怒り\"].value:mmd_root.group_morphs[\"怒りA\"].data[\"怒り\"].factor",
+          "Key:key_blocks[\"にこり\"].value:mmd_root.group_morphs[\"にこりB\"].data[\"にこり\"].factor",
+          "Key:key_blocks[\"にこり\"].value:mmd_root.group_morphs[\"にこりA\"].data[\"にこり\"].factor",
+          "Key:key_blocks[\"困る\"].value:mmd_root.group_morphs[\"困るB\"].data[\"困る\"].factor",
+          "Key:key_blocks[\"困る\"].value:mmd_root.group_morphs[\"困るA\"].data[\"困る\"].factor",
+          "Key:key_blocks[\"上\"].value:mmd_root.group_morphs[\"見開く\"].data[\"上\"].factor",
+          "Key:key_blocks[\"上\"].value:mmd_root.group_morphs[\"にこりB\"].data[\"上\"].factor",
+          "Key:key_blocks[\"上\"].value:mmd_root.group_morphs[\"にこりA\"].data[\"上\"].factor",
+          "Key:key_blocks[\"下\"].value:mmd_root.group_morphs[\"困るB\"].data[\"下\"].factor",
+          "Key:key_blocks[\"下\"].value:mmd_root.group_morphs[\"怒りB\"].data[\"下\"].factor",
+          "Key:key_blocks[\"下\"].value:mmd_root.group_morphs[\"真面目A\"].data[\"下\"].factor",
+          "Key:key_blocks[\"下\"].value:mmd_root.group_morphs[\"困るA\"].data[\"下\"].factor",
+          "Key:key_blocks[\"下\"].value:mmd_root.group_morphs[\"怒りA\"].data[\"下\"].factor",
+          "Key:key_blocks[\"下\"].value:mmd_root.group_morphs[\"笑いA\"].data[\"下\"].factor",
+          "Key:key_blocks[\"下\"].value:mmd_root.group_morphs[\"まばたきA\"].data[\"下\"].factor",
+          "Key:key_blocks[\"まばたき\"].value:mmd_root.group_morphs[\"見開く\"].data[\"まばたき\"].factor",
+          "Key:key_blocks[\"まばたき\"].value:mmd_root.group_morphs[\"困るB\"].data[\"まばたき\"].factor",
+          "Key:key_blocks[\"まばたき\"].value:mmd_root.group_morphs[\"怒りB\"].data[\"まばたき\"].factor",
+          "Key:key_blocks[\"まばたき\"].value:mmd_root.group_morphs[\"真面目A\"].data[\"まばたき\"].factor",
+          "Key:key_blocks[\"まばたき\"].value:mmd_root.group_morphs[\"困るA\"].data[\"まばたき\"].factor",
+          "Key:key_blocks[\"まばたき\"].value:mmd_root.group_morphs[\"怒りA\"].data[\"まばたき\"].factor",
+          "Key:key_blocks[\"まばたき\"].value:mmd_root.group_morphs[\"まばたきA\"].data[\"まばたき\"].factor",
+          "Key:key_blocks[\"笑い\"].value:mmd_root.group_morphs[\"にこりB\"].data[\"笑い\"].factor",
+          "Key:key_blocks[\"笑い\"].value:mmd_root.group_morphs[\"にこりA\"].data[\"笑い\"].factor",
+          "Key:key_blocks[\"笑い\"].value:mmd_root.group_morphs[\"笑いA\"].data[\"笑い\"].factor",
+          "Key:key_blocks[\"∧\"].value:mmd_root.group_morphs[\"困るB\"].data[\"∧\"].factor",
+          "Key:key_blocks[\"∧\"].value:mmd_root.group_morphs[\"怒りB\"].data[\"∧\"].factor",
+          "Key:key_blocks[\"にやり\"].value:mmd_root.group_morphs[\"にこりB\"].data[\"にやり\"].factor",
+          "Key:key_blocks[\"emo3左\"].value:mmd_root.group_morphs[\"(#｀皿´)\"].data[\"emo3左\"].factor",
+          "Key:key_blocks[\"emo3左\"].value:mmd_root.group_morphs[\"O(∩_∩)O\"].data[\"emo3左\"].factor",
+          "Key:key_blocks[\"emo3左\"].value:mmd_root.group_morphs[\"(-ω-；)\"].data[\"emo3左\"].factor",
+          "Key:key_blocks[\"emo3左\"].value:mmd_root.group_morphs[\"∑(´△｀)！\"].data[\"emo3左\"].factor",
+          "Key:key_blocks[\"emo3左\"].value:mmd_root.group_morphs[\"-﹏-|||\"].data[\"emo3左\"].factor",
+          "Key:key_blocks[\"emo3左\"].value:mmd_root.group_morphs[\"(｡ω｡；)\"].data[\"emo3左\"].factor",
+          "Key:key_blocks[\"emo3左\"].value:mmd_root.group_morphs[\"d(^^*)\"].data[\"emo3左\"].factor",
+          "Key:key_blocks[\"emo3左\"].value:mmd_root.group_morphs[\"(。-ω-)zzz\"].data[\"emo3左\"].factor",
+          "Key:key_blocks[\"emo3右\"].value:mmd_root.group_morphs[\"喜(=゜ω゜)ノ\"].data[\"emo3右\"].factor",
+          "Key:key_blocks[\"emo3右\"].value:mmd_root.group_morphs[\"彡(-_-;)彡\"].data[\"emo3右\"].factor",
+          "Key:key_blocks[\"emo3右\"].value:mmd_root.group_morphs[\"(¬_¬)ﾉ…\"].data[\"emo3右\"].factor",
+          "Key:key_blocks[\"emo3上\"].value:mmd_root.group_morphs[\"[・_・?]\"].data[\"emo3上\"].factor",
+          "Key:key_blocks[\"emo3上\"].value:mmd_root.group_morphs[\"(´△｀)！\"].data[\"emo3上\"].factor"
+        ],
+        "scripted_expressions": {
+          "(u1+g3*w4)*s2": 13,
+          "-pi*(b1)": 12,
+          "pi*(b1)": 12,
+          "-100*(b1)": 12,
+          "100*(b1)": 12,
+          "v1+g2*w3": 2,
+          "v1": 135,
+          "v1+g2*w3+g4*w5": 5,
+          "v1+g2*w3+g4*w5+g6*w7": 3,
+          "v1+g2*w3+g4*w5+g6*w7+g8*w9+g10*w11+g12*w13+g14*w15": 2,
+          "v1+g2*w3+g4*w5+g6*w7+g8*w9+g10*w11+g12*w13+g14*w15+g16*w17": 1,
+          "m1": 25
+        }
+      }
+    },
+    "native_actions_without_frame_handlers": {
+      "pass": true,
+      "evidence": {
+        "mouth_action": "Aemeath_AudioTimed_Mouth_Blink_v01",
+        "rig_action": "Aemeath_Subtle_Head_Beats_v01",
+        "key_light_action": null,
+        "enabled_embedded_scripts": [],
+        "handlers": {
+          "frame_change_pre": [],
+          "frame_change_post": [],
+          "depsgraph_update_pre": [],
+          "depsgraph_update_post": []
+        }
+      }
+    },
+    "images_packed": {
+      "pass": true,
+      "evidence": [
+        {
+          "name": "cheek_00.tga",
+          "packed": true,
+          "size": [
+            256,
+            256
+          ]
+        },
+        {
+          "name": "emo1010.png",
+          "packed": true,
+          "size": [
+            1024,
+            1024
+          ]
+        },
+        {
+          "name": "eye set emo.png",
+          "packed": true,
+          "size": [
+            1024,
+            1024
+          ]
+        },
+        {
+          "name": "eyehi.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "eyehi2.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "hair hi light.png",
+          "packed": true,
+          "size": [
+            1024,
+            1024
+          ]
+        },
+        {
+          "name": "hair spa.png",
+          "packed": true,
+          "size": [
+            512,
+            512
+          ]
+        },
+        {
+          "name": "hi li.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "m.png",
+          "packed": true,
+          "size": [
+            500,
+            500
+          ]
+        },
+        {
+          "name": "mc12.png",
+          "packed": true,
+          "size": [
+            512,
+            512
+          ]
+        },
+        {
+          "name": "mc123.png",
+          "packed": true,
+          "size": [
+            1024,
+            1024
+          ]
+        },
+        {
+          "name": "sink2.bmp",
+          "packed": true,
+          "size": [
+            256,
+            256
+          ]
+        },
+        {
+          "name": "sink22.png",
+          "packed": true,
+          "size": [
+            512,
+            512
+          ]
+        },
+        {
+          "name": "skin.bmp",
+          "packed": true,
+          "size": [
+            256,
+            256
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Bangs_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Down01_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Eye_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Face_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011FaceShy_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Fx01_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Hair_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Hair_Dhi.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Item_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Up01_D.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "T_R2T1AimisiMd10011Up02_Dal.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "toon01.bmp",
+          "packed": true,
+          "size": [
+            32,
+            32
+          ]
+        },
+        {
+          "name": "toon04.bmp",
+          "packed": true,
+          "size": [
+            32,
+            32
+          ]
+        },
+        {
+          "name": "toon05.bmp",
+          "packed": true,
+          "size": [
+            32,
+            32
+          ]
+        },
+        {
+          "name": "toon07.bmp",
+          "packed": true,
+          "size": [
+            32,
+            32
+          ]
+        },
+        {
+          "name": "前发高光 hi.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        },
+        {
+          "name": "后发高光hi.png",
+          "packed": true,
+          "size": [
+            2048,
+            2048
+          ]
+        }
+      ]
+    },
+    "audio_packed_and_zero_offset_timebase": {
+      "pass": true,
+      "evidence": {
+        "audio": [
+          {
+            "name": "Offline timing reference - Huihui",
+            "packed": true,
+            "path": "//audio\\speech_fixture.wav",
+            "frame_start": 1.0,
+            "frame_offset_start": 0.0,
+            "frame_final_start": 1,
+            "frame_final_duration": 452,
+            "mute": false,
+            "volume": 1.0
+          }
+        ],
+        "wav_seconds": 15.0515,
+        "envelope_seconds": 15.0515,
+        "sync_mode": "AUDIO_SYNC"
+      }
+    },
+    "source_geometry_uv_all_149_shapes_material_slots_preserved": {
+      "pass": true,
+      "evidence": {
+        "mismatched_fields": [],
+        "shape_count": 149,
+        "vertex_count": 130108,
+        "material_count": 44
+      }
+    },
+    "files_not_modified_by_verification": {
+      "pass": true,
+      "evidence": {
+        "source_sha256": "d50e05f5c4c4924c55fff6429551101d93731b4e556a98726f142a33797b0d93",
+        "preview_sha256": "0c0686b4c266ad1dd91e9979b56b8b3b341c8de6eb0ac80954fcd8a13343a495"
+      }
+    }
+  },
+  "failures": [
+    "fresh_reopen_all_reference_frames_reverse_repeat",
+    "timeline_timebase_and_native_actions",
+    "drivers_valid_with_resolvable_targets"
+  ],
+  "limits": [
+    "No Mandarin phonetic accuracy or subjective synchronization claim",
+    "No realtime microphone, interruption, or app integration test",
+    "Control silence means vowel channels zero; a small smile remains in internal pauses"
+  ]
+}

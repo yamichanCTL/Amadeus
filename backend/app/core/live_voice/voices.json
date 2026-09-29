@@ -1,0 +1,15 @@
+[
+  {"id":"longanqian","label":"预设音色","style":"3.0 兼容","gender":"female","gender_source":"inferred"},
+  {"id":"longanlingxin","label":"龙安灵心","style":"3.0 兼容","gender":"female","gender_source":"official_tts_same_id"},
+  {"id":"longanlingxi","label":"龙安灵希","style":"3.0 兼容","gender":"female","gender_source":"official_tts_same_id"},
+  {"id":"longanxiaoxin","label":"龙安小昕","style":"3.0 兼容","gender":"female","gender_source":"official_tts_same_id"},
+  {"id":"longanlufeng","label":"龙安鲁风","style":"3.0 兼容","gender":"male","gender_source":"official_tts_same_id"},
+  {"id":"longanqian_v3.1","label":"默认音色","style":"3.1","gender":"female","gender_source":"inferred"},
+  {"id":"longanhuan_v3.1","label":"龙安欢","style":"3.1","gender":"female","gender_source":"official_tts_same_id"},
+  {"id":"longanlingxin_v3.1","label":"龙安灵心","style":"3.1","gender":"female","gender_source":"official_tts_same_id"},
+  {"id":"longanfengyue_v3.1","label":"龙安风悦","style":"3.1","gender":"female","gender_source":"official_tts_same_id"},
+  {"id":"xunanchuan_v3.1","label":"许南川","style":"3.1","gender":"male","gender_source":"official_tts_same_id"},
+  {"id":"beth_v3.1","label":"Beth","style":"3.1","gender":"female","gender_source":"official_tts_same_id"},
+  {"id":"betty_v3.1","label":"Betty","style":"3.1","gender":"female","gender_source":"official_tts_same_id"},
+  {"id":"cally_v3.1","label":"Cally","style":"3.1","gender":"female","gender_source":"official_tts_same_id"}
+]

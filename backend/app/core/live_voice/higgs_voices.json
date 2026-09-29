@@ -1,0 +1,8 @@
+[
+  {"id":"chloe","label":"亲切清晰","style":"活泼讲解","gender":"female","gender_source":"official"},
+  {"id":"eleanor","label":"平静专业","style":"清晰讲解","gender":"female","gender_source":"official"},
+  {"id":"nora","label":"柔和叙事","style":"平静讲故事","gender":"female","gender_source":"official"},
+  {"id":"jake","label":"热情活力","style":"富有表现力","gender":"male","gender_source":"official"},
+  {"id":"marcus","label":"自信热情","style":"知识讲解","gender":"male","gender_source":"official"},
+  {"id":"oliver","label":"平静沉思","style":"舒缓讲解","gender":"male","gender_source":"official"}
+]

@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+import type { LocalRuntimeState } from './services/localRuntimeTypes'
 
 export type CaptionOverlayOptions = {
   fontSize: number
@@ -34,6 +35,14 @@ export type SummaryLogEntry = {
   content: string
 }
 
+export type LocalAvatarStatus = {
+  available: boolean
+  name: string | null
+  size: number
+  revision: string | null
+  error?: string
+}
+
 declare global {
   interface Window {
     __amadeusE2EAudio?: () => Promise<unknown>
@@ -45,6 +54,20 @@ declare global {
       submitRecognition: () => void
     }
     electronAPI?: {
+      localAvatarStatus: () => Promise<LocalAvatarStatus>
+      localAvatarRead: () => Promise<ArrayBuffer | null>
+      localAvatarImport: () => Promise<LocalAvatarStatus & { cancelled?: boolean }>
+      localAvatarClear: () => Promise<LocalAvatarStatus>
+      onLocalAvatarChanged: (callback: (status: LocalAvatarStatus) => void) => () => void
+      localRuntimeStatus: () => Promise<LocalRuntimeState>
+      localRuntimeInstall: () => Promise<LocalRuntimeState>
+      localRuntimeInstallExtra: (extra: string) => Promise<LocalRuntimeState>
+      localRuntimeStart: () => Promise<LocalRuntimeState>
+      localRuntimeStop: () => Promise<LocalRuntimeState>
+      localRuntimeSetAutoStart: (enabled: boolean) => Promise<LocalRuntimeState>
+      localRuntimeOpenLogs: () => Promise<void>
+      localRuntimeOpenFolder: () => Promise<void>
+      onLocalRuntimeState: (callback: (state: LocalRuntimeState) => void) => () => void
       minimize: () => void
       maximize: () => void
       close: () => void
@@ -89,6 +112,12 @@ declare global {
       setAutoLaunch: (enabled: boolean) => Promise<boolean>
       onLiveCaptionTrayToggle: (callback: () => void) => () => void
       notifyLiveCaptionState: (active: boolean) => void
+      setPetEnabled: (enabled: boolean) => Promise<boolean>
+      getWorkToken: () => Promise<string>
+      publishPetState: (state: { status: string; emotion: string; action: string; reply: string; error: string; gesture: string; gestureId: string }) => void
+      publishPetAudioFrame: (frame: import('./services/liveVoiceTypes').LiveAvatarAudioFrame) => void
+      onPetEnabledChanged: (callback: (enabled: boolean) => void) => () => void
+      onPetCommand: (callback: (command: { id: number; type: 'open' | 'voice' | 'text'; text?: string }) => void) => () => void
     }
   }
 }

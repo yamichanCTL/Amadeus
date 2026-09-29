@@ -1,0 +1,16 @@
+.model-downloads { min-width: 0; max-width: 100%; overflow-wrap: anywhere; border: 1px solid var(--border, #dce3ef); border-radius: 14px; padding: 20px; margin-bottom: 20px; background: var(--panel-bg, rgba(245,248,255,.65)); }
+.model-downloads h2 { margin: 0; font-size: 19px; }
+.model-download-choices { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(0,.7fr) minmax(0,1fr); gap: 14px; margin: 14px 0 8px; }
+.model-download-choices label { display: grid; min-width: 0; gap: 7px; }
+.model-download-choices select { min-width: 0; width: 100%; }
+.model-download-hint { color: var(--text-muted, #64748b); font-size: 12px; line-height: 1.65; }
+.model-download-status { display: flex; gap: 20px; align-items: center; margin-top: 18px; }
+.model-download-status span { font-size: 12px; }
+.model-download-path { font-size: 12px; overflow-wrap: anywhere; }
+.model-download-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
+.model-download-job { display: grid; gap: 8px; margin: 12px 0; padding: 12px; background: rgba(128,153,200,.09); border-radius: 8px; }
+.model-download-job progress { width: 100%; accent-color: #3069b4; }
+.model-download-job small { overflow-wrap: anywhere; }
+.avatar-distribution-note { font-size: 12px; color: var(--text-muted, #64748b); margin-top: 18px; }
+.avatar-distribution-note p { line-height: 1.65; }
+@media (max-width: 900px) { .model-download-choices { grid-template-columns: 1fr; } }

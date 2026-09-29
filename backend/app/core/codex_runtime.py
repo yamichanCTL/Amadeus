@@ -109,7 +109,7 @@ class CodexRuntime:
             raise CodexError("codex_busy", "此会话已有执行中的请求，请等待或取消。")
         if len(self._active) >= self.settings.codex_max_active_turns:
             raise CodexError("codex_capacity", "Codex 当前任务已满，请稍后重试。")
-        connection = prepare_connection(self.settings)
+        connection = prepare_connection(self.settings, options.allow_work)
         task = asyncio.create_task(self._run(text, options, connection, source, emit))
         self._active[options.session_id] = task
         try:
@@ -187,7 +187,9 @@ class CodexRuntime:
                             "model": result.model,
                             "modelProvider": connection.provider,
                             "cwd": str(connection.workspace),
-                            "sandbox": "read-only",
+                            # The installed Codex app-server maps workspace-write to read-only
+                            # on this Windows host. The UI confirms each work turn explicitly.
+                            "sandbox": "danger-full-access" if options.allow_work else "read-only",
                             "approvalPolicy": "never",
                             "ephemeral": True,
                         },

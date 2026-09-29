@@ -104,3 +104,24 @@ async def test_transcribe_audio_via_scheduler_sends_long_chunks_sequentially() -
         (2.0, 2.2),
     ]
     assert meta == {"asr_chunk_count": 3, "asr_chunk_sec": 1.0}
+
+
+def test_merge_written_chunks_keeps_punctuation_and_does_not_invent_timestamps() -> None:
+    chunks = _build_audio_inference_chunks(make_wav_bytes(duration_sec=2.0), chunk_sec=1.0)
+    result = _merge_chunk_results([
+        (chunk, ASRResult(
+            full_text=f"第{index + 1}段。", engine_name="formalasr", language="zh",
+            raw={
+                "output_kind": "written_text", "native_punctuation": True,
+                "supports_timestamps": False,
+            },
+        ))
+        for index, chunk in enumerate(chunks)
+    ])
+
+    assert result.full_text == "第1段。\n第2段。"
+    assert result.segments == []
+    assert result.raw["output_kind"] == "written_text"
+    assert result.raw["native_punctuation"] is True
+    assert result.raw["supports_timestamps"] is False
+    assert result.raw["chunk_count"] == 2
