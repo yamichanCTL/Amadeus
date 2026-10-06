@@ -40,7 +40,7 @@ class LegacyWebRtcVoiceSession {
   }
 
   async start(deviceId?: string) {
-    if (!this.base) throw new Error('请先在设置中确认本机后端地址')
+    if (!this.base) throw new Error('请先在首页启动本机服务，或连接已有后端')
     this.callbacks.onState('connecting')
     this.alive = true
     try {

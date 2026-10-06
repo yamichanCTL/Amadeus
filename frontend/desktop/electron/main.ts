@@ -18,17 +18,22 @@ import fs from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { createInterface } from 'node:readline'
 import { runAmadeusWindowsE2E } from './e2e'
 import { LatestTaskQueue } from './latest-task-queue'
-import { runTextInjectionWithRecovery, TextInjectionCancelledError } from './text-inject-retry'
+import { runTextInjectionWithRecovery, TextInjectionCancelledError, TextInjectionNotSentError } from './text-inject-retry'
+import { textInjectHelperScript, textInjectionFailure } from './text-inject-helper'
 import { closeAction } from './close-behavior'
 import { calculateInitialWindowBounds } from './window-layout'
 import { localArchiveDay, safeArchiveStem, writeTranscriptionArchive } from './archive-layout'
 import { listSummaryLogs } from './summary-log-layout'
 import { extractAudioForUpload } from './media-upload'
 import { sanitizePetAudioFrame, type PetAudioFrame } from './pet-audio'
-import { LocalRuntimeManager } from './local-runtime'
+import { LocalRuntimeManager, type LocalRuntimeState } from './local-runtime'
 import { LocalAvatarStore } from './local-avatar'
+import { acquireAppInstanceLock } from './single-instance'
+import { StorageLayout, type StorageState } from './storage-layout'
+import { WarmOverlay } from './warm-overlay'
 
 type CaptionOverlayOptions = {
   fontSize: number
@@ -81,11 +86,14 @@ function loadAppIcon(): Electron.NativeImage | undefined {
   return undefined
 }
 const isE2EMode = process.argv.includes('--amadeus-e2e')
+const isUninstallDataMode = process.argv.includes('--amadeus-uninstall-data')
 if (isE2EMode) app.commandLine.appendSwitch('force-renderer-accessibility')
 const e2eUserData = process.argv.find((arg) => arg.startsWith('--amadeus-e2e-user-data='))?.slice('--amadeus-e2e-user-data='.length)
 const previewUserData = process.argv.find((arg) => arg.startsWith('--amadeus-preview-user-data='))?.slice('--amadeus-preview-user-data='.length)
 
 let mainWindow: BrowserWindow | null = null
+let mainWindowReady = false
+let pendingMainWindowActivation = false
 let statusOverlay: BrowserWindow | null = null
 let captionOverlay: BrowserWindow | null = null
 let petWindow: BrowserWindow | null = null
@@ -102,6 +110,8 @@ let tray: Tray | null = null
 let forceQuit = false
 let localRuntime: LocalRuntimeManager | null = null
 let localAvatar: LocalAvatarStore | null = null
+let storageLayout: StorageLayout | null = null
+let storageBusy = false
 let runtimeQuitFinished = false
 let runtimeQuitPending = false
 let keepRunningInBackground = false
@@ -111,6 +121,7 @@ let textInjectHelper: ChildProcessWithoutNullStreams | null = null
 let textInjectHelperReady: Promise<boolean> | null = null
 let settleTextInjectHelperReady: ((ready: boolean) => void) | null = null
 let textInjectPending: {
+  operation: 'capture' | 'inject'
   helper: ChildProcessWithoutNullStreams
   resolve: (value: boolean) => void
   reject: (error: Error) => void
@@ -119,21 +130,25 @@ let textInjectPending: {
 } | null = null
 const textInjectQueue = new LatestTaskQueue<boolean>(() => stopTextInjectHelper())
 let lastTextTargetHwnd = '0'
-let lastTextTargetProcess = ''
-let lastTextTargetCapturedAt = 0
+let lastTextTargetProcessId = 0
 let registeredHotkey = ''
 let lastTriggerAt = 0
 let captionCloseRequestCount = 0
 let captionSettingsRequestCount = 0
 let statusCancelRequestCount = 0
 let statusSubmitRequestCount = 0
-const TEXT_INJECT_TIMEOUT_MS = 475
-const TEXT_INJECT_READY_TIMEOUT_MS = 1_500
+const TEXT_INJECT_TIMEOUT_MS = 1_500
+// Add-Type/UIA initialization is prewarmed in the background. Under load it
+// may exceed 1.5s; a longer bounded handshake prevents needless restart loops.
+const TEXT_INJECT_READY_TIMEOUT_MS = 5_000
 const textInjectDebugEvents: string[] = []
 
 app.setName('Amadeus')
 if (isWindows) app.setAppUserModelId('com.asrapp.desktop')
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+
+// Acquire before any preview, test or development profile changes the data path.
+const gotInstanceLock = acquireAppInstanceLock(app)
 
 function emitHotkeyTriggered() {
   const now = Date.now()
@@ -142,17 +157,18 @@ function emitHotkeyTriggered() {
   mainWindow?.webContents.send('hotkey:triggered')
 }
 
-if (previewUserData) {
+if (gotInstanceLock && previewUserData) {
   app.setPath('userData', path.resolve(previewUserData))
-} else if (isE2EMode && e2eUserData) {
+} else if (gotInstanceLock && isE2EMode && e2eUserData) {
   app.setPath('userData', path.resolve(e2eUserData))
-} else if (isDev) {
+} else if (gotInstanceLock && isDev) {
   app.setPath('userData', path.join(os.tmpdir(), 'amadeus-desktop-dev'))
 }
 
 function createWindow() {
   const windowIcon = loadAppIcon()
   const initialBounds = calculateInitialWindowBounds(screen.getPrimaryDisplay().workArea)
+  mainWindowReady = false
 
   mainWindow = new BrowserWindow({
     ...initialBounds,
@@ -172,7 +188,15 @@ function createWindow() {
     }
   })
 
-  mainWindow.once('ready-to-show', () => mainWindow?.show())
+  mainWindow.once('ready-to-show', () => {
+    if (mainWindow?.isDestroyed() !== false) return
+    mainWindowReady = true
+    mainWindow.show()
+    if (pendingMainWindowActivation) {
+      pendingMainWindowActivation = false
+      showMainWindow()
+    }
+  })
   mainWindow.webContents.on('before-input-event', (_event, input) => {
     if (registeredHotkey === 'AltRight' && input.type === 'keyDown' && input.code === 'AltRight' && !input.isAutoRepeat) {
       emitHotkeyTriggered()
@@ -192,6 +216,7 @@ function createWindow() {
 
   mainWindow.on('closed', () => {
     mainWindow = null
+    mainWindowReady = false
   })
 
   mainWindow.on('close', (event) => {
@@ -281,7 +306,10 @@ function createTray() {
 }
 
 function showMainWindow() {
-  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (!mainWindow || mainWindow.isDestroyed() || !mainWindowReady) {
+    pendingMainWindowActivation = true
+    return
+  }
   // restore() must come before show() — when the window was hidden to tray
   // it is not "minimized", so isMinimized() would return false.  restore()
   // handles both minimized and hidden-then-needs-restore edge cases.
@@ -486,6 +514,7 @@ function sanitizeCaptionOptions(options: CaptionOverlayOptions): CaptionOverlayO
 function createOverlayWindow(kind: 'status' | 'caption', bounds: Electron.Rectangle) {
   const overlay = new BrowserWindow({
     ...bounds,
+    show: false,
     frame: false,
     transparent: true,
     resizable: kind === 'caption',
@@ -503,13 +532,15 @@ function createOverlayWindow(kind: 'status' | 'caption', bounds: Electron.Rectan
           preload: path.join(__dirname, 'overlay-preload.js'),
           contextIsolation: true,
           nodeIntegration: false,
-          sandbox: false
+          sandbox: false,
+          backgroundThrottling: false
         }
       : {
           preload: path.join(__dirname, 'status-overlay-preload.js'),
           contextIsolation: true,
           nodeIntegration: false,
-          sandbox: false
+          sandbox: false,
+          backgroundThrottling: false
         }
   })
   overlay.setAlwaysOnTop(true, 'screen-saver')
@@ -650,12 +681,12 @@ function statusOverlayHtml() {
             }
           }
         };
+        window.statusOverlay?.onUpdate((value) => window.amadeusStatus.update(value.phase, value.level, value.message));
       })();
     </script>`
 }
 
-async function showStatusOverlay(status: string, level = 0, message = '') {
-  if (!isWindows && !isE2EMode) return false
+function statusOverlayBounds(status: string): Electron.Rectangle {
   const workArea = screen.getPrimaryDisplay().workArea
   const width = status === 'result' ? 360 : 260
   const height = status === 'result' ? 64 : 42
@@ -669,38 +700,51 @@ async function showStatusOverlay(status: string, level = 0, message = '') {
   const desiredY = statusOverlayPos
     ? Math.round(clamp(statusOverlayPos.y, workArea.y, workArea.y + workArea.height - height))
     : defaultY
-  if (!statusOverlay || statusOverlay.isDestroyed()) {
-    statusOverlay = createOverlayWindow('status', {
-      x: desiredX,
-      y: desiredY,
-      width,
-      height
-    })
-    await statusOverlay.loadURL(overlayHtml(statusOverlayHtml()))
-    // Remember the position when the user drags the frameless window.
-    statusOverlay.on('move', () => {
-      if (!statusOverlay || statusOverlay.isDestroyed()) return
-      const b = statusOverlay.getBounds()
-      statusOverlayPos = { x: b.x, y: b.y }
-    })
-  } else {
-    // Resize if needed when switching between phases, keeping position.
-    statusOverlay.setBounds({
-      x: desiredX,
-      y: desiredY,
-      width,
-      height
-    })
+  return { x: desiredX, y: desiredY, width, height }
+}
+
+type StatusOverlayUpdate = { phase: string; level: number; message: string; bounds: Electron.Rectangle }
+let lastStatusOverlayMetrics = { updateToShowMs: 0, hotkeyToShowMs: 0, phase: '' }
+const statusOverlayController = new WarmOverlay<StatusOverlayUpdate>(async () => {
+  const overlay = createOverlayWindow('status', statusOverlayBounds('recording'))
+  statusOverlay = overlay
+  overlay.setFocusable(false)
+  overlay.setIgnoreMouseEvents(false)
+  overlay.on('move', () => {
+    if (overlay.isDestroyed()) return
+    const b = overlay.getBounds()
+    statusOverlayPos = { x: b.x, y: b.y }
+  })
+  overlay.on('closed', () => { if (statusOverlay === overlay) statusOverlay = null })
+  try { await overlay.loadURL(overlayHtml(statusOverlayHtml())) }
+  catch (error) { if (!overlay.isDestroyed()) overlay.destroy(); throw error }
+  return {
+    isDestroyed: () => overlay.isDestroyed(),
+    apply(value) {
+      const previous = overlay.getBounds()
+      if (Object.entries(value.bounds).some(([key, item]) => previous[key as keyof Electron.Rectangle] !== item)) {
+        overlay.setBounds(value.bounds)
+      }
+      // Send data directly to the prepared renderer. Do not execute a new script
+      // and wait for a round-trip for every audio level tick.
+      overlay.webContents.send('statusOverlay:update', { phase: value.phase, level: value.level, message: value.message })
+    },
+    showInactive: () => { if (!overlay.isVisible()) overlay.showInactive() },
+    hide: () => overlay.hide(),
   }
+})
+
+async function showStatusOverlay(status: string, level = 0, message = '') {
+  if (!isWindows && !isE2EMode) return false
+  const startedAt = performance.now()
   const phase = status === 'recording' ? 'recording' : status === 'error' ? 'error' : status === 'result' ? 'result' : 'thinking'
-  statusOverlay.setFocusable(false)
-  // Controls receive clicks; the top strip moves the frameless overlay.
-  statusOverlay.setIgnoreMouseEvents(false)
-  await statusOverlay.webContents.executeJavaScript(
-    `window.amadeusStatus?.update(${JSON.stringify(phase)}, ${Number(level) || 0}, ${JSON.stringify(message)})`
-  )
-  statusOverlay.showInactive()
-  return true
+  const previousPhase = lastStatusOverlayMetrics.phase
+  const visible = await statusOverlayController.show({ phase, level: Number(level) || 0, message, bounds: statusOverlayBounds(phase) })
+  if (visible && previousPhase !== phase) {
+    lastStatusOverlayMetrics = { phase, updateToShowMs: performance.now() - startedAt,
+      hotkeyToShowMs: lastTriggerAt ? Math.max(0, Date.now() - lastTriggerAt) : 0 }
+  }
+  return visible
 }
 
 function captionOverlayHtml() {
@@ -773,7 +817,7 @@ function stopKeyboardHook() {
   keyboardHook = null
 }
 
-function startRightAltHook() {
+async function startRightAltHook(): Promise<boolean> {
   stopKeyboardHook()
   // Use a WH_KEYBOARD_LL hook (low-level keyboard hook) instead of polling
   // GetAsyncKeyState. This:
@@ -794,6 +838,7 @@ public static class RightAltHook {
     private const int VK_RMENU = 0xA5;
     private static IntPtr hookId;
     private static LowLevelKeyboardProc proc = HookCallback;
+    private static bool rightAltDown;
 
     delegate IntPtr LowLevelKeyboardProc(int nCode, IntPtr wParam, IntPtr lParam);
 
@@ -808,12 +853,11 @@ public static class RightAltHook {
     static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
         if (nCode >= 0) {
             KBDLLHOOKSTRUCT kb = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
-            if (kb.vkCode == VK_RMENU) {
-                // Detect key down (not auto-repeat)
-                const int WM_KEYDOWN = 0x0100, WM_SYSKEYDOWN = 0x0104;
-                if ((wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN) && (kb.flags & 0x80) == 0) {
-                    Console.WriteLine("AltRight");
-                }
+            if (kb.vkCode == VK_RMENU && (kb.flags & 0x10) == 0) {
+                const int WM_KEYDOWN = 0x0100, WM_SYSKEYDOWN = 0x0104, WM_KEYUP = 0x0101, WM_SYSKEYUP = 0x0105;
+                if (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_SYSKEYDOWN) {
+                    if (!rightAltDown) { rightAltDown = true; Console.WriteLine("AltRight"); }
+                } else if (wParam == (IntPtr)WM_KEYUP || wParam == (IntPtr)WM_SYSKEYUP) rightAltDown = false;
                 // Block the key from reaching the foreground application
                 return (IntPtr)1;
             }
@@ -825,21 +869,32 @@ public static class RightAltHook {
         using (Process curProcess = Process.GetCurrentProcess())
         using (ProcessModule curModule = curProcess.MainModule)
             hookId = SetWindowsHookEx(WH_KEYBOARD_LL, proc, GetModuleHandle(curModule.ModuleName), 0);
-        Application.Run();
+        if (hookId == IntPtr.Zero) throw new InvalidOperationException("Keyboard hook unavailable");
+        Console.WriteLine("Ready");
+        try { Application.Run(); } finally { UnhookWindowsHookEx(hookId); }
     }
 }
 "@
 Add-Type -TypeDefinition $code -ReferencedAssemblies "System.Windows.Forms"
 [RightAltHook]::Run()
 `
-  keyboardHook = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script])
-  keyboardHook.stdout.on('data', (chunk) => {
-    if (chunk.toString().split(/\r?\n/).some((item: string) => item.trim() === 'AltRight')) {
-      emitHotkeyTriggered()
-    }
+  const helper = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], { windowsHide: true })
+  keyboardHook = helper
+  return await new Promise<boolean>((resolve) => {
+    let settled = false
+    const finish = (ready: boolean) => { if (!settled) { settled = true; clearTimeout(timer); resolve(ready) } }
+    const timer = setTimeout(() => { finish(false); helper.kill() }, 8_000)
+    // Pipe chunks do not necessarily end at a newline. Read complete events so
+    // a split "AltRight" notification cannot silently disappear.
+    const lines = createInterface({ input: helper.stdout })
+    lines.on('line', (line) => {
+      if (keyboardHook !== helper) return
+      if (line.trim() === 'Ready') finish(true)
+      else if (line.trim() === 'AltRight') emitHotkeyTriggered()
+    })
+    helper.on('error', () => finish(false))
+    helper.on('exit', () => { lines.close(); if (keyboardHook === helper) keyboardHook = null; finish(false) })
   })
-  keyboardHook.on('exit', () => { keyboardHook = null })
-  return true
 }
 
 function startMouseHook(button: string) {
@@ -874,7 +929,8 @@ while ($true) {
 }
 
 async function defaultArchiveDir() {
-  const dir = path.join(app.getPath('userData'), 'archive')
+  if (storageLayout && !storageLayout.snapshot().ready) throw new Error('请先在首页选择可写的数据目录')
+  const dir = storageLayout ? storageLayout.snapshot().archiveRoot : path.join(app.getPath('userData'), 'archive')
   await fs.mkdir(dir, { recursive: true })
   return dir
 }
@@ -921,185 +977,6 @@ async function saveSummaryLog(args: SummaryLogArgs) {
   return { saved: true, path: target }
 }
 
-function textInjectHelperScript() {
-  return `
-$ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
-Add-Type -AssemblyName System.Windows.Forms
-
-$pasteCode = @'
-using System;
-using System.Runtime.InteropServices;
-using System.Threading;
-public static class AmadeusPaste {
-  [DllImport("user32.dll", SetLastError=true)] static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
-  [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
-  [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hWnd);
-  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
-
-  [StructLayout(LayoutKind.Sequential)]
-  struct KEYBDINPUT { public ushort wVk; public ushort wScan; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
-  [StructLayout(LayoutKind.Sequential)]
-  struct MOUSEINPUT { public int dx; public int dy; public uint mouseData; public uint dwFlags; public uint time; public IntPtr dwExtraInfo; }
-  [StructLayout(LayoutKind.Sequential)]
-  struct HARDWAREINPUT { public uint uMsg; public ushort wParamL; public ushort wParamH; }
-  [StructLayout(LayoutKind.Explicit)]
-  struct INPUT_UNION { [FieldOffset(0)] public MOUSEINPUT mi; [FieldOffset(0)] public KEYBDINPUT ki; [FieldOffset(0)] public HARDWAREINPUT hi; }
-  [StructLayout(LayoutKind.Sequential)]
-  struct INPUT { public uint type; public INPUT_UNION u; }
-
-  const uint INPUT_KEYBOARD = 1;
-  const uint KEYEVENTF_KEYUP = 0x0002;
-
-  static void Key(ushort vk, bool up) {
-    var input = new INPUT { type = INPUT_KEYBOARD };
-    input.u.ki.wVk = vk;
-    input.u.ki.wScan = 0;
-    input.u.ki.dwFlags = up ? KEYEVENTF_KEYUP : 0;
-    SendInput(1, new INPUT[] { input }, Marshal.SizeOf(typeof(INPUT)));
-  }
-
-  public static void SendCtrlV() {
-    Key(0x12, true);  // Alt up: right-Alt hotkey can leave Alt logically down in some apps.
-    Key(0x11, true);  // Ctrl up
-    Key(0x10, true);  // Shift up
-    Thread.Sleep(6);
-    Key(0x11, false); Thread.Sleep(6);
-    Key(0x56, false); Thread.Sleep(6);
-    Key(0x56, true);  Thread.Sleep(4);
-    Key(0x11, true);
-  }
-
-  public static bool RestoreTarget(string hwndText) {
-    long hwndValue;
-    if (!long.TryParse(hwndText, out hwndValue)) return false;
-    var hwnd = new IntPtr(hwndValue);
-    if (hwnd == IntPtr.Zero || !IsWindow(hwnd)) return false;
-    if (IsIconic(hwnd)) ShowWindow(hwnd, 9);
-    return SetForegroundWindow(hwnd);
-  }
-}
-'@
-Add-Type -TypeDefinition $pasteCode -ReferencedAssemblies "System.Windows.Forms"
-
-function Write-Result($ok, $editable, $message) {
-  [Console]::Out.WriteLine((@{ ok = $ok; editable = $editable; message = $message } | ConvertTo-Json -Compress))
-  [Console]::Out.Flush()
-}
-
-function Test-FocusedEditable {
-  $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
-  if ($null -eq $focused -or -not $focused.Current.IsEnabled) {
-    return @{ ok = $false; message = 'no-focus: focused is null or disabled' }
-  }
-  $processName = ''
-  try {
-    $processName = (Get-Process -Id $focused.Current.ProcessId -ErrorAction Stop).ProcessName
-  } catch {}
-  $compatTarget = $processName -match '^(QQ|TIM|WeChat|Weixin|WXWork)$'
-
-  $valuePattern = $null
-  if ($focused.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$valuePattern)) {
-    if ($valuePattern.Current.IsReadOnly) {
-      return @{ ok = $false; message = ('readonly-value: name={0} class={1}' -f $focused.Current.Name, $focused.Current.ClassName) }
-    }
-  }
-
-  $ctrlType = $focused.Current.ControlType
-  $nonTextTypes = @(
-    [System.Windows.Automation.ControlType]::Button,
-    [System.Windows.Automation.ControlType]::CheckBox,
-    [System.Windows.Automation.ControlType]::RadioButton,
-    [System.Windows.Automation.ControlType]::SplitButton,
-    [System.Windows.Automation.ControlType]::List,
-    [System.Windows.Automation.ControlType]::ListItem,
-    [System.Windows.Automation.ControlType]::Menu,
-    [System.Windows.Automation.ControlType]::MenuBar,
-    [System.Windows.Automation.ControlType]::MenuItem,
-    [System.Windows.Automation.ControlType]::Tab,
-    [System.Windows.Automation.ControlType]::TabItem,
-    [System.Windows.Automation.ControlType]::Tree,
-    [System.Windows.Automation.ControlType]::TreeItem,
-    [System.Windows.Automation.ControlType]::ScrollBar,
-    [System.Windows.Automation.ControlType]::Thumb,
-    [System.Windows.Automation.ControlType]::ProgressBar,
-    [System.Windows.Automation.ControlType]::Slider,
-    [System.Windows.Automation.ControlType]::Spinner,
-    [System.Windows.Automation.ControlType]::Separator,
-    [System.Windows.Automation.ControlType]::Hyperlink,
-    [System.Windows.Automation.ControlType]::Calendar
-  )
-  if ($ctrlType -in $nonTextTypes) {
-    if ($compatTarget) {
-      return @{ ok = $true; compat = $true; process = $processName; message = ('compat-target: process={0} ctrlType={1} name={2} class={3}' -f $processName, $ctrlType.ProgrammaticName, $focused.Current.Name, $focused.Current.ClassName) }
-    }
-    return @{ ok = $false; message = ('non-text-ctrl: ctrlType={0} name={1} class={2}' -f $ctrlType.ProgrammaticName, $focused.Current.Name, $focused.Current.ClassName) }
-  }
-
-  return @{ ok = $true; compat = $compatTarget; process = $processName; message = ('inject-target: process={0} ctrlType={1} name={2} class={3} autoId={4}' -f $processName, $ctrlType.ProgrammaticName, $focused.Current.Name, $focused.Current.ClassName, $focused.Current.AutomationId) }
-}
-
-[Console]::Out.WriteLine('{"ready":true}')
-[Console]::Out.Flush()
-
-while (($line = [Console]::In.ReadLine()) -ne $null) {
-  if ([string]::IsNullOrWhiteSpace($line)) { continue }
-  try {
-    $targetHwnd = '0'
-    $targetProcess = ''
-    $textB64 = $line.Trim()
-    if ($textB64.Contains("\`t")) {
-      $parts = $textB64.Split("\`t")
-      $targetHwnd = $parts[0].Trim()
-      if ($parts.Length -ge 3) {
-        $targetProcess = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($parts[1].Trim()))
-        $textB64 = $parts[2].Trim()
-      } else {
-        $textB64 = $parts[1].Trim()
-      }
-    }
-    $text = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($textB64))
-    [System.Windows.Forms.Clipboard]::SetText($text)
-    if (-not [string]::IsNullOrWhiteSpace($targetHwnd) -and $targetHwnd -ne '0') {
-      [void][AmadeusPaste]::RestoreTarget($targetHwnd)
-      Start-Sleep -Milliseconds 35
-      if ($targetProcess -eq 'AmadeusE2E') {
-        $root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]([int64]$targetHwnd))
-        $editCondition = New-Object System.Windows.Automation.PropertyCondition(
-          [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-          [System.Windows.Automation.ControlType]::Edit
-        )
-        $edit = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $editCondition)
-        if ($null -ne $edit) {
-          $edit.SetFocus()
-          Start-Sleep -Milliseconds 20
-        }
-      }
-    }
-    if ($targetProcess -match '^(QQ|TIM|WeChat|Weixin|WXWork)$') {
-      [System.Windows.Forms.SendKeys]::SendWait('^v')
-      Write-Result $true $true ('compat-captured-target: process={0}' -f $targetProcess)
-      continue
-    }
-    $editable = Test-FocusedEditable
-    if (-not $editable.ok) {
-      Write-Result $false $false $editable.message
-      continue
-    }
-    if ($editable.compat) {
-      [System.Windows.Forms.SendKeys]::SendWait('^v')
-    } else {
-      [AmadeusPaste]::SendCtrlV()
-    }
-    Write-Result $true $true $editable.message
-  } catch {
-    Write-Result $false $true ("inject-error: " + $_.Exception.Message)
-  }
-}
-`
-}
 
 function stopTextInjectHelper() {
   if (textInjectPending) {
@@ -1123,6 +1000,7 @@ function ensureTextInjectHelper() {
   textInjectHelperReady = new Promise<boolean>((resolve) => { settleTextInjectHelperReady = resolve })
   const readyPromise = textInjectHelperReady
   let readySeen = false
+  let stdoutBuffer = ''
   const readyTimer = setTimeout(() => {
     if (textInjectHelper !== helper || readySeen) return
     console.warn('[text:inject] helper ready handshake timed out')
@@ -1135,7 +1013,10 @@ function ensureTextInjectHelper() {
 
   helper.stdout.on('data', (data: Buffer) => {
     if (textInjectHelper !== helper) return
-    for (const rawLine of data.toString().split(/\r?\n/)) {
+    stdoutBuffer += data.toString()
+    const lines = stdoutBuffer.split(/\r?\n/)
+    stdoutBuffer = lines.pop() || ''
+    for (const rawLine of lines) {
       const line = rawLine.trim()
       if (!line) continue
       if (!readySeen && line.includes('"ready"')) {
@@ -1149,21 +1030,30 @@ function ensureTextInjectHelper() {
       }
       const pending = textInjectPending
       if (!pending || pending.helper !== helper) continue
-      clearTimeout(pending.timer)
-      textInjectPending = null
       try {
-        const parsed = JSON.parse(line) as { ok?: boolean; editable?: boolean; message?: string }
-        if (parsed.ok) {
-          if (parsed.message) console.log(`[text:inject] ${parsed.message}`)
+        const parsed = JSON.parse(line) as { operation?: string; ok?: boolean; code?: string; retryable?: boolean; hwnd?: string; processId?: number }
+        if (parsed.operation !== pending.operation) continue
+        clearTimeout(pending.timer)
+        textInjectPending = null
+        if (pending.operation === 'capture') {
+          clearCapturedTextTarget()
+          if (parsed.ok && parsed.hwnd && parsed.hwnd !== '0' && parsed.processId) {
+            lastTextTargetHwnd = parsed.hwnd
+            lastTextTargetProcessId = parsed.processId
+            pending.resolve(true)
+          } else pending.resolve(false)
+        } else if (parsed.ok) {
+          clearCapturedTextTarget()
           pending.resolve(true)
-        } else if (parsed.editable === false) {
-          console.warn(`[text:inject] focus not editable. ${parsed.message || ''}`)
-          pending.resolve(false)
         } else {
-          pending.reject(new Error(parsed.message || '文本注入失败，文本已保留在剪贴板'))
+          const message = textInjectionFailure(parsed.code)
+          console.warn(`[text:inject] delivery refused: ${parsed.code || 'unknown'}`)
+          pending.reject(parsed.retryable ? new TextInjectionNotSentError(message) : new Error(message))
         }
       } catch {
-        pending.reject(new Error(`文本注入 helper 返回异常: ${line}`))
+        clearTimeout(pending.timer)
+        textInjectPending = null
+        pending.reject(new Error(textInjectionFailure()))
       }
     }
   })
@@ -1172,7 +1062,7 @@ function ensureTextInjectHelper() {
     const text = data.toString().trimEnd()
     if (!text) return
     if (textInjectPending?.helper === helper) textInjectPending.stderr.push(text)
-    console.error(`[text:inject helper stderr] ${text}`)
+    console.error('[text:inject] native helper reported an error')
   })
   helper.on('error', (error) => {
     if (textInjectHelper !== helper) return
@@ -1183,7 +1073,7 @@ function ensureTextInjectHelper() {
     textInjectHelperReady = null
     if (textInjectPending?.helper === helper) {
       clearTimeout(textInjectPending.timer)
-      textInjectPending.reject(error)
+      textInjectPending.reject(new Error(textInjectionFailure()))
       textInjectPending = null
     }
   })
@@ -1196,100 +1086,66 @@ function ensureTextInjectHelper() {
     textInjectHelperReady = null
     if (textInjectPending?.helper === helper) {
       clearTimeout(textInjectPending.timer)
-      const detail = textInjectPending.stderr.join('\n').trim()
-      textInjectPending.reject(new Error(detail || '文本注入 helper 已退出'))
+      textInjectPending.reject(new Error(textInjectionFailure()))
       textInjectPending = null
     }
   })
   return readyPromise
 }
 
-async function injectTextOnce(text: string) {
-  if (!isWindows) return false
+function clearCapturedTextTarget() {
+  lastTextTargetHwnd = '0'
+  lastTextTargetProcessId = 0
+}
+
+async function sendTextHelperRequest(operation: 'capture' | 'inject', payload: Record<string, unknown> = {}) {
   const ready = await ensureTextInjectHelper()
-  if (!ready) throw new Error('文本注入 helper 启动失败')
+  if (!ready) throw new TextInjectionNotSentError(textInjectionFailure())
   const helper = textInjectHelper
-  if (!helper?.stdin.writable) throw new Error('文本注入 helper 未就绪')
-  const textB64 = Buffer.from(text, 'utf8').toString('base64')
-  const targetHwnd = Date.now() - lastTextTargetCapturedAt < 120_000 ? lastTextTargetHwnd : '0'
-  const capturedProcess = Date.now() - lastTextTargetCapturedAt < 120_000 ? lastTextTargetProcess : ''
-  const targetProcessB64 = Buffer.from(isE2EMode && capturedProcess === 'Amadeus' ? 'AmadeusE2E' : capturedProcess, 'utf8').toString('base64')
+  if (!helper?.stdin.writable) throw new TextInjectionNotSentError(textInjectionFailure())
   return await new Promise<boolean>((resolve, reject) => {
-    if (isE2EMode) textInjectDebugEvents.push('request-written')
+    if (isE2EMode) textInjectDebugEvents.push(operation === 'capture' ? 'capture-written' : 'request-written')
     const timer = setTimeout(() => {
       const pending = textInjectPending
       if (pending?.helper !== helper || textInjectHelper !== helper) return
       textInjectPending = null
       stopTextInjectHelper()
-      reject(new Error(`文本注入超时，文本已保留在剪贴板${pending?.stderr.length ? `：${pending.stderr.join('\n')}` : ''}`))
+      // The helper may already have pasted. Never retry an acknowledgement timeout.
+      reject(new Error(textInjectionFailure('timeout')))
     }, TEXT_INJECT_TIMEOUT_MS)
-    textInjectPending = { helper, resolve, reject, timer, stderr: [] }
-    helper.stdin.write(`${targetHwnd}\t${targetProcessB64}\t${textB64}\n`, (error) => {
+    textInjectPending = { operation, helper, resolve, reject, timer, stderr: [] }
+    helper.stdin.write(`${JSON.stringify({ operation, ...payload })}\n`, (error) => {
       if (!error) return
       clearTimeout(timer)
       if (textInjectPending?.helper === helper) textInjectPending = null
-      reject(error)
+      // A pipe error after write is ambiguous; it is not retryable.
+      reject(new Error(textInjectionFailure()))
     })
+  })
+}
+
+async function injectTextOnce(text: string) {
+  if (!isWindows) return false
+  // Each successful capture belongs to one delivery. Never fall back to the
+  // current foreground window when capture failed or its original target died.
+  if (lastTextTargetHwnd === '0' || !lastTextTargetProcessId) {
+    throw new Error(textInjectionFailure('target-missing'))
+  }
+  return await sendTextHelperRequest('inject', {
+    hwnd: lastTextTargetHwnd,
+    processId: lastTextTargetProcessId,
+    textBase64: Buffer.from(text, 'utf8').toString('base64'),
   })
 }
 
 async function captureTextTarget() {
   if (!isWindows) return false
-  const script = `
-$ErrorActionPreference = 'Stop'
-$code = @'
-using System;
-using System.Runtime.InteropServices;
-public static class AmadeusForeground {
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
-}
-'@
-Add-Type -TypeDefinition $code
-$hwnd = [AmadeusForeground]::GetForegroundWindow()
-$targetPid = [uint32]0
-[void][AmadeusForeground]::GetWindowThreadProcessId($hwnd, [ref]$targetPid)
-$processName = ''
-try { $processName = (Get-Process -Id $targetPid -ErrorAction Stop).ProcessName } catch {}
-@{ ok = ($hwnd -ne [IntPtr]::Zero); hwnd = $hwnd.ToInt64(); process = $processName } | ConvertTo-Json -Compress
-`
-  const encoded = Buffer.from(script, 'utf16le').toString('base64')
-  return await new Promise<boolean>((resolve) => {
-    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true })
-    let stdout = ''
-    let settled = false
-    let timer: ReturnType<typeof setTimeout>
-    const finish = (ok: boolean) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      resolve(ok)
-    }
-    timer = setTimeout(() => {
-      child.kill()
-      finish(false)
-    }, 600)
-    child.stdout.on('data', (data: Buffer) => {
-      stdout += data.toString()
-    })
-    child.on('error', () => finish(false))
-    child.on('exit', () => {
-      try {
-        const parsed = JSON.parse(stdout.trim()) as { ok?: boolean; hwnd?: number | string; process?: string }
-        const hwnd = String(parsed.hwnd || '0')
-        if (parsed.ok && hwnd !== '0') {
-          lastTextTargetHwnd = hwnd
-          lastTextTargetProcess = parsed.process || ''
-          lastTextTargetCapturedAt = Date.now()
-          console.log(`[text:inject] captured target hwnd=${hwnd} process=${parsed.process || ''}`)
-          finish(true)
-          return
-        }
-      } catch {
-        // ignore malformed capture output
-      }
-      finish(false)
-    })
+  clearCapturedTextTarget()
+  // Capture uses the already prewarmed native helper, not a new PowerShell +
+  // Add-Type process with a 600ms cutoff on every recording.
+  return await textInjectQueue.run(async () => {
+    try { return await sendTextHelperRequest('capture') }
+    catch { clearCapturedTextTarget(); return false }
   })
 }
 
@@ -1307,11 +1163,69 @@ async function injectText(text: string) {
   ))
 }
 
+async function storageStatus(): Promise<StorageState> {
+  if (!storageLayout) throw new Error('受管存储目前支持 Windows 桌面版')
+  const state = storageLayout.snapshot()
+  const runtime = await localRuntime?.status()
+  const busy = storageBusy || !!runtime?.owned || !!runtime && ['installing', 'starting', 'running', 'stopping'].includes(runtime.phase)
+  return { ...state, busy, canChange: !busy && state.canChange, canClear: !busy && state.canClear,
+    legacyPaths: state.legacyPaths.map(item => ({ ...item, canClear: !busy && item.canClear })) }
+}
+
+async function requireStorageIdle(): Promise<void> {
+  const runtime = await localRuntime?.status()
+  if (runtime?.owned || runtime && ['installing', 'starting', 'running', 'stopping'].includes(runtime.phase)) throw new Error('请先停止本机服务和安装任务，再更改或清理数据目录')
+}
+
+function unavailableRuntimeState(): LocalRuntimeState {
+  const state = storageLayout?.snapshot()
+  const root = state?.runtimeRoot || path.join(app.getPath('userData'), 'local-runtime')
+  return { phase: 'missing', installed: false, owned: false, autoStart: false, url: null, root,
+    logPath: path.join(root, 'logs', 'backend.log'), message: '请先选择可写的数据目录，再安装本机环境。', error: state?.error }
+}
+
+async function configureStorageManagers(state: StorageState): Promise<void> {
+  // Caller has checked the previous manager is idle. Never move its venv.
+  if (localRuntime) await localRuntime.dispose()
+  localRuntime = null
+  setPetEnabled(false)
+  localAvatar = state.ready ? new LocalAvatarStore(state.avatarRoot, (status) => {
+    for (const window of [mainWindow, petWindow]) if (window && !window.isDestroyed()) window.webContents.send('avatar:changed', status)
+  }) : null
+  if (state.ready) {
+    const projectRoot = path.resolve(__dirname, '../../..')
+    localRuntime = new LocalRuntimeManager({
+      root: state.runtimeRoot, storagePaths: storageLayout!.paths(),
+      bundlePath: app.isPackaged ? path.join(process.resourcesPath, 'backend-bundle') : projectRoot,
+      uvPath: app.isPackaged ? path.join(process.resourcesPath, 'runtime', 'uv.exe') : path.join(projectRoot, '.runtime/windows-bootstrap/uv.exe'),
+      onChange: (value) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('runtime:state', value) },
+    })
+    mainWindow?.webContents.send('runtime:state', await localRuntime.status())
+  } else {
+    mainWindow?.webContents.send('runtime:state', unavailableRuntimeState())
+  }
+  mainWindow?.webContents.send('avatar:changed', await localAvatar?.status() || { available: false, name: null, size: 0, revision: null })
+}
+
+async function confirmStorageCleanup(root: string): Promise<boolean> {
+  const first = await dialog.showMessageBox({ type: 'warning', title: '清理受管数据',
+    message: '是否清理这个目录中的环境、模型、缓存和数据？',
+    detail: `${root}\n\n其中的模型需要重新下载，本目录的配置、录音、转写、归档及角色副本会永久删除。其它目录和外部共享缓存不受影响。`,
+    checkboxLabel: '我已备份需要保留的数据，同意清理所列目录', checkboxChecked: false,
+    buttons: ['保留数据', '继续确认清理'], defaultId: 0, cancelId: 0, noLink: true })
+  if (first.response !== 1 || !first.checkboxChecked) return false
+  const second = await dialog.showMessageBox({ type: 'warning', title: '最后确认',
+    message: '确认永久删除所列目录中的受管数据？', detail: root,
+    buttons: ['取消', '永久删除'], defaultId: 0, cancelId: 0, noLink: true })
+  return second.response === 1
+}
+
 function registerIpc() {
   registerPetIpc()
   const avatarSender = (event: Electron.IpcMainInvokeEvent, mainOnly = false) => {
     const window = event.sender === mainWindow?.webContents ? mainWindow : !mainOnly && event.sender === petWindow?.webContents ? petWindow : null
     if (!window || event.senderFrame !== window.webContents.mainFrame || !localAvatar) throw new Error('Only Amadeus windows can access the imported model')
+    if (mainOnly && storageBusy) throw new Error('数据目录正在变更，请稍候')
   }
   ipcMain.handle('avatar:status', (event) => { avatarSender(event); return localAvatar!.status() })
   ipcMain.handle('avatar:read', (event) => { avatarSender(event); return localAvatar!.read() })
@@ -1327,12 +1241,56 @@ function registerIpc() {
       return { ...await localAvatar!.status(), error: error instanceof Error ? error.message : '模型导入失败，请检查文件。' }
     }
   })
+  const storageAction = (channel: string, action: (...args: unknown[]) => unknown) => {
+    ipcMain.handle(channel, (event, ...args: unknown[]) => {
+      if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame || !storageLayout) throw new Error('Only the main Amadeus window can manage data storage')
+      return action(...args)
+    })
+  }
+  storageAction('storage:status', storageStatus)
+  storageAction('storage:openFolder', async (target) => {
+    if (target !== undefined && typeof target !== 'string') throw new Error('Invalid storage path')
+    const error = await shell.openPath(storageLayout!.allowedPath(target as string | undefined))
+    if (error) throw new Error(error)
+  })
+  storageAction('storage:chooseDirectory', async () => {
+    if (storageBusy) throw new Error('数据目录正在变更，请稍候')
+    await requireStorageIdle()
+    storageBusy = true
+    try {
+      const selection = await dialog.showOpenDialog(mainWindow!, { title: '选择数据存储磁盘或父目录（将在其中创建 AmadeusData）',
+        buttonLabel: '使用此位置', properties: ['openDirectory', 'createDirectory'] })
+      if (selection.canceled || !selection.filePaths[0]) return { ...storageLayout!.snapshot(), cancelled: true }
+      await requireStorageIdle()
+      const state = await storageLayout!.selectParent(selection.filePaths[0])
+      await configureStorageManagers(state)
+      return state
+    } finally { storageBusy = false }
+  })
+  storageAction('storage:clearManagedData', async (target) => {
+    if (target !== undefined && typeof target !== 'string') throw new Error('Invalid storage path')
+    if (storageBusy) throw new Error('数据目录正在变更，请稍候')
+    await requireStorageIdle()
+    storageBusy = true
+    try {
+      const root = storageLayout!.allowedPath(target as string | undefined)
+      if (!await confirmStorageCleanup(root)) return { ...storageLayout!.snapshot(), cancelled: true }
+      await requireStorageIdle()
+      const current = root === storageLayout!.snapshot().root
+      if (current) { await localRuntime?.dispose(); localRuntime = null; setPetEnabled(false) }
+      const state = await storageLayout!.clear(root)
+      if (current) await configureStorageManagers(state)
+      return state
+    } finally { storageBusy = false }
+  })
   const runtimeAction = (channel: string, action: (...args: unknown[]) => unknown) => {
     ipcMain.handle(channel, (event, ...args: unknown[]) => {
       if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
         throw new Error('Only the main Amadeus window can manage the local environment')
       }
-      if (!localRuntime) throw new Error('本机一键安装目前支持 Windows 桌面版')
+      if (!localRuntime && isWindows && channel === 'runtime:status') return unavailableRuntimeState()
+      if (!localRuntime) throw new Error(isWindows ? '请先在首页选择可写的数据目录' : '本机一键安装目前支持 Windows 桌面版')
+      if (storageBusy && !['runtime:status', 'runtime:stop'].includes(channel)) throw new Error('数据目录正在变更，请稍候')
       return action(...args)
     })
   }
@@ -1408,7 +1366,11 @@ function registerIpc() {
     const stats = await fs.stat(filePath)
     return { name: path.basename(filePath), size: stats.size, path: filePath }
   })
-  ipcMain.handle('media:extractAudioForUpload', (_event, filePath: string) => extractAudioForUpload(filePath))
+  ipcMain.handle('media:extractAudioForUpload', (_event, filePath: string) => {
+    if (storageBusy) throw new Error('数据目录正在变更，请稍候')
+    if (storageLayout && !storageLayout.snapshot().ready) throw new Error('请先选择可写的数据目录')
+    return extractAudioForUpload(filePath, storageLayout?.snapshot().tempRoot)
+  })
   ipcMain.handle('archive:transcription', (_event, args: ArchiveArgs) => archiveTranscription(args))
   ipcMain.handle('archive:summaryLog', (_event, args: SummaryLogArgs) => saveSummaryLog(args))
   ipcMain.handle('archive:summaryLogs:list', async (_event, args: { archiveRoot?: string; date: string }) => {
@@ -1443,15 +1405,15 @@ function registerIpc() {
   ipcMain.handle('text:inject', (_event, text: string) => injectText(text))
   ipcMain.handle('statusOverlay:show', (_event, status: string, level?: number, message?: string) => showStatusOverlay(status, level, message))
   ipcMain.handle('statusOverlay:hide', () => {
-    statusOverlay?.hide()
+    statusOverlayController.hide()
     return true
   })
   ipcMain.on('statusOverlay:copyResultDone', (_event, text: string) => {
-    statusOverlay?.hide()
+    statusOverlayController.hide()
     mainWindow?.webContents.send('statusOverlay:resultCopied', text)
   })
   ipcMain.on('statusOverlay:closeResult', () => {
-    statusOverlay?.hide()
+    statusOverlayController.hide()
     mainWindow?.webContents.send('statusOverlay:resultClosed')
   })
   ipcMain.on('statusOverlay:cancelRecognition', () => {
@@ -1492,36 +1454,54 @@ function registerIpc() {
   })
 }
 
-const gotLock = isE2EMode || Boolean(previewUserData) || app.requestSingleInstanceLock()
-if (!gotLock) app.quit()
+function createStorageLayout(): StorageLayout {
+  const projectRoot = path.resolve(__dirname, '../../..')
+  return new StorageLayout({ userData: app.getPath('userData'), installDir: path.dirname(app.getPath('exe')),
+    // Development and isolated test profiles must never adopt the installed app's data.
+    defaultRoot: (isDev || isE2EMode || previewUserData) ? path.join(projectRoot, '.runtime', `desktop-data-${path.basename(app.getPath('userData'))}`) : undefined })
+}
 
-app.on('second-instance', showMainWindow)
-
-app.whenReady().then(() => {
-  if (isE2EMode) app.setAccessibilitySupportEnabled(true)
-  localAvatar = new LocalAvatarStore(path.join(app.getPath('userData'), 'avatars'), (status) => {
-    for (const window of [mainWindow, petWindow]) {
-      if (window && !window.isDestroyed()) window.webContents.send('avatar:changed', status)
+async function runUninstallDataCleanup(): Promise<void> {
+  // Only entered by an explicit interactive uninstall. No backend, window, tray,
+  // native hooks or auto-start are registered in this mode.
+  const layout = createStorageLayout()
+  const state = await layout.initialize({ create: false })
+  const targets = [ ...(state.canClear ? [state.root] : []), ...state.legacyPaths.filter(item => item.canClear).map(item => item.path) ]
+  const protectedPaths = state.legacyPaths.filter(item => !item.canClear).map(item => item.path)
+  if (!state.ready && state.error) protectedPaths.push(state.root)
+  let failed = false
+  for (const root of targets) {
+    if (!await confirmStorageCleanup(root)) continue
+    const result = await layout.clear(root)
+    if (result.cleanup?.status === 'failed') {
+      failed = true
+      await dialog.showMessageBox({ type: 'error', title: '数据清理未完成', message: '程序可以继续卸载；请检查以下目录中剩余的数据。',
+        detail: `${root}\n\n${result.cleanup.message}`, buttons: ['保留数据并继续'], defaultId: 0 })
     }
-  })
+  }
+  if (protectedPaths.length) await dialog.showMessageBox({ type: 'info', title: '已保留原有数据',
+    message: '以下目录没有可验证的受管删除权限，已保留。', detail: protectedPaths.join('\n'), buttons: ['继续卸载'], defaultId: 0 })
+  app.exit(failed ? 2 : 0)
+}
+
+async function startApplication() {
+  if (isE2EMode) app.setAccessibilitySupportEnabled(true)
   if (isWindows) {
-    const projectRoot = path.resolve(__dirname, '../../..')
-    localRuntime = new LocalRuntimeManager({
-      root: path.join(app.getPath('userData'), 'local-runtime'),
-      bundlePath: app.isPackaged ? path.join(process.resourcesPath, 'backend-bundle') : projectRoot,
-      uvPath: app.isPackaged ? path.join(process.resourcesPath, 'runtime', 'uv.exe') : path.join(projectRoot, '.runtime/windows-bootstrap/uv.exe'),
-      onChange: (state) => {
-        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('runtime:state', state)
-      },
-    })
-    void localRuntime.status().then((state) => {
+    storageLayout = createStorageLayout()
+    await configureStorageManagers(await storageLayout.initialize())
+    void localRuntime?.status().then((state) => {
       if (state.autoStart && state.installed) return localRuntime!.start()
     }).catch((error) => console.error('Local runtime startup failed:', error instanceof Error ? error.message : 'Unknown error'))
+  } else {
+    localAvatar = new LocalAvatarStore(path.join(app.getPath('userData'), 'avatars'), (status) => {
+      for (const window of [mainWindow, petWindow]) if (window && !window.isDestroyed()) window.webContents.send('avatar:changed', status)
+    })
   }
   configureDisplayMediaCapture()
   registerIpc()
   if (isWindows) void ensureTextInjectHelper()
   createWindow()
+  if (isWindows || isE2EMode) void statusOverlayController.prepare().catch(() => console.warn('Status overlay warm-up failed'))
   if (!isE2EMode) createTray()
 
   if (isE2EMode && mainWindow) {
@@ -1570,7 +1550,19 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
-})
+}
+
+if (gotInstanceLock) {
+  app.on('second-instance', showMainWindow)
+  void app.whenReady().then(isUninstallDataMode ? runUninstallDataCleanup : startApplication).catch((error) => {
+    dialog.showErrorBox('Amadeus 启动失败', error instanceof Error ? error.message : '未知错误')
+    app.exit(2)
+  })
+} else {
+  // Never register startup for a duplicate: no window, tray, hooks or backend.
+  if (isUninstallDataMode) app.exit(3)
+  else app.quit()
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

@@ -237,10 +237,17 @@ class ModelDownloadManager:
             previous = self.jobs.get(identifier, {})
             job = {"id": identifier, "status": "queued", "region": region, "requested_source": source, "source": None,
                    "downloaded_bytes": 0, "total_bytes": 0, "speed_bytes_per_second": 0,
+                   "transferred_bytes": 0, "files": [], "total_files": 0, "completed_files": 0,
+                   "current_file_downloaded_bytes": 0, "current_file_total_bytes": 0,
+                   "target_path": str(self.target(self.models[identifier])),
                    "current_file": "", "message": "等待下载，支持断点续传。", "error": None,
                    "attempts": [], "started_at": time.time()}
             if self._weights(self.models[identifier])["verified"]:
-                job.update(status="completed", message="模型权重已完整校验，无需重复下载。", downloaded_bytes=previous.get("total_bytes", 0), total_bytes=previous.get("total_bytes", 0))
+                manifest = json.loads((self.target(self.models[identifier]) / MARKER).read_text(encoding="utf-8"))
+                files = [{"path": item["path"], "size": item["size"], "downloaded_bytes": item["size"], "status": "completed"} for item in manifest["files"]]
+                total = sum(item["size"] for item in files)
+                job.update(status="completed", message="模型权重已完整校验，无需重复下载。", downloaded_bytes=total, total_bytes=total,
+                           files=files, total_files=len(files), completed_files=len(files), source=manifest.get("source"), backup_path=previous.get("backup_path"))
                 self.jobs[identifier] = job
                 await self._save(job, True)
                 return dict(job)
@@ -288,7 +295,11 @@ class ModelDownloadManager:
             async with self.semaphore:
                 async with httpx.AsyncClient(transport=self.transport, timeout=httpx.Timeout(45, connect=15), follow_redirects=False, headers={"User-Agent": "Amadeus-ModelInstaller/1.0", "Accept-Encoding": "identity"}) as client:
                     for source in self._sources(model, job):
-                        job.update(status="queued", source=source["id"], current_file="", error=None, speed_bytes_per_second=0, message=f"正在读取 {source['id']} 的权威文件清单……")
+                        job.update(status="queued", source=source["id"], current_file="", error=None, speed_bytes_per_second=0,
+                                   total_bytes=0, downloaded_bytes=0, transferred_bytes=0, files=[], total_files=0, completed_files=0,
+                                   current_file_downloaded_bytes=0, current_file_total_bytes=0,
+                                   staging_path=None,
+                                   message=f"正在读取 {source['id']} 的权威文件清单……")
                         await self._save(job, True)
                         try:
                             files, revision = await self._inventory(client, model, source)
@@ -413,36 +424,49 @@ class ModelDownloadManager:
         partials.mkdir(parents=True, exist_ok=True)
         total = sum(item["size"] for item in files)
         existing = 0
+        file_progress = []
         for item in files:
             destination = below(payload, item["path"])
             partial = partials / (hashlib.sha256(item["path"].encode()).hexdigest()[:20] + ".part")
             local = destination if destination.is_file() else partial
-            if local.is_file():
-                existing += min(local.stat().st_size, item["size"])
+            saved_bytes = min(local.stat().st_size, item["size"]) if local.is_file() else 0
+            existing += saved_bytes
+            file_progress.append({"path": item["path"], "size": item["size"], "downloaded_bytes": saved_bytes, "status": "pending"})
+        job.update(status="downloading", revision=revision, total_bytes=total, downloaded_bytes=existing, transferred_bytes=0,
+                   files=file_progress, total_files=len(files), completed_files=0, staging_path=str(staging),
+                   message="正在下载模型文件；已有缓存会校验后复用。")
+        await self._save(job, True)
         if shutil.disk_usage(staging).free < max(0, total - existing) + 64 * 1024 * 1024:
             raise LocalInstallationError("模型所在磁盘空间不足，请释放空间后重试。")
-        job.update(status="downloading", revision=revision, total_bytes=total, downloaded_bytes=0, message="正在下载模型文件；离开页面不会中断。")
-        await self._save(job, True)
         completed = 0
-        started, baseline = time.monotonic(), existing
-        for item in files:
+        started = time.monotonic()
+        for item, progress in zip(files, file_progress):
             destination = below(payload, item["path"])
             job["current_file"] = item["path"]
+            job.update(current_file_downloaded_bytes=progress["downloaded_bytes"], current_file_total_bytes=item["size"])
             if destination.is_file() and destination.stat().st_size == item["size"] and await asyncio.to_thread(digest_file, destination, item["algorithm"], item["size"]) == item["digest"]:
                 completed += item["size"]
-                job["downloaded_bytes"] = completed
+                progress["status"] = "completed"
+                job["completed_files"] += 1
+                await self._save(job)
                 continue
-            await self._file(client, item, destination, partials, job, completed, started, baseline)
+            await self._file(client, item, destination, partials, job, completed, started, progress)
             completed += item["size"]
+            progress["status"] = "completed"
+            job["completed_files"] += 1
         job.update(status="verifying", downloaded_bytes=total, speed_bytes_per_second=0, message="正在验证全部模型文件……")
         await self._save(job, True)
         records = []
-        for item in files:
+        for item, progress in zip(files, file_progress):
+            job.update(current_file=item["path"], current_file_downloaded_bytes=item["size"], current_file_total_bytes=item["size"])
+            progress["status"] = "verifying"
+            await self._save(job)
             destination = below(payload, item["path"])
             stat = destination.stat()
             if stat.st_size != item["size"] or await asyncio.to_thread(digest_file, destination, item["algorithm"], item["size"]) != item["digest"]:
                 raise DownloadError(f"{item['path']} 完整性校验失败，没有安装不完整模型。")
             records.append({key: item[key] for key in ("path", "size", "algorithm", "digest")} | {"mtime_ns": stat.st_mtime_ns})
+            progress["status"] = "completed"
         target = self.target(model)
         target.parent.mkdir(parents=True, exist_ok=True)
         atomic_json(payload / MARKER, {"id": model["id"], "source": job["source"], "revision": revision, "verified_at": time.time(), "files": records})
@@ -460,10 +484,20 @@ class ModelDownloadManager:
                 if backup and not target.exists():
                     os.replace(backup, target)
                 raise
-        job.update(status="completed", current_file="", message="模型权重已下载并校验。运行依赖需要单独安装。", error=None, backup_path=str(backup) if backup else None)
+        job.update(status="completed", current_file="", current_file_downloaded_bytes=0, current_file_total_bytes=0,
+                   message="模型权重已下载并校验。运行依赖需要单独安装。", error=None, backup_path=str(backup) if backup else None)
         await self._save(job, True)
 
-    async def _file(self, client: httpx.AsyncClient, item: dict[str, Any], destination: Path, partials: Path, job: dict[str, Any], completed: int, started: float, baseline: int) -> None:
+    @staticmethod
+    def _file_bytes(job: dict[str, Any], progress: dict[str, Any] | None, count: int, completed: int) -> None:
+        if progress is not None:
+            job["downloaded_bytes"] += count - progress["downloaded_bytes"]
+            progress["downloaded_bytes"] = count
+        else:
+            job["downloaded_bytes"] = completed + count
+        job["current_file_downloaded_bytes"] = count
+
+    async def _file(self, client: httpx.AsyncClient, item: dict[str, Any], destination: Path, partials: Path, job: dict[str, Any], completed: int, started: float, progress: dict[str, Any] | None = None) -> None:
         stem = hashlib.sha256(item["path"].encode()).hexdigest()[:20]
         partial, resume_meta = partials / (stem + ".part"), partials / (stem + ".json")
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -472,6 +506,11 @@ class ModelDownloadManager:
             if offset > item["size"]:
                 partial.unlink()
                 offset = 0
+            self._file_bytes(job, progress, offset, completed)
+            if progress is not None:
+                progress["status"] = "downloading"
+            job["message"] = "正在下载模型文件；离开页面不会中断。"
+            await self._save(job)
             etag = None
             try:
                 etag = json.loads(resume_meta.read_text(encoding="utf-8")).get("etag")
@@ -493,9 +532,11 @@ class ModelDownloadManager:
                                 raise DownloadError("断点续传的远端文件大小或偏移不一致。")
                             if etag and response.headers.get("etag") and response.headers["etag"] != etag:
                                 partial.unlink(missing_ok=True)
+                                self._file_bytes(job, progress, 0, completed)
                                 raise DownloadError("下载源文件版本变化，正在重新下载并校验。")
                         elif response.status_code == 200:
                             offset = 0  # Server ignored Range: replace instead of appending twice.
+                            self._file_bytes(job, progress, 0, completed)
                         else:
                             raise DownloadError("下载源没有返回完整文件或有效续传数据。")
                         atomic_json(resume_meta, {"etag": response.headers.get("etag"), "digest": item["digest"]})
@@ -505,8 +546,9 @@ class ModelDownloadManager:
                                 if offset > item["size"]:
                                     raise DownloadError("下载内容超过官方清单大小，已拒绝。")
                                 output.write(chunk)
-                                job["downloaded_bytes"] = completed + offset
-                                job["speed_bytes_per_second"] = max(0, int((completed + offset - baseline) / max(.1, time.monotonic() - started)))
+                                self._file_bytes(job, progress, offset, completed)
+                                job["transferred_bytes"] = job.get("transferred_bytes", 0) + len(chunk)
+                                job["speed_bytes_per_second"] = int(job["transferred_bytes"] / max(.1, time.monotonic() - started))
                                 await self._save(job)
                             output.flush()
                             os.fsync(output.fileno())
@@ -514,8 +556,13 @@ class ModelDownloadManager:
                         await response.aclose()
                 if not partial.exists() or partial.stat().st_size != item["size"]:
                     raise DownloadError("下载文件长度不足；可继续断点续传。")
+                if progress is not None:
+                    progress["status"] = "verifying"
+                job.update(message=f"正在校验文件：{item['path']}", speed_bytes_per_second=0)
+                await self._save(job, True)
                 if await asyncio.to_thread(digest_file, partial, item["algorithm"], item["size"]) != item["digest"]:
                     partial.unlink()
+                    self._file_bytes(job, progress, 0, completed)
                     raise DownloadError("下载文件校验值与官方清单不符，已丢弃损坏文件。")
                 os.replace(partial, destination)
                 resume_meta.unlink(missing_ok=True)

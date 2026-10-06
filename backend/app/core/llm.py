@@ -11,6 +11,7 @@ import logging
 import time
 from collections.abc import AsyncIterator
 from datetime import datetime
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -32,26 +33,60 @@ from app.schemas.llm import (
 logger = logging.getLogger(__name__)
 
 
-def _chat_completions_url(base_url: str) -> str:
-    root = base_url.rstrip("/")
+def _is_official_deepseek_url(base_url: str) -> bool:
+    try:
+        parsed = urlsplit(base_url)
+        return (
+            parsed.scheme == "https"
+            and parsed.hostname == "api.deepseek.com"
+            and parsed.port in (None, 443)
+            and parsed.username is None
+            and parsed.password is None
+            and not parsed.query
+            and not parsed.fragment
+        )
+    except ValueError:
+        return False
+
+
+def _openai_base_url(base_url: str, provider: str | None = None) -> str:
+    """Adapt only known official DeepSeek Anthropic URLs to this client's API."""
+    if provider != "deepseek" or not _is_official_deepseek_url(base_url):
+        return base_url
+    parsed = urlsplit(base_url)
+    if parsed.path in {
+        "/anthropic", "/anthropic/",
+        "/anthropic/v1/messages", "/anthropic/v1/messages/",
+        "/v1/messages", "/v1/messages/",
+    }:
+        return parsed._replace(path="").geturl()
+    return base_url
+
+
+def _chat_completions_url(base_url: str, provider: str | None = None) -> str:
+    root = _openai_base_url(base_url, provider).rstrip("/")
     if root.endswith("/chat/completions"):
         return root
     return f"{root}/chat/completions"
 
 
 def _models_url(base_url: str, provider: str | None = None) -> str:
-    root = base_url.rstrip("/")
+    root = _openai_base_url(base_url, provider).rstrip("/")
     if root.endswith("/chat/completions"):
         root = root.removesuffix("/chat/completions")
-    if provider == "deepseek" and root.endswith("/v1"):
+    if (
+        provider == "deepseek"
+        and _is_official_deepseek_url(root)
+        and urlsplit(root).path == "/v1"
+    ):
         root = root.removesuffix("/v1")
     if root.endswith("/models"):
         return root
     return f"{root}/models"
 
 
-def _audio_speech_url(base_url: str) -> str:
-    root = base_url.rstrip("/")
+def _audio_speech_url(base_url: str, provider: str | None = None) -> str:
+    root = _openai_base_url(base_url, provider).rstrip("/")
     if root.endswith("/audio/speech"):
         return root
     if root.endswith("/chat/completions"):
@@ -93,6 +128,7 @@ async def process_text(request: LLMProcessRequest) -> LLMTextResult:
     system_prompt, user_prompt = _prompt_for(request)
     text = await _chat_completion(
         model=request.model,
+        provider=request.provider,
         base_url=request.base_url,
         api_token=request.api_token,
         system_prompt=system_prompt,
@@ -112,6 +148,7 @@ async def chat(request: LLMChatRequest) -> LLMChatResult:
     started = time.perf_counter()
     text = await _chat_completion_messages(
         model=request.model,
+        provider=request.provider,
         base_url=request.base_url,
         api_token=request.api_token,
         messages=[message.model_dump() for message in request.messages],
@@ -131,6 +168,7 @@ async def chat_stream(request: LLMChatRequest) -> AsyncIterator[dict]:
     parts: list[str] = []
     async for delta in _chat_completion_messages_stream(
         model=request.model,
+        provider=request.provider,
         base_url=request.base_url,
         api_token=request.api_token,
         messages=[message.model_dump() for message in request.messages],
@@ -160,6 +198,7 @@ async def run_auto_processing(
     enable_polish: bool,
     enable_translate: bool,
     prompt: str | None = None,
+    provider: str | None = None,
 ) -> tuple[dict[LLMOperation, LLMTextResult], str | None]:
     if not text.strip() or not model or not base_url or not api_token:
         return {}, None
@@ -175,6 +214,7 @@ async def run_auto_processing(
                     text=text,
                     operation=operation,
                     model=model,
+                    provider=provider,
                     base_url=base_url,
                     api_token=api_token,
                     target_language=target_language,
@@ -267,7 +307,7 @@ async def synthesize_speech(request: LLMSpeechRequest) -> tuple[bytes, str]:
     }
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(
-            _audio_speech_url(request.base_url),
+            _audio_speech_url(request.base_url, request.provider),
             json=payload,
             headers=headers,
         )
@@ -318,6 +358,7 @@ async def summarize_archive(request: ArchiveSummaryRequest) -> ArchiveSummaryRes
         chunk_summaries.append(
             await _chat_completion(
                 model=request.model,
+                provider=request.provider,
                 base_url=request.base_url,
                 api_token=request.api_token,
                 system_prompt=(
@@ -337,6 +378,7 @@ async def summarize_archive(request: ArchiveSummaryRequest) -> ArchiveSummaryRes
     final_input = "\n\n".join(chunk_summaries)
     summary = await _chat_completion(
         model=request.model,
+        provider=request.provider,
         base_url=request.base_url,
         api_token=request.api_token,
         system_prompt=(
@@ -410,6 +452,7 @@ async def summarize_archive_stream(request: ArchiveSummaryRequest) -> AsyncItera
         compressed_parts: list[str] = []
         async for delta in _chat_completion_stream(
             model=request.model,
+            provider=request.provider,
             base_url=request.base_url,
             api_token=request.api_token,
             system_prompt=(
@@ -433,6 +476,7 @@ async def summarize_archive_stream(request: ArchiveSummaryRequest) -> AsyncItera
     yield {"type": "status", "message": "大模型生成总结中"}
     async for delta in _chat_completion_stream(
         model=request.model,
+        provider=request.provider,
         base_url=request.base_url,
         api_token=request.api_token,
         system_prompt=(
@@ -598,9 +642,11 @@ async def _chat_completion(
     user_prompt: str,
     temperature: float,
     timeout: float,
+    provider: str | None = None,
 ) -> str:
     return await _chat_completion_messages(
         model=model,
+        provider=provider,
         base_url=base_url,
         api_token=api_token,
         messages=[
@@ -620,6 +666,7 @@ async def _chat_completion_messages(
     messages: list[dict[str, str]],
     temperature: float,
     timeout: float,
+    provider: str | None = None,
 ) -> str:
     payload = {
         "model": model,
@@ -633,7 +680,7 @@ async def _chat_completion_messages(
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
-            _chat_completions_url(base_url),
+            _chat_completions_url(base_url, provider),
             json=payload,
             headers=headers,
         )
@@ -652,9 +699,11 @@ async def _chat_completion_stream(
     user_prompt: str,
     temperature: float,
     timeout: float,
+    provider: str | None = None,
 ) -> AsyncIterator[str]:
     async for delta in _chat_completion_messages_stream(
         model=model,
+        provider=provider,
         base_url=base_url,
         api_token=api_token,
         messages=[
@@ -675,6 +724,7 @@ async def _chat_completion_messages_stream(
     messages: list[dict[str, str]],
     temperature: float,
     timeout: float,
+    provider: str | None = None,
 ) -> AsyncIterator[str]:
     payload = {
         "model": model,
@@ -690,7 +740,7 @@ async def _chat_completion_messages_stream(
     async with httpx.AsyncClient(timeout=timeout) as client:
         async with client.stream(
             "POST",
-            _chat_completions_url(base_url),
+            _chat_completions_url(base_url, provider),
             json=payload,
             headers=headers,
         ) as response:
@@ -724,12 +774,14 @@ def _extract_stream_delta(line: str) -> str | None:
     first = choices[0]
     delta = first.get("delta")
     if isinstance(delta, dict) and isinstance(delta.get("content"), str):
-        return delta["content"]
+        # Providers can start with a role-only/empty content delta. Only the
+        # explicit [DONE] marker ends the stream, not an empty text update.
+        return delta["content"] or None
     if isinstance(first.get("text"), str):
-        return first["text"]
+        return first["text"] or None
     message = first.get("message")
     if isinstance(message, dict) and isinstance(message.get("content"), str):
-        return message["content"]
+        return message["content"] or None
     return None
 
 

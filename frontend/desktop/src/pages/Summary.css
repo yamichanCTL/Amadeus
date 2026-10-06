@@ -1,0 +1,36 @@
+.summary-page .page-heading { margin-bottom: 14px; }
+.summary-navigation { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.summary-navigation button { min-width: 88px; box-shadow: none; }
+.summary-page .summary-workspace { grid-template-columns: minmax(270px, 340px) minmax(0, 1fr); }
+.summary-page .summary-saved-workspace { grid-template-columns: minmax(0, 1fr); }
+.summary-page .summary-controls { padding: 18px; gap: 12px; }
+.summary-page .summary-controls h2, .summary-page .summary-result h2, .summary-page .summary-passive-panel h2 { font-size: 18px; margin: 0; }
+.summary-page .summary-fields { min-width: 0; padding: 0; border: 0; margin: 0; }
+.summary-page .summary-form { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.summary-page .summary-wide { grid-column: 1 / -1; }
+.summary-page .summary-form input, .summary-page .summary-form select { width: 100%; min-width: 0; }
+.summary-page .summary-today { margin-top: 8px; padding: 4px 10px; font-size: 12px; }
+.summary-advanced { min-width: 0; border-top: 1px solid #dae4ef; padding-top: 10px; font-size: 13px; }
+.summary-advanced summary { cursor: pointer; color: #526b91; padding: 2px 0; }
+.summary-advanced summary:focus-visible { outline: 2px solid #3069b4; outline-offset: 3px; }
+.summary-advanced > .summary-form, .summary-advanced > fieldset { margin-top: 12px; }
+.summary-advanced p { color: #64748b; font-size: 12px; line-height: 1.65; }
+.summary-page .summary-fields > .summary-advanced { margin-top: 10px; }
+.summary-page .summary-selection-note, .summary-page .summary-model-note { margin: 0; color: #64748b; font-size: 12px; overflow-wrap: anywhere; line-height: 1.6; }
+.summary-model-note span { color: #8792a3; margin-left: 4px; }
+.summary-page .summary-result { min-height: 380px; padding: 18px; }
+.summary-result-meta { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-bottom: 12px; color: #687792; font-size: 12px; }
+.summary-running { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 16px; border: 1px solid #bcd5fb; border-radius: 8px; background: #edf5ff; margin-bottom: 14px; }
+.summary-running > div { flex: 1; display: grid; gap: 6px; min-width: 180px; }
+.summary-running strong { font-size: 14px; color: #245fc2; }
+.summary-running span { font-size: 12px; color: #526b91; overflow-wrap: anywhere; }
+.summary-page .summary-log-toolbar { grid-template-columns: minmax(130px, .5fr) minmax(0, 1fr) auto; align-items: end; }
+.summary-page .summary-log-toolbar label { display: grid; gap: 6px; min-width: 0; font-size: 12px; }
+.summary-page .summary-passive-panel { margin-top: 0; }
+.summary-page .passive-summary-form { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.summary-page .passive-summary-form .toggle-row { display: flex; gap: 8px; align-items: center; }
+.summary-page .toggle-row input { width: auto; }
+.summary-page .summary-controls .prompt-card-list { grid-template-columns: minmax(0, 1fr); }
+.summary-page .summary-controls .prompt-card-form { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 1000px) { .summary-page .summary-workspace { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 650px) { .summary-page .summary-log-toolbar, .summary-page .passive-summary-form { grid-template-columns: minmax(0, 1fr); } }

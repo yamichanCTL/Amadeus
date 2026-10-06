@@ -1,16 +1,35 @@
-.model-downloads { min-width: 0; max-width: 100%; overflow-wrap: anywhere; border: 1px solid var(--border, #dce3ef); border-radius: 14px; padding: 20px; margin-bottom: 20px; background: var(--panel-bg, rgba(245,248,255,.65)); }
-.model-downloads h2 { margin: 0; font-size: 19px; }
-.model-download-choices { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(0,.7fr) minmax(0,1fr); gap: 14px; margin: 14px 0 8px; }
-.model-download-choices label { display: grid; min-width: 0; gap: 7px; }
+.model-downloads { min-width: 0; max-width: 100%; overflow-wrap: anywhere; border: 1px solid var(--border, #dce3ef); border-radius: 12px; padding: 16px; background: var(--panel-bg, rgba(245,248,255,.65)); }
+.model-downloads h3 { margin: 0; font-size: 15px; }
+.model-download-choices { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(0,.7fr) minmax(0,1fr); gap: 12px; margin: 12px 0; }
+.model-download-choices label { display: grid; min-width: 0; gap: 6px; font-size: 13px; }
 .model-download-choices select { min-width: 0; width: 100%; }
 .model-download-hint { color: var(--text-muted, #64748b); font-size: 12px; line-height: 1.65; }
-.model-download-status { display: flex; gap: 20px; align-items: center; margin-top: 18px; }
-.model-download-status span { font-size: 12px; }
-.model-download-path { font-size: 12px; overflow-wrap: anywhere; }
-.model-download-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 14px 0; }
-.model-download-job { display: grid; gap: 8px; margin: 12px 0; padding: 12px; background: rgba(128,153,200,.09); border-radius: 8px; }
+.model-download-status { display: flex; flex-wrap: wrap; column-gap: 16px; row-gap: 6px; align-items: center; font-size: 12px; }
+.model-download-status strong { font-size: 13px; }
+.model-download-missing { margin: 6px 0 0; font-size: 12px; }
+.model-download-path { font-size: 12px; overflow-wrap: anywhere; margin: 10px 0; color: var(--text-muted, #64748b); }
+.model-download-path code { color: #314b70; }
+.model-download-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.model-download-actions button { max-width: 100%; font-size: 13px; }
+.model-download-job { display: grid; gap: 6px; margin: 12px 0; padding: 10px 12px; background: rgba(128,153,200,.09); border-radius: 8px; font-size: 13px; }
 .model-download-job progress { width: 100%; accent-color: #3069b4; }
 .model-download-job small { overflow-wrap: anywhere; }
-.avatar-distribution-note { font-size: 12px; color: var(--text-muted, #64748b); margin-top: 18px; }
-.avatar-distribution-note p { line-height: 1.65; }
-@media (max-width: 900px) { .model-download-choices { grid-template-columns: 1fr; } }
+.model-download-job p { margin: 0; }
+.model-download-metrics { display: flex; flex-wrap: wrap; gap: 6px 16px; font-variant-numeric: tabular-nums; }
+.model-download-current { display: grid; gap: 4px; }
+.model-download-files { font-size: 12px; margin: 10px 0; }
+.model-download-files summary { cursor: pointer; width: fit-content; }
+.model-download-file-table { overflow: auto; max-height: 240px; margin-top: 8px; }
+.model-download-file-table table { width: 100%; border-collapse: collapse; }
+.model-download-file-table th, .model-download-file-table td { padding: 6px 8px; border-bottom: 1px solid var(--border, #dce3ef); text-align: left; }
+.model-download-file-table th[scope=row] { font-weight: 400; overflow-wrap: anywhere; min-width: 120px; }
+.model-download-file-table td { white-space: nowrap; }
+.model-download-details { font-size: 12px; color: var(--text-muted, #64748b); border-top: 1px solid var(--border, #dce3ef); padding-top: 10px; }
+.model-download-details summary { cursor: pointer; width: fit-content; max-width: 100%; }
+.model-download-details summary:focus-visible { outline: 2px solid #3069b4; outline-offset: 4px; border-radius: 2px; }
+.model-download-details p { margin: 8px 0 0; line-height: 1.65; }
+@media (max-width: 1000px) {
+  .model-download-choices { grid-template-columns: minmax(0,.7fr) minmax(0,1fr); }
+  .model-download-choices label:first-child { grid-column: 1 / -1; }
+}
+@media (max-width: 520px) { .model-download-choices { grid-template-columns: minmax(0,1fr); } }

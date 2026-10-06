@@ -1,0 +1,25 @@
+.history-page .page-heading { margin-bottom: 14px; }
+.history-overview { display: flex; flex-wrap: wrap; gap: 8px 24px; color: #64748b; font-size: 13px; margin-bottom: 14px; }
+.history-overview strong { color: #20314d; }
+.history-page .history-workspace { grid-template-columns: minmax(250px, .7fr) minmax(0, 1.3fr); }
+.history-page .history-list { padding: 14px; display: grid; gap: 8px; align-content: start; max-height: calc(100vh - 210px); overflow: auto; }
+.history-page .filter-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; margin-bottom: 6px; }
+.history-page .filter-row > input { grid-column: 1 / -1; }
+.history-page .filter-row > select { grid-column: 1 / -1; }
+.history-page .date-filter { min-width: 0; display: grid; gap: 4px; }
+.history-page .history-item { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 10px; padding: 12px; box-shadow: none; }
+.history-page .history-item time { grid-column: 1; grid-row: 2; }
+.history-page .history-item strong { grid-column: 1 / -1; grid-row: 1; font-size: 14px; }
+.history-page .history-item small { grid-column: 1 / -1; grid-row: 3; }
+.history-page .history-item em { grid-column: 2; grid-row: 2; font-size: 11px; padding: 2px 6px; }
+.history-page .history-item.active { color: #1d4e89; background: #edf4ff; border-color: #93b8eb; }
+.history-page .history-item.active time, .history-page .history-item.active small { color: #526b91; }
+.history-page .history-detail { padding: 18px; }
+.history-page .history-detail .panel-head h2 { font-size: 18px; overflow-wrap: anywhere; margin-bottom: 6px; }
+.history-page .history-detail .panel-head p { font-size: 12px; color: #64748b; margin: 0; }
+.history-page .history-detail .result-panel { margin-top: 16px; min-height: 280px; }
+.history-confirm, .history-undo { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px 14px; margin-bottom: 14px; border: 1px solid #d2e1f5; border-radius: 8px; background: #f3f7fd; font-size: 13px; }
+.history-confirm > div { flex: 1; min-width: 190px; }
+.history-confirm p { margin: 6px 0 0; color: #64748b; }
+.history-undo button { padding: 5px 10px; }
+@media (max-width: 960px) { .history-page .history-workspace { grid-template-columns: minmax(0, 1fr); } .history-page .history-list { max-height: 360px; } }

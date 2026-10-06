@@ -3,6 +3,7 @@ import { copyText, resultToJson, resultToTxt, saveResult, saveText, segmentsToSr
 import type { LLMOperation, TranscribeResponse } from '@/services/api'
 import { SegmentList } from './SegmentList'
 import { TabBar } from './TabBar'
+import './ResultPanel.css'
 
 type ResultTab = 'text' | 'enhance' | 'segments' | 'json'
 
@@ -15,8 +16,9 @@ type ResultPanelProps = {
 export function ResultPanel({ result, onProcess, processingOperation = 'idle' }: ResultPanelProps) {
   const [tab, setTab] = useState<ResultTab>('text')
   const [copied, setCopied] = useState(false)
+  const [actionError, setActionError] = useState('')
 
-  useEffect(() => setCopied(false), [result?.task_id, tab])
+  useEffect(() => { setCopied(false); setActionError('') }, [result?.task_id, tab])
 
   if (!result) {
     return (
@@ -30,14 +32,17 @@ export function ResultPanel({ result, onProcess, processingOperation = 'idle' }:
   const polishedText = result.llm_outputs?.polish?.text || ''
   const translatedText = result.llm_outputs?.translate?.text || ''
   const enhancedText = polishedText || translatedText
-  const activeText = tab === 'enhance' ? enhancedText : text
-  const activeSuffix = tab === 'enhance' ? 'enhanced' : 'text'
+  const activeText = tab === 'enhance' ? enhancedText : tab === 'json' ? resultToJson(result) : tab === 'segments' ? segmentsToSrt(result.segments) : text
+  const activeSuffix = tab === 'enhance' ? 'enhanced' : tab === 'segments' ? 'segments' : tab === 'json' ? 'result' : 'text'
+  const activeLabel = tab === 'enhance' ? '润色/翻译' : tab === 'segments' ? '分段字幕' : tab === 'json' ? 'JSON' : '原文'
   const canProcess = Boolean(onProcess && text.trim())
-  const handleCopy = () => {
+  const handleCopy = async () => {
     if (!activeText) return
-    setCopied(true)
-    void copyText(activeText)
-    window.setTimeout(() => setCopied(false), 1200)
+    try {
+      await copyText(activeText)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 1200)
+    } catch { setActionError('复制失败，请重试。') }
   }
 
   return (
@@ -48,14 +53,19 @@ export function ResultPanel({ result, onProcess, processingOperation = 'idle' }:
           <p>{result.engine_used || 'unknown'} · {result.duration_sec ? `${result.duration_sec.toFixed(1)}s` : '时长未知'}</p>
         </div>
         <div className="result-actions">
-          <button type="button" disabled={!canProcess || processingOperation !== 'idle'} onClick={() => onProcess?.('polish')}>
+          {onProcess && <button type="button" disabled={!canProcess || processingOperation !== 'idle'} onClick={() => onProcess?.('polish')}>
             {processingOperation !== 'idle' ? '处理中' : '润色/翻译'}
-          </button>
-          <button type="button" disabled={!activeText} onClick={handleCopy}>{copied ? '已复制' : '复制'}</button>
-          <button type="button" disabled={!activeText} onClick={() => saveText(activeText, `${result.task_id}_${activeSuffix}.txt`)}>当前TXT</button>
-          <button type="button" onClick={() => saveResult(result, `${result.task_id}.txt`, 'txt')}>TXT</button>
-          <button type="button" onClick={() => saveResult(result, `${result.task_id}.srt`, 'srt')}>SRT</button>
-          <button type="button" onClick={() => saveResult(result, `${result.task_id}.json`, 'json')}>JSON</button>
+          </button>}
+          <button type="button" disabled={!activeText} onClick={() => void handleCopy()}>{copied ? '已复制' : '复制当前'}</button>
+          <details className="result-export-menu">
+            <summary>导出</summary>
+            <div>
+              <button type="button" disabled={!activeText} onClick={() => void saveText(activeText, `${result.task_id}_${activeSuffix}.${tab === 'json' ? 'json' : tab === 'segments' ? 'srt' : 'txt'}`)}>当前{activeLabel}</button>
+              <button type="button" onClick={() => void saveResult(result, `${result.task_id}.txt`, 'txt')}>原文 TXT</button>
+              <button type="button" onClick={() => void saveResult(result, `${result.task_id}.srt`, 'srt')}>字幕 SRT</button>
+              <button type="button" onClick={() => void saveResult(result, `${result.task_id}.json`, 'json')}>完整 JSON</button>
+            </div>
+          </details>
         </div>
       </div>
       <TabBar
@@ -68,6 +78,8 @@ export function ResultPanel({ result, onProcess, processingOperation = 'idle' }:
           { value: 'json', label: 'JSON' }
         ]}
       />
+      <p className="result-current-label">复制当前内容：{activeLabel}</p>
+      {actionError && <p className="error" role="alert">{actionError}</p>}
       {tab === 'text' && <pre className="result-text">{text}</pre>}
       {tab === 'enhance' && (
         enhancedText ? <pre className="result-text">{enhancedText}</pre> : <p className="empty">暂无润色/翻译结果。</p>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ASRApi } from '@/services/api'
 import { registerTrigger } from '@/services/hotkey'
 import { recordingService } from '@/services/recordingService'
@@ -6,13 +6,14 @@ import { useASRStore } from '@/store/useASRStore'
 import { TitleBar } from '@/components/TitleBar'
 import { Sidebar } from '@/components/Sidebar'
 import { StatusBar } from '@/components/StatusBar'
+import { ActivityBar } from '@/components/ActivityBar'
+import { PageBoundary } from '@/components/PageBoundary'
 import { RealtimeAgentPage } from '@/pages/RealtimeAgent'
 import { TranscribePage } from '@/pages/Transcribe'
 import { HistoryPage } from '@/pages/History'
 import { SummaryPage } from '@/pages/Summary'
-import { ModelsPage } from '@/pages/Models'
 import { SettingsPage } from '@/pages/Settings'
-import { PlaceholderPage } from '@/pages/Placeholder'
+import { HomePage } from '@/pages/Home'
 import { VoiceChangerPage } from '@/pages/VoiceChanger'
 import { DebugConsolePage } from '@/pages/DebugConsole'
 import { audioRelayMixer, runAudioRelayDeviceE2E, speechRecorder } from '@/services/audio'
@@ -20,6 +21,7 @@ import { liveCaptionService } from '@/services/liveCaption'
 import { buildLocalSummaryRecords } from '@/services/summaryRecords'
 import { saveSummaryToLocalLog } from '@/services/summaryLog'
 import { useLocalRuntimeConnection } from '@/services/localRuntimeConnection'
+import { resolveTaskLLM } from '@/services/taskModels'
 
 const isE2EMode = new URLSearchParams(window.location.search).get('e2e') === '1'
 
@@ -44,38 +46,30 @@ function isWithinWindow(now: Date, startTime: string, endTime: string) {
   return start <= end ? current >= start && current <= end : current >= start || current <= end
 }
 
-function AppTopBar() {
-  const settings = useASRStore((state) => state.settings)
-  const page = useASRStore((state) => state.page)
-  const setPage = useASRStore((state) => state.setPage)
-  const liveLabels = { off: '', openai: 'GPT Live', qwen: '千问 Audio 3.1 Realtime Plus',
-    gemini_live: 'Gemini 3.8 Live', gemini_thinking: 'Gemini 3.8 Live Extended Thinking',
-    higgs: 'Higgs Realtime', grok: 'Grok Voice Think Fast 2.0' }
-  const liveLabel = page === 'realtime' ? liveLabels[settings.agentRealtimeProvider] : ''
-
-  return (
-    <div className="app-topbar">
-      <div className="mode-pill">
-        <span aria-hidden="true">↻</span>
-        <strong>{liveLabel || `${settings.agentBackend === 'codex' ? `Codex · ${settings.codexModel || '当前配置'}` : settings.llmModel || 'GPT Voice'} / ${settings.offlineEngine}`}</strong>
-        <small>⌄</small>
-      </div>
-      <button type="button" className="icon-button" title="设置" onClick={() => setPage('settings')}>⚙</button>
-      <button type="button" className="avatar-button" title="账户">●</button>
-    </div>
-  )
-}
-
 export default function App() {
   useLocalRuntimeConnection()
+  const contentRef = useRef<HTMLElement>(null)
+  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem('amadeus.ui.sidebarCollapsed') === 'true' } catch { return false } })
+  const toggleSidebar = () => setCollapsed((value) => { try { localStorage.setItem('amadeus.ui.sidebarCollapsed', String(!value)) } catch { /* Optional preference. */ } return !value })
   const page = useASRStore((state) => state.page)
   const settings = useASRStore((state) => state.settings)
   const setServerStatus = useASRStore((state) => state.setServerStatus)
+  const serverStatus = useASRStore((state) => state.serverStatus)
   const setPage = useASRStore((state) => state.setPage)
   const updateSettings = useASRStore((state) => state.updateSettings)
   const setPetCommand = useASRStore((state) => state.setPetCommand)
   const setError = useASRStore((state) => state.setError)
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
+  useEffect(() => {
+    contentRef.current?.scrollTo?.({ top: 0 })
+    if (['realtime', 'transcribe', 'history', 'summary', 'voice'].includes(page)) {
+      try { localStorage.setItem('amadeus.ui.lastTask', page) } catch { /* Optional preference. */ }
+    }
+  }, [page])
+
+  // Older saved navigation and integrations can still request the retired hub.
+  // Route them to task entry points instead of another copy of model editors.
+  useEffect(() => { if (page === 'models') setPage('home') }, [page, setPage])
 
   useEffect(() => {
     const openLinkedPage = () => { if (['#realtime', '#meeting'].includes(window.location.hash)) setPage('realtime') }
@@ -187,6 +181,9 @@ export default function App() {
 
   useEffect(() => {
     if (isE2EMode) return
+    // Navigation and preference changes must not cancel a running ASR task.
+    // Its owning service handles stopping and re-arming the microphone.
+    if (recordingService.isBusy || liveCaptionService.isActive) return
     if (page === 'realtime' && settings.agentRealtimeProvider !== 'off') {
       // Cancel also invalidates a pending getUserMedia prewarm request.
       speechRecorder.cancel()
@@ -286,7 +283,8 @@ export default function App() {
       const latest = useASRStore.getState().settings
       if (!latest.backendConfirmed || !latest.serverUrl.trim()) return
       if (!latest.passiveSummaryEnabled) return
-      if (!latest.llmModel.trim() || !latest.llmBaseUrl.trim() || !latest.llmApiToken.trim()) return
+      const summaryModel = resolveTaskLLM(latest, 'summary')
+      if (!summaryModel.model.trim() || !summaryModel.baseUrl.trim() || !summaryModel.apiToken.trim()) return
       const now = new Date()
       if (!isWithinWindow(now, latest.passiveSummaryStartTime, latest.passiveSummaryEndTime)) return
       const lastAt = Date.parse(latest.passiveSummaryLastRunAt || '')
@@ -310,10 +308,10 @@ export default function App() {
           category: latest.passiveSummaryCategory.trim() || undefined,
           start_time: latest.passiveSummaryStartTime || undefined,
           end_time: latest.passiveSummaryEndTime || undefined,
-          provider: latest.llmProvider,
-          model: latest.llmModel,
-          base_url: latest.llmBaseUrl,
-          api_token: latest.llmApiToken,
+          provider: summaryModel.provider,
+          model: summaryModel.model,
+          base_url: summaryModel.baseUrl,
+          api_token: summaryModel.apiToken,
           prompt: latest.summaryPrompt,
           style: latest.llmStyle || '工作纪要',
           max_input_chars: 24000,
@@ -346,26 +344,29 @@ export default function App() {
   return (
     <div className="win11-body">
       <TitleBar />
-      <div className="app-shell">
-        <Sidebar />
-        <main className="content">
-          <AppTopBar />
-          {page !== 'settings' && (!settings.serverUrl || !settings.backendConfirmed) && window.electronAPI?.localRuntimeStatus && (
+      <div className={`app-shell${collapsed ? ' sidebar-collapsed' : ''}`}>
+        <Sidebar collapsed={collapsed} onToggle={toggleSidebar} />
+        <div className="workspace-column">
+        <main className="content" ref={contentRef}>
+          {page !== 'home' && page !== 'models' && page !== 'settings' && (!settings.serverUrl || !settings.backendConfirmed || serverStatus === 'disconnected') && (
             <section className="local-runtime-welcome" aria-label="本机环境快速开始">
-              <div><strong>第一次使用 Amadeus？</strong><p>一键准备 Windows 本机环境，安装好后直接在这里对话。</p></div>
-              <button type="button" className="primary" onClick={() => setPage('settings')}>安装本机环境</button>
+              <div><strong>后端服务未连接</strong><p>运行环境与后端地址在首页统一管理，所有任务共用。</p></div>
+              <button type="button" className="primary" onClick={() => setPage('home')}>前往首页</button>
             </section>
           )}
-          {page === 'home' && <PlaceholderPage kind="home" />}
+          <PageBoundary key={page} onHome={() => setPage('home')}>
+          {page === 'home' && <HomePage />}
           {page === 'realtime' && <RealtimeAgentPage />}
           {page === 'transcribe' && <TranscribePage />}
           {page === 'history' && <HistoryPage />}
           {page === 'summary' && <SummaryPage />}
-          {page === 'models' && <ModelsPage />}
           {page === 'settings' && <SettingsPage />}
           {page === 'voice' && <VoiceChangerPage />}
           {page === 'debug' && <DebugConsolePage />}
+          </PageBoundary>
         </main>
+        <ActivityBar />
+        </div>
       </div>
       <StatusBar />
     </div>

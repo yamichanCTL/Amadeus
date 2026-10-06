@@ -2,6 +2,11 @@ import { clipboard, contextBridge, ipcRenderer } from 'electron'
 import { copyOverlayResultNonBlocking } from './status-overlay-copy'
 
 contextBridge.exposeInMainWorld('statusOverlay', {
+  onUpdate: (callback: (value: { phase: string; level: number; message: string }) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: { phase: string; level: number; message: string }) => callback(value)
+    ipcRenderer.on('statusOverlay:update', listener)
+    return () => ipcRenderer.removeListener('statusOverlay:update', listener)
+  },
   copyResult: (text: string) => {
     // Run the native clipboard call in this small overlay renderer instead of
     // Electron's main process. A slow Windows clipboard owner can no longer

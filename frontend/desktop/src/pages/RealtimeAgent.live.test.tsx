@@ -22,6 +22,7 @@ vi.mock('@/services/liveVoice', () => ({
 import { RealtimeAgentPage } from './RealtimeAgent'
 import { DEFAULT_SETTINGS, useASRStore } from '@/store/useASRStore'
 import { speechRecorder } from '@/services/audio'
+import { useActivityStore } from '@/services/activity'
 
 const catalog = {
   providers: [
@@ -61,6 +62,61 @@ const start = async () => {
 }
 
 describe('Realtime API models in the existing 3D application', () => {
+  it('globally stops live voice once and rejects callbacks from the cancelled session', async () => {
+    const session = await start()
+    const stop = useActivityStore.getState().tasks['realtime-session'].onStop!
+    await act(async () => { await Promise.all([stop(), stop()]) })
+    act(() => {
+      session.callbacks.onState('speaking')
+      session.callbacks.onTranscriptItem({ role: 'assistant', text: '已取消会话的迟到内容', id: 'late' })
+      session.callbacks.onCapture({ level: -18, seconds: 5 })
+    })
+    expect(session.stop).toHaveBeenCalledOnce()
+    expect(mocks.sessions).toHaveLength(1)
+    expect(screen.queryByText('已取消会话的迟到内容')).toBeNull()
+    expect(screen.getByRole('status', { name: '麦克风状态' }).textContent).toBe('未开启')
+    expect(useActivityStore.getState().tasks['realtime-session']).toBeUndefined()
+  })
+
+  it('keeps configuration out of the conversation and preserves persona edits across drawer navigation', async () => {
+    render(<RealtimeAgentPage />)
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByRole('textbox', { name: '角色设定' })).toBeNull()
+    const shortcut = screen.getByRole('button', { name: '配置模型与音色' })
+    shortcut.focus()
+    fireEvent.click(shortcut)
+    expect(screen.getByRole('dialog', { name: '对话配置' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('tab', { name: '角色与记忆' }))
+    fireEvent.change(screen.getByRole('textbox', { name: '角色设定' }), { target: { value: '编辑中的角色设定' } })
+    fireEvent.click(screen.getByRole('tab', { name: '工具与任务' }))
+    fireEvent.click(screen.getByRole('button', { name: '关闭对话配置' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.activeElement).toBe(shortcut)
+    fireEvent.click(shortcut)
+    fireEvent.keyDown(screen.getByRole('tab', { name: '引擎与音色' }), { key: 'ArrowRight' })
+    expect((screen.getByRole('textbox', { name: '角色设定' }) as HTMLTextAreaElement).value).toBe('编辑中的角色设定')
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(mocks.sessions).toHaveLength(0)
+  })
+
+  it('shows capture, audio playback and background work independently during full duplex', async () => {
+    const session = await start()
+    act(() => {
+      session.callbacks.onCapture({ level: -24, seconds: 2 })
+      session.callbacks.onState('working')
+      session.callbacks.onAvatarAudioFrame({ timestamp: Date.now(), epoch: 1, audioTime: .1, level: .6, vowels: { a: .2, i: 0, u: 0, e: 0, o: 0 }, active: true })
+    })
+    expect(screen.getByRole('status', { name: '麦克风状态' }).textContent).toBe('正在采集')
+    expect(screen.getByRole('status', { name: '语音输出状态' }).textContent).toBe('正在播放')
+    expect(screen.getByRole('status', { name: '后台任务状态' }).textContent).toBe('正在处理')
+    fireEvent.click(screen.getByRole('button', { name: '收起角色' }))
+    expect(screen.queryByLabelText('爱弥斯 3D 模型')).toBeNull()
+    expect(screen.getByRole('button', { name: '结束全双工' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '停止朗读' })).toBeTruthy()
+    expect(session.stop).not.toHaveBeenCalled()
+  })
+
   it('starts independently of Codex login, with selected voice, brain, persona and memory', async () => {
     const session = await start()
     expect(screen.getByLabelText('爱弥斯 3D 模型')).toBeTruthy()

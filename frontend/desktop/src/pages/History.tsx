@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ResultPanel } from '@/components/ResultPanel'
 import { AudioPlayer } from '@/components/AudioPlayer'
-import { copyText, saveResult } from '@/services/export'
 import { useASRStore, type HistoryItem } from '@/store/useASRStore'
+import './History.css'
 
 function formatDateTime(value: string) {
   const date = new Date(value)
@@ -23,12 +23,14 @@ export function HistoryPage() {
   const removeHistory = useASRStore((state) => state.removeHistory)
   const clearHistory = useASRStore((state) => state.clearHistory)
   const setCurrentResult = useASRStore((state) => state.setCurrentResult)
+  const setPage = useASRStore((state) => state.setPage)
   const [selectedId, setSelectedId] = useState(history[0]?.id || '')
   const [query, setQuery] = useState('')
   const [language, setLanguage] = useState('all')
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
-  const [copied, setCopied] = useState(false)
+  const [confirmClear, setConfirmClear] = useState(false)
+  const [undo, setUndo] = useState<{ removed: HistoryItem[]; order: string[] } | null>(null)
   const filteredHistory = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase()
     const from = fromDate ? new Date(`${fromDate}T00:00:00`).getTime() : Number.NEGATIVE_INFINITY
@@ -65,11 +67,21 @@ export function HistoryPage() {
     setFromDate('')
     setToDate('')
   }
-  const copySelected = () => {
-    if (!selected?.full_text) return
-    setCopied(true)
-    void copyText(selected.full_text)
-    window.setTimeout(() => setCopied(false), 1200)
+  const removeSelected = () => {
+    if (!selected) return
+    setUndo({ removed: [selected], order: history.map(item => item.id) })
+    removeHistory(selected.id)
+  }
+  const undoDelete = () => {
+    if (!undo) return
+    useASRStore.setState(state => {
+      const current = new Map(state.history.map(item => [item.id, item]))
+      undo.removed.forEach(item => { if (!current.has(item.id)) current.set(item.id, item) })
+      const previous = new Set(undo.order)
+      return { history: [...state.history.filter(item => !previous.has(item.id)), ...undo.order.flatMap(id => current.has(id) ? [current.get(id)!] : [])] }
+    })
+    setSelectedId(undo.removed[0]?.id || '')
+    setUndo(null)
   }
 
   return (
@@ -81,38 +93,23 @@ export function HistoryPage() {
         </div>
         <div className="result-actions">
           <button type="button" disabled={!query && language === 'all' && !fromDate && !toDate} onClick={clearFilters}>清空筛选</button>
-          <button type="button" className="danger" disabled={!history.length} onClick={clearHistory}>清空全部记录</button>
+          <button type="button" className="danger" disabled={!history.length} onClick={() => setConfirmClear(true)}>清空全部记录</button>
         </div>
       </header>
 
-      <section className="history-stats">
-        <article className="stat-card">
-          <span>筛选结果</span>
-          <strong>{filteredHistory.length}</strong>
-          <small>共 {history.length} 条记录</small>
-        </article>
-        <article className="stat-card">
-          <span>累计识别时长</span>
-          <strong>{Math.round(totalDuration / 60)}<small>分</small></strong>
-          <small>当前筛选范围</small>
-        </article>
-        <article className="stat-card">
-          <span>大模型增强</span>
-          <strong>{enhancedCount}</strong>
-          <small>润色/翻译</small>
-        </article>
-        <article className="stat-card">
-          <span>默认引擎</span>
-          <strong>{filteredHistory[0]?.engine_used || 'ASR'}</strong>
-          <small>当前结果</small>
-        </article>
-      </section>
+      <div className="history-overview"><span>显示 <strong>{filteredHistory.length}</strong> / {history.length} 条</span><span>累计 {Math.round(totalDuration / 60)} 分钟</span><span>润色/翻译 {enhancedCount} 条</span></div>
+      {confirmClear && <section className="history-confirm" role="alertdialog" aria-labelledby="history-clear-title" aria-describedby="history-clear-description">
+        <div><strong id="history-clear-title">清空全部 {history.length} 条记录？</strong><p id="history-clear-description">这会清空本机历史列表，保留已经导出的文件。</p></div>
+        <button type="button" onClick={() => setConfirmClear(false)}>取消</button>
+        <button type="button" className="danger" onClick={() => { setUndo({ removed: history, order: history.map(item => item.id) }); clearHistory(); setConfirmClear(false) }}>确认清空</button>
+      </section>}
+      {undo && <div className="history-undo" role="status"><span>已删除 {undo.removed.length} 条记录</span><button type="button" onClick={undoDelete}>撤销删除</button></div>}
 
       <div className="history-workspace">
         <section className="panel history-list">
           <div className="filter-row">
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题、内容或关键词..." />
-            <select value={language} onChange={(event) => setLanguage(event.target.value)}>
+            <input aria-label="搜索历史记录" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索标题、内容或引擎" />
+            <select aria-label="筛选语言" value={language} onChange={(event) => setLanguage(event.target.value)}>
               <option value="all">全部语言</option>
               <option value="zh">中文</option>
               <option value="en">英文</option>
@@ -120,10 +117,9 @@ export function HistoryPage() {
             <label className="date-filter">从 <input type="date" value={fromDate} max={toDate || undefined} onChange={(event) => setFromDate(event.target.value)} /></label>
             <label className="date-filter">到 <input type="date" value={toDate} min={fromDate || undefined} onChange={(event) => setToDate(event.target.value)} /></label>
           </div>
-          {filteredHistory.length === 0 && <p className="empty">当前条件下暂无历史记录。</p>}
+          {filteredHistory.length === 0 && <div className="empty"><p>{history.length ? '当前条件下暂无历史记录。' : '还没有记录，先完成一次录音或文件转写。'}</p>{history.length ? <button onClick={clearFilters}>重置筛选</button> : <button onClick={() => setPage('transcribe')}>开始语音识别</button>}</div>}
           {filteredHistory.map((item) => (
             <button key={item.id} type="button" className={selected?.id === item.id ? 'history-item active' : 'history-item'} onClick={() => select(item)}>
-              <span className="play-dot">▶</span>
               <time>{formatDateTime(item.created_at)}</time>
               <strong>{item.filename}</strong>
               <small>{item.full_text.slice(0, 72)}</small>
@@ -140,10 +136,7 @@ export function HistoryPage() {
                   <p>{formatDateTime(selected.created_at)} · 时长 {selected.duration_sec ? `${selected.duration_sec.toFixed(1)}s` : '未知'}</p>
                 </div>
                 <div className="result-actions">
-                  <button type="button" onClick={copySelected}>{copied ? '已复制' : '复制'}</button>
-                  <button type="button" onClick={() => saveResult(selected, `${selected.task_id}.txt`, 'txt')}>TXT</button>
-                  <button type="button" onClick={() => saveResult(selected, `${selected.task_id}.srt`, 'srt')}>SRT</button>
-                  <button type="button" className="danger" onClick={() => removeHistory(selected.id)}>删除</button>
+                  <button type="button" className="danger" onClick={removeSelected}>删除此记录</button>
                 </div>
               </div>
               <AudioPlayer item={selected} />

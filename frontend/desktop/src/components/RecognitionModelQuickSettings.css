@@ -1,0 +1,30 @@
+.recognition-model-shortcut { position: relative; flex: 0 1 auto; min-width: 0; z-index: 20; }
+.recognition-model-trigger { display: flex; align-items: center; gap: 12px; padding: 10px 13px; border: 1px solid #dbe4f2; border-radius: 11px; background: #ffffffd9; color: #253b60; text-align: left; max-width: 100%; }
+.recognition-model-trigger > span:nth-child(2) { display: grid; gap: 3px; min-width: 0; }
+.recognition-model-trigger small { color: #738299; font-size: 10px; font-weight: 400; }
+.recognition-model-trigger strong { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 210px; }
+.recognition-model-icon { display: grid; place-items: center; background: #eaf1fd; color: #3265b7; border-radius: 8px; width: 30px; height: 30px; font-size: 22px; }
+.recognition-model-state { font-size: 10px; font-weight: 400; border-radius: 5px; padding: 3px 6px; white-space: nowrap; background: #edf1f7; color: #748096; }
+.recognition-model-state.loaded { background: #edf8f2; color: #287352; }
+.recognition-model-popover { position: absolute; right: 0; top: calc(100% + 10px); width: min(480px,calc(100vw - 100px)); max-height: min(760px,calc(100vh - 165px)); overflow-y: auto; box-sizing: border-box; background: #fff; border: 1px solid #dce4ef; border-radius: 15px; padding: 18px; box-shadow: 0 12px 48px #233b6629; }
+.recognition-model-popover > header { display: flex; justify-content: space-between; align-items: start; gap: 12px; padding-bottom: 14px; }
+.recognition-model-popover h2 { font-size: 16px; margin: 0; }
+.recognition-model-popover header p { margin: 6px 0 0; color: #77859b; font-size: 11px; line-height: 1.6; }
+.recognition-model-popover button.recognition-model-close { width: 25px; height: 25px; padding: 0; font-size: 20px; border: 0; background: #f0f4f9; color: #728198; }
+.recognition-model-row { padding: 13px 12px; margin: 0 0 10px; border: 1px solid #e7ecf3; border-radius: 10px; background: #fcfdff; }
+.recognition-model-row.current { border-color: #cdddf8; background: #f7faff; }
+.recognition-model-row-heading { display: flex; justify-content: space-between; gap: 10px; align-items: center; margin-bottom: 9px; }
+.recognition-model-row-heading strong { font-size: 12px; font-weight: 600; }
+.recognition-model-row-heading > span { color: #738299; font-size: 10px; }
+.recognition-model-selection { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; }
+.recognition-model-selection select, .recognition-text-selection select, .recognition-text-selection input { width: 100%; min-width: 0; padding: 8px 9px; border: 1px solid #dbe4f1; border-radius: 7px; background: #fff; font-size: 12px; color: #354867; box-sizing: border-box; }
+.recognition-model-popover button { font-size: 11px; padding: 7px 10px; }
+.recognition-model-row > small { display: block; color: #7b8799; margin-top: 7px; line-height: 1.7; font-size: 10px; }
+.recognition-text-selection { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.recognition-text-selection label { display: grid; gap: 6px; color: #74829a; font-size: 10px; }
+.recognition-text-actions, .recognition-model-popover > footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 10px; }
+.recognition-model-popover > footer { padding-top: 10px; border-top: 1px solid #e8edf4; }
+.recognition-model-notice, .recognition-model-warning { padding: 10px; margin: 0 0 10px; background: #fff8ee; border: 1px solid #f2dfbe; border-radius: 8px; color: #896337; font-size: 11px; line-height: 1.8; overflow-wrap: anywhere; }
+.recognition-model-row .recognition-model-warning { margin: 10px 0 0; }
+.recognition-model-warning button, .recognition-model-notice button { margin-left: 8px; }
+@media (max-width: 680px) { .recognition-model-trigger { gap: 6px; padding: 8px; } .recognition-model-trigger strong { max-width: 130px; } .recognition-model-icon { display: none; } .recognition-model-popover { width: min(430px,calc(100vw - 40px)); } .recognition-text-selection { grid-template-columns: 1fr; } }

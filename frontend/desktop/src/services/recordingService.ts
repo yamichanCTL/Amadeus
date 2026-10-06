@@ -17,6 +17,7 @@ import { blobToBase64, captureSpeakerAudio, speechRecorder } from './audio'
 import { liveCaptionService } from './liveCaption'
 import { finishTelemetryTrace, recordTelemetryStage, startTelemetryTrace } from './telemetry'
 import { useASRStore } from '@/store/useASRStore'
+import { resolveTaskLLM } from './taskModels'
 
 const terminalStatuses = new Set(['success', 'failed', 'cancelled'])
 
@@ -27,6 +28,9 @@ export type RendererTextTarget = {
 }
 
 export function captureRendererTextTarget(ownerDocument: Document = document): RendererTextTarget | null {
+  // activeElement remains the last editor when another app has focus. Capturing
+  // it would silently write dictation into Amadeus instead of the user's app.
+  if (!ownerDocument.hasFocus()) return null
   const element = ownerDocument.activeElement
   if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement)) return null
   if (element.disabled || element.readOnly) return null
@@ -73,6 +77,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: s
 
 export function buildTranscribeOptions(): TranscribeOptions {
   const settings = useASRStore.getState().settings
+  const model = resolveTaskLLM(settings, 'asr_postprocess')
   const options: TranscribeOptions = {
     engine: settings.offlineEngine,
     timeout_sec: settings.timeoutSec,
@@ -83,15 +88,15 @@ export function buildTranscribeOptions(): TranscribeOptions {
     allow_server_data_collection: settings.allowServerDataCollection,
     user_id: settings.userId || undefined,
   }
-  if ((settings.llmAutoPolish || settings.llmAutoTranslate) && settings.llmModel.trim() && settings.llmBaseUrl.trim() && settings.llmApiToken.trim()) {
+  if ((settings.llmAutoPolish || settings.llmAutoTranslate) && model.model.trim() && model.baseUrl.trim() && model.apiToken.trim()) {
     options.llm = {
       enable_polish: settings.llmAutoPolish,
       enable_translate: settings.llmAutoTranslate,
       target_language: settings.llmTargetLanguage || 'English',
-      provider: settings.llmProvider,
-      model: settings.llmModel,
-      base_url: settings.llmBaseUrl,
-      api_token: settings.llmApiToken,
+      provider: model.provider,
+      model: model.model,
+      base_url: model.baseUrl,
+      api_token: model.apiToken,
       style: settings.llmStyle || undefined,
       prompt: settings.llmAutoPolish ? settings.llmPolishPrompt || undefined : undefined
     }
@@ -124,11 +129,17 @@ export class RecordingService {
    *  deliverResult checks this to avoid a stale transcription's
    *  overlay update clobbering a newer transcription's state. */
   private transcriptionId = 0
+  private batchGeneration = 0
+  private activeBatch: number | null = null
+  private stopping = false
+  private recordingGeneration = 0
+  private startingRecording = false
   private rendererTextTarget: RendererTextTarget | null = null
+  private textTargetCapture: Promise<boolean> | null = null
 
   get isBusy(): boolean {
     const s = useASRStore.getState()
-    return s.recordStatus !== 'idle'
+    return this.activeBatch !== null || this.stopping || this.startingRecording || this.requestController !== null || s.asrModelLoading || s.fileBatchRunning || s.recordStatus !== 'idle'
       || ['uploading', 'processing', 'polling'].includes(s.transcribeStatus)
   }
 
@@ -148,13 +159,17 @@ export class RecordingService {
    *  autoInject) injects/copies the result. Survives page navigation. */
   async toggle(autoInject = false): Promise<void> {
     const state = useASRStore.getState()
+    if (this.activeBatch !== null || this.stopping || this.startingRecording || state.recordStatus === 'processing') return
 
     // Stop path: a recording is in progress → stop, transcribe, inject.
     if (state.recordStatus === 'recording') {
+      const generation = this.recordingGeneration
       state.setRecordStatus('processing')
-      await window.electronAPI?.showStatusOverlay('thinking', 0, '正在识别并准备输入文本')
       try {
+        await window.electronAPI?.showStatusOverlay('thinking', 0, '正在识别并准备输入文本')
+        if (generation !== this.recordingGeneration) return
         const { blob } = await speechRecorder.stop()
+        if (generation !== this.recordingGeneration) return
         // Skip empty/too-small recordings: a silent mic produces a tiny
         // WebM/Opus header without real audio. Sending this to the ASR
         // backend would either return a hallucinated result or an empty
@@ -171,6 +186,7 @@ export class RecordingService {
         }
         await this.runTranscription(blob, `recording_${Date.now()}.webm`, autoInject)
       } catch (stopError) {
+        if (generation !== this.recordingGeneration) return
         // stop() can throw if the recorder was cancelled out from under us
         // (e.g. a previous forceStop). Without this guard the overlay would
         // be stuck on "thinking" forever — the original "卡在异常thinking" bug.
@@ -179,30 +195,41 @@ export class RecordingService {
         s.setTranscribeStatus('error')
         await window.electronAPI?.hideStatusOverlay()
       } finally {
-        const s = useASRStore.getState()
-        s.setRecordStatus('idle')
-        this.prepare()
+        if (generation === this.recordingGeneration) {
+          useASRStore.getState().setRecordStatus('idle')
+          this.prepare()
+        }
       }
       return
     }
 
     // Start path: refuse if a transcription or live caption is already running.
+    if (state.asrModelLoading) {
+      state.setError('识别模型正在加载，请稍候。')
+      return
+    }
     if (state.transcribeStatus === 'uploading' || state.transcribeStatus === 'processing'
-      || state.transcribeStatus === 'polling' || state.liveCaptionStatus !== 'idle') return
+      || state.transcribeStatus === 'polling' || this.requestController !== null || state.liveCaptionStatus !== 'idle') return
 
     const settings = state.settings
+    const generation = ++this.recordingGeneration
+    this.startingRecording = true
+    const isCurrent = () => generation === this.recordingGeneration
     const setError = useASRStore.getState().setError
     setError('')
     useASRStore.getState().setRecordStatus('recording')
     try {
       this.rendererTextTarget = captureRendererTextTarget()
-      void window.electronAPI?.captureTextTarget?.().catch(() => false)
-      await window.electronAPI?.showStatusOverlay('recording', 0)
+      this.textTargetCapture = window.electronAPI?.captureTextTarget?.().catch(() => false) || null
+      // Microphone startup must not wait for first-time floating-window loading.
+      void window.electronAPI?.showStatusOverlay('recording', 0).catch(() => undefined)
+      if (!isCurrent()) return
 
       const useSpeaker = settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__'
       let inputStream: MediaStream | undefined
       if (useSpeaker) {
         inputStream = await captureSpeakerAudio()
+        if (!isCurrent()) { inputStream.getTracks().forEach(track => track.stop()); return }
       }
       const preparedInput = useSpeaker ? undefined : speechRecorder.takePreparedStream(settings.audioInputDeviceId || undefined)
 
@@ -220,56 +247,102 @@ export class RecordingService {
         '麦克风启动超时，请检查输入设备是否被其他软件独占'
       )
     } catch (recordError) {
+      if (!isCurrent()) return
       speechRecorder.cancel()
       useASRStore.getState().setRecordStatus('idle')
       const settingsNow = useASRStore.getState().settings
       const sourceLabel = (settingsNow.inputSource === 'speaker' || settingsNow.audioInputDeviceId === '__speaker_loopback__') ? '扬声器' : '麦克风'
       setError(recordError instanceof Error ? recordError.message : `无法启动${sourceLabel}录音`)
       await window.electronAPI?.hideStatusOverlay()
+    } finally {
+      if (isCurrent()) this.startingRecording = false
     }
   }
 
   /** Force-stop everything: recording, in-flight transcription, live caption. */
   async forceStop(): Promise<void> {
+    if (this.stopping) return
+    this.stopping = true
+    this.recordingGeneration += 1
+    this.startingRecording = false
+    this.batchGeneration += 1
+    this.activeBatch = null
+    this.transcriptionId += 1
+    this.rendererTextTarget = null
+    this.textTargetCapture = null
+    const state = useASRStore.getState()
+    const activeTaskId = state.activeTaskId
+    state.setFileBatchRunning?.(false)
     speechRecorder.cancel()
     if (this.requestController) {
       this.requestController.abort(new DOMException('识别已强制停止', 'AbortError'))
       this.requestController = null
     }
-    await liveCaptionService.stop()
-    const state = useASRStore.getState()
-    if (state.activeTaskId) {
-      const api = new ASRApi(state.settings.serverUrl)
-      await api.cancelTask(state.activeTaskId).catch(() => undefined)
-    }
     state.setRecordStatus('idle')
     state.setTranscribeStatus('cancelled')
+    state.setActiveTaskId(null)
     this.taskEndedAt = new Date()
     state.setError('识别已强制停止，可立即重新开始')
-    await Promise.all([
-      window.electronAPI?.hideStatusOverlay(),
-      window.electronAPI?.hideCaptionOverlay(),
-    ])
-    this.prepare()
+    try {
+      await liveCaptionService.stop()
+      if (activeTaskId) {
+        const api = new ASRApi(state.settings.serverUrl)
+        await api.cancelTask(activeTaskId).catch(() => undefined)
+      }
+      await Promise.all([
+        window.electronAPI?.hideStatusOverlay(),
+        window.electronAPI?.hideCaptionOverlay(),
+      ])
+    } finally {
+      this.stopping = false
+      this.prepare()
+    }
+  }
+
+  /** The singleton owns the queue even when the file page is unmounted. */
+  async runFileBatch(files: ReadonlyArray<{ blob: Blob; name: string }>): Promise<void> {
+    if (!files.length || this.isBusy || useASRStore.getState().liveCaptionStatus !== 'idle') return
+    const queue = files.map((file) => ({ blob: file.blob, name: file.name }))
+    const generation = ++this.batchGeneration
+    this.activeBatch = generation
+    useASRStore.getState().setFileBatchRunning(true)
+    try {
+      for (const file of queue) {
+        if (this.activeBatch !== generation) break
+        await this.transcribe(file.blob, file.name, false)
+        if (this.activeBatch !== generation || ['error', 'cancelled'].includes(useASRStore.getState().transcribeStatus)) break
+      }
+    } finally {
+      // A stopped queue must not clear ownership of a subsequently started one.
+      if (this.activeBatch === generation) {
+        this.activeBatch = null
+        useASRStore.getState().setFileBatchRunning(false)
+      }
+    }
   }
 
   /** Run an offline transcription on a pre-captured blob. Used by toggle()
    *  (after recording) and by the file-upload confirm flow. */
   async runTranscription(blob: Blob, filename: string, autoInject: boolean): Promise<void> {
+    if (this.activeBatch !== null || this.stopping || useASRStore.getState().asrModelLoading) return
+    await this.transcribe(blob, filename, autoInject)
+  }
+
+  private async transcribe(blob: Blob, filename: string, autoInject: boolean): Promise<void> {
+    const settings = useASRStore.getState().settings
+    if (!settings.backendConfirmed || !settings.serverUrl.trim()) {
+      const state = useASRStore.getState()
+      state.setTranscribeStatus('error')
+      state.setRecordStatus('idle')
+      state.setError('未确认后端地址。请先在首页启动本机服务，或连接已有后端。')
+      return
+    }
     const controller = new AbortController()
     if (this.requestController) this.requestController.abort()
     this.requestController = controller
     // Bump the ID so any in-flight deliverResult from a previous
     // transcription becomes a no-op for overlay updates.
     const myId = ++this.transcriptionId
-    const settings = useASRStore.getState().settings
-    if (!settings.backendConfirmed || !settings.serverUrl.trim()) {
-      const state = useASRStore.getState()
-      state.setTranscribeStatus('error')
-      state.setRecordStatus('idle')
-      state.setError('未确认后端地址。请先在「设置」中输入后端 IP/地址并点击「确认」。')
-      return
-    }
     const api = new ASRApi(settings.serverUrl)
     const trace = startTelemetryTrace('asr', `文件 ASR · ${filename}`, settings.offlineEngine)
     recordTelemetryStage(trace, '用户确认开始')
@@ -281,12 +354,23 @@ export class RecordingService {
     this.taskEndedAt = null
     try {
       recordTelemetryStage(trace, '上传请求发送', { detail: `${blob.size} bytes` })
+      const requestStartedAt = performance.now()
       const response = await api.transcribe(blob, filename, buildTranscribeOptions(), { signal: controller.signal })
+      if (controller.signal.aborted || this.transcriptionId !== myId) return
       recordTelemetryStage(trace, isAsyncResponse(response) ? '服务端已入队' : '识别响应接收')
       const s1 = useASRStore.getState()
       if (isAsyncResponse(response)) s1.setActiveTaskId(response.task_id)
-      const result = isAsyncResponse(response) ? await this.pollTask(api, response.task_id, controller.signal) : response
+      let result = isAsyncResponse(response) ? await this.pollTask(api, response.task_id, controller.signal) : response
+      if (controller.signal.aborted || this.transcriptionId !== myId) return
       useASRStore.getState().setActiveTaskId(null)
+      // The task endpoint returns terminal failures with HTTP 200. Only a
+      // successful task may replace the visible result, enter history or copy text.
+      if (result.status === 'cancelled') throw new DOMException('识别已取消', 'AbortError')
+      if (result.status !== 'success') throw new Error(result.error_message?.trim() || '语音识别失败，请查看模型运行状态后重试')
+      result = {
+        ...result,
+        client_timing: { ...result.client_timing, request_to_result_sec: Math.max(0, performance.now() - requestStartedAt) / 1000 },
+      }
       // Publish to the Amadeus result panel before any cross-application text
       // injection or clipboard work. Windows UIAutomation may stall, but the
       // result inside this software must already be visible and copyable.
@@ -326,6 +410,10 @@ export class RecordingService {
       finishTelemetryTrace(trace, `${result.full_text.length} 字`)
     } catch (transcribeError) {
       const s = useASRStore.getState()
+      if (this.transcriptionId !== myId) {
+        finishTelemetryTrace(trace, '已被后续任务替代', 'error')
+        return
+      }
       if (controller.signal.aborted || (transcribeError instanceof DOMException && transcribeError.name === 'AbortError')) {
         s.setTranscribeStatus('cancelled')
         s.setError('识别已强制停止')
@@ -342,7 +430,7 @@ export class RecordingService {
       }
     } finally {
       if (this.requestController === controller) this.requestController = null
-      useASRStore.getState().setActiveTaskId(null)
+      if (this.transcriptionId === myId) useASRStore.getState().setActiveTaskId(null)
     }
   }
 
@@ -359,11 +447,15 @@ export class RecordingService {
       const interval = pollCount < 5 ? 200 : pollCount < 15 ? 500 : 1000
       pollCount++
       await new Promise<void>((resolve, reject) => {
-        const timer = window.setTimeout(resolve, interval)
-        signal.addEventListener('abort', () => {
+        const onAbort = () => {
           window.clearTimeout(timer)
           reject(new DOMException('识别已强制停止', 'AbortError'))
-        }, { once: true })
+        }
+        const timer = window.setTimeout(() => {
+          signal.removeEventListener('abort', onAbort)
+          resolve()
+        }, interval)
+        signal.addEventListener('abort', onAbort, { once: true })
       })
       const result = await api.task(taskId, signal)
       if (terminalStatuses.has(result.status)) return result
@@ -379,6 +471,13 @@ export class RecordingService {
     // If a newer transcription has started while we were waiting for
     // injectText, don't touch the overlay — the newer transcription owns it.
     const isStale = () => this.transcriptionId !== myId
+    if (isStale()) return
+
+    const retainFailedDelivery = async (reason: string) => {
+      if (isStale()) return
+      useASRStore.getState().setError(reason)
+      await window.electronAPI?.showStatusOverlay('result', 0, deliveryText)
+    }
 
     if (autoInject && settings.injectMode === 'inject') {
       if (!hasText) {
@@ -392,15 +491,25 @@ export class RecordingService {
         return
       }
       try {
+        const capture = this.textTargetCapture
+        this.textTargetCapture = null
+        if (capture && !await withTimeout(capture, 2_000, 'capture timeout')) {
+          await retainFailedDelivery('自动填充未完成：没有捕获到原输入窗口。结果已保留，可点击复制。')
+          return
+        }
+        if (isStale()) return
         const injected = await window.electronAPI?.injectText(deliveryText)
         if (isStale()) return // newer transcription already took over
-        if (injected === false) {
-          await window.electronAPI?.showStatusOverlay('result', 0, deliveryText)
+        if (injected !== true) {
+          await retainFailedDelivery('自动填充未完成：原窗口没有可编辑的输入框。结果已保留，可点击复制。')
         } else {
           await window.electronAPI?.hideStatusOverlay()
         }
-      } catch {
-        if (!isStale()) await window.electronAPI?.showStatusOverlay('result', 0, deliveryText)
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : ''
+        // Electron wraps remote errors; expose only our fixed explanations.
+        const known = detail.match(/自动填充(?:未完成|未确认)：[^\r\n]+?结果已保留，可点击复制。/)
+        await retainFailedDelivery(known?.[0] || '自动填充未完成：请检查输入框焦点和运行权限。结果已保留，可点击复制。')
       }
     } else if (autoInject && settings.injectMode === 'copy') {
       if (hasText) window.electronAPI?.textToClipboard(deliveryText)

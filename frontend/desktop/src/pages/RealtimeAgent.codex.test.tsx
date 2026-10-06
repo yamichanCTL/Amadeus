@@ -1,14 +1,14 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-const mocks = vi.hoisted(() => ({ streams: [] as any[], legacyChat: vi.fn() }))
+const mocks = vi.hoisted(() => ({ streams: [] as any[], legacyChat: vi.fn(), transcribe: vi.fn() }))
 vi.mock('@/components/AssistantFigure', () => ({ AssistantFigure: () => <img alt="Amadeus 助手" /> }))
 vi.mock('@/components/Aemeath3D', () => ({ Aemeath3D: () => <div aria-label="爱弥斯 3D 模型" /> }))
 vi.mock('@/services/api', async (original) => ({ ...await original<typeof import('@/services/api')>(),
-  ASRApi: class { listSkills = async () => ({ skills: [] }); agentChatStream = mocks.legacyChat },
+  ASRApi: class { listSkills = async () => ({ skills: [] }); agentChatStream = mocks.legacyChat; transcribe = mocks.transcribe },
 }))
 vi.mock('@/services/audio', () => ({
-  speechRecorder: { prepare: vi.fn(async () => undefined), cancel: vi.fn(), takePreparedStream: vi.fn() },
+  speechRecorder: { prepare: vi.fn(async () => undefined), cancel: vi.fn(), takePreparedStream: vi.fn(), start: vi.fn(async () => undefined), stop: vi.fn(async () => ({ blob: new Blob(['voice']), durationSec: 1, mimeType: 'audio/webm' })) },
   audioRelayMixer: { isActive: () => false }, captureSpeakerAudio: vi.fn(),
   StreamingASRClient: class {
     config: any
@@ -21,6 +21,8 @@ vi.mock('@/services/audio', () => ({
 }))
 import { RealtimeAgentPage } from './RealtimeAgent'
 import { DEFAULT_SETTINGS, useASRStore } from '@/store/useASRStore'
+import { useActivityStore } from '@/services/activity'
+import { speechRecorder } from '@/services/audio'
 const reply = { call_id: 'call-1', status: 'completed', text: '接口回复', model: 'test-codex', elapsed_sec: 1,
   usage: { input_tokens: 90, cached_input_tokens: 20, output_tokens: 10, total_tokens: 100 } }
 const usage = { ...reply.usage, calls: 1, missing_usage: 0, complete: true }
@@ -37,6 +39,8 @@ beforeEach(() => {
   window.history.replaceState(null, '', '/')
   catalogLoginFailed = false
   requests = []; mocks.streams.length = 0; mocks.legacyChat.mockClear(); holdTurn = false; finishTurn = undefined
+  mocks.transcribe.mockReset()
+  vi.mocked(speechRecorder.start).mockClear(); vi.mocked(speechRecorder.stop).mockClear()
   useASRStore.setState({ settings: { ...DEFAULT_SETTINGS, serverUrl: 'http://backend.test', backendConfirmed: true,
     agentBackend: 'codex', codexModel: '', codexEffort: 'low', agentAutoSpeak: false,
     agentPrompt: '用户自己的角色设定', agentMemory: '喜欢简短回复', llmApiToken: '', llmBaseUrl: '', llmModel: '' } })
@@ -64,6 +68,62 @@ const send = async (text: string) => {
   await waitFor(() => expect(requests.filter((r) => r.path.endsWith('/turns/stream')).length).toBeGreaterThan(0))
 }
 describe('Codex in the existing realtime UI', () => {
+  it('cancels legacy recording idempotently without submitting the audio', async () => {
+    useASRStore.setState({ settings: { ...useASRStore.getState().settings, agentBackend: 'legacy' } })
+    render(<RealtimeAgentPage />)
+    fireEvent.click(screen.getByRole('button', { name: '语音' }))
+    await screen.findByRole('button', { name: '结束语音' })
+    const stop = useActivityStore.getState().tasks['realtime-session'].onStop!
+    await act(async () => { await Promise.all([stop(), stop()]) })
+    expect(speechRecorder.start).toHaveBeenCalledOnce()
+    expect(speechRecorder.stop).not.toHaveBeenCalled()
+    expect(mocks.transcribe).not.toHaveBeenCalled()
+    expect(useActivityStore.getState().tasks['realtime-session']).toBeUndefined()
+    expect(screen.getByRole('status', { name: '麦克风状态' }).textContent).toBe('未开启')
+  })
+
+  it('ignores a late transcription result after global cancellation', async () => {
+    let finishTranscribe!: (value: unknown) => void
+    mocks.transcribe.mockImplementation(() => new Promise((resolve) => { finishTranscribe = resolve }))
+    useASRStore.setState({ settings: { ...useASRStore.getState().settings, agentBackend: 'legacy' } })
+    render(<RealtimeAgentPage />)
+    fireEvent.click(screen.getByRole('button', { name: '语音' }))
+    fireEvent.click(await screen.findByRole('button', { name: '结束语音' }))
+    await waitFor(() => expect(mocks.transcribe).toHaveBeenCalledOnce())
+    const stop = useActivityStore.getState().tasks['realtime-session'].onStop!
+    await act(async () => { await stop() })
+    const prepareCount = vi.mocked(speechRecorder.prepare).mock.calls.length
+    await act(async () => { finishTranscribe({ full_text: '取消后的迟到转写', status: 'success' }) })
+    expect(mocks.transcribe.mock.calls[0][3].signal.aborted).toBe(true)
+    expect((screen.getByLabelText('对话消息') as HTMLInputElement).value).toBe('')
+    expect(screen.queryByText('取消后的迟到转写')).toBeNull()
+    expect(speechRecorder.prepare).toHaveBeenCalledTimes(prepareCount)
+    expect(useActivityStore.getState().tasks['realtime-session']).toBeUndefined()
+  })
+
+  it('globally cancels Codex voice without draining and ignores late stream callbacks', async () => {
+    await ready()
+    fireEvent.click(screen.getByRole('button', { name: '语音' }))
+    await waitFor(() => expect(mocks.streams).toHaveLength(1))
+    const stream = mocks.streams[0]
+    const stop = useActivityStore.getState().tasks['realtime-session'].onStop!
+    await act(async () => { await Promise.all([stop(), stop()]) })
+    act(() => {
+      stream.event({ type: 'final', text: '迟到录音' })
+      stream.config.onAgentEvent({ type: 'agent.started', call_id: 'cancelled-turn' })
+      stream.config.onAgentEvent({ type: 'agent.completed', result: reply })
+    })
+    expect(stream.stop).toHaveBeenCalledOnce()
+    expect(stream.cancelAgent).toHaveBeenCalledOnce()
+    expect(stream.finish).not.toHaveBeenCalled()
+    expect(mocks.streams).toHaveLength(1)
+    expect(screen.queryByText('迟到录音')).toBeNull()
+    expect(screen.queryByText(reply.text)).toBeNull()
+    expect(useActivityStore.getState().tasks['realtime-session']).toBeUndefined()
+    expect(requests.filter((request) => request.path.endsWith('/cancel'))).toHaveLength(1)
+    expect(requests.some((request) => request.path.endsWith('/turns/stream'))).toBe(false)
+  })
+
   it('shows login failure and recovers after checking the connection again', async () => {
     catalogLoginFailed = true
     render(<RealtimeAgentPage />)
@@ -176,7 +236,7 @@ describe('Codex in the existing realtime UI', () => {
   it('does not contact Codex before the existing backend confirmation step', () => {
     useASRStore.setState({ settings: { ...useASRStore.getState().settings, backendConfirmed: false, serverUrl: '' } })
     render(<RealtimeAgentPage />)
-    expect(screen.getByText('请在设置中确认后端地址')).toBeTruthy(); expect(requests).toHaveLength(0)
+    expect(screen.getByText('请先在首页启动本机服务，或连接已有后端')).toBeTruthy(); expect(requests).toHaveLength(0)
   })
 })
 

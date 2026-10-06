@@ -19,17 +19,17 @@ vi.mock('@/services/api', async (importOriginal) => {
 })
 
 import { SummaryPage } from './Summary'
-import { createSummaryWorkspace, useASRStore } from '@/store/useASRStore'
+import { createSummaryWorkspace, DEFAULT_SETTINGS, useASRStore } from '@/store/useASRStore'
 
 describe('summary source and automatic log persistence', () => {
   beforeEach(() => {
     streamArchiveSummary.mockClear()
-    const settings = useASRStore.getState().settings
     useASRStore.setState({
-      settings: { ...settings, backendConfirmed: true, serverUrl: 'http://backend.test', llmModel: 'demo', llmBaseUrl: 'https://llm.test', llmApiToken: 'token' },
+      settings: structuredClone(DEFAULT_SETTINGS),
       summaryWorkspace: { ...createSummaryWorkspace(new Date(2026, 6, 4, 12, 0)), date: '2026-07-04', dateFollowsToday: false },
       history: [],
     })
+    useASRStore.getState().updateSettings({ backendConfirmed: true, serverUrl: 'http://backend.test', llmModel: 'demo', llmBaseUrl: 'https://llm.test', llmApiToken: 'token' })
   })
 
   it('uses local records explicitly and auto-saves every generated summary', async () => {

@@ -94,6 +94,7 @@ async def test_corrupt_content_never_published_and_existing_user_files_preserved
         job = await finish(manager)
         assert job["status"] == "error"
         assert "校验" in job["error"]
+        assert job["downloaded_bytes"] == 0
         assert (existing / "model.bin").read_bytes() == b"original"
         assert not (existing / ".amadeus-model.json").exists()
     finally:
@@ -122,6 +123,9 @@ async def test_cancel_restart_resumes_range_with_etag_and_no_partial_ready(tmp_p
     await manager.start("fixture")
     await asyncio.wait_for(entered.wait(), 3)
     assert manager.jobs["fixture"]["downloaded_bytes"] == 256 * 1024
+    assert manager.jobs["fixture"]["current_file_downloaded_bytes"] == 256 * 1024
+    assert manager.jobs["fixture"]["current_file_total_bytes"] == len(content)
+    assert manager.jobs["fixture"]["files"][0]["downloaded_bytes"] == 256 * 1024
     assert manager.catalog()["models"][0]["weights"]["status"] == "missing"
     await manager.close()
     assert manager.jobs["fixture"]["status"] == "cancelled"
@@ -129,10 +133,109 @@ async def test_cancel_restart_resumes_range_with_etag_and_no_partial_ready(tmp_p
     try:
         assert restarted.jobs["fixture"]["status"] == "cancelled"
         assert (await finish(restarted))["status"] == "completed"
+        assert restarted.jobs["fixture"]["transferred_bytes"] == len(content) - 256 * 1024
+        assert restarted.jobs["fixture"]["completed_files"] == 1
         assert requested_offsets == [0, 256 * 1024]
         assert (tmp_path / "models/fixture/model.bin").read_bytes() == content
     finally:
         await restarted.close()
+
+
+@pytest.mark.asyncio
+async def test_verified_installed_inventory_reports_real_sizes_without_old_job_metadata(tmp_path):
+    content = b"existing verified weights"
+    requests = []
+    manager = manager_for(tmp_path, catalog_for(content), lambda request: (requests.append(request), httpx.Response(200, content=content))[1])
+    try:
+        await finish(manager)
+        manager.jobs.clear()
+        job = await manager.start("fixture")
+        assert job["status"] == "completed"
+        assert job["downloaded_bytes"] == job["total_bytes"] == len(content)
+        assert job["total_files"] == job["completed_files"] == 1
+        assert job["files"] == [{"path": "model.bin", "size": len(content), "downloaded_bytes": len(content), "status": "completed"}]
+        assert len(requests) == 1
+    finally:
+        await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_resume_progress_counts_later_cached_files_without_subtracting_them_from_network_speed(tmp_path):
+    first, cached = b"A" * (512 * 1024), b"Z" * (1024 * 1024)
+    catalog = catalog_for(first, required=["a.bin", "z.bin"])
+    catalog["models"][0]["sources"][0]["snapshot"]["files"] = [
+        {"path": path, "size": len(content), "sha256": hashlib.sha256(content).hexdigest()}
+        for path, content in [("a.bin", first), ("z.bin", cached)]
+    ]
+    loaded = True
+    resuming = False
+    entered, release = asyncio.Event(), asyncio.Event()
+    class BlockedFirst(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield first[:256 * 1024]
+            entered.set()
+            await release.wait()
+            yield first[256 * 1024:]
+    def handler(request):
+        if request.url.path.endswith("a.bin"):
+            return httpx.Response(200, stream=BlockedFirst()) if resuming else httpx.Response(200, content=first)
+        return httpx.Response(200, content=cached)
+    manager = manager_for(tmp_path, catalog, handler, is_loaded=lambda _: loaded)
+    try:
+        assert (await finish(manager))["status"] == "error"  # retain staged data while loaded
+        staged_first = next(manager._stage(catalog["models"][0]).glob("*/payload/a.bin"))
+        staged_first.write_bytes(b"damaged fixture")
+        loaded, resuming = False, True
+        await manager.start("fixture")
+        await asyncio.wait_for(entered.wait(), 3)
+        job = manager.jobs["fixture"]
+        assert job["downloaded_bytes"] == len(cached) + 256 * 1024
+        assert job["transferred_bytes"] == 256 * 1024
+        assert job["speed_bytes_per_second"] > 0
+        assert job["completed_files"] == 0
+        assert job["files"][1]["downloaded_bytes"] == len(cached)
+        release.set()
+        await manager.tasks["fixture"]
+        assert job["status"] == "completed"
+        assert job["downloaded_bytes"] == job["total_bytes"] == len(first) + len(cached)
+        assert job["transferred_bytes"] == len(first)
+        assert job["completed_files"] == 2
+        assert all(item["status"] == "completed" for item in job["files"])
+        assert all("url" not in item and "digest" not in item for item in job["files"])
+    finally:
+        release.set()
+        await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_source_switch_clears_previous_inventory_until_new_source_is_known(tmp_path):
+    content = b"official weight"
+    catalog = catalog_for(content)
+    catalog["models"][0]["sources"].append({"id": "huggingface", "repo": "official/model", "revision": "main"})
+    entered, release = asyncio.Event(), asyncio.Event()
+    async def handler(request):
+        if request.url.host == "hf-mirror.com":
+            return httpx.Response(200, content=b"corrupt-content")
+        if "/api/models/" in request.url.path:
+            entered.set()
+            await release.wait()
+            return httpx.Response(200, json={"sha": REVISION, "siblings": [{"rfilename": "model.bin", "lfs": {"size": len(content), "sha256": hashlib.sha256(content).hexdigest()}}]})
+        return httpx.Response(200, content=content)
+    manager = manager_for(tmp_path, catalog, handler)
+    try:
+        await manager.start("fixture")
+        await asyncio.wait_for(entered.wait(), 4)
+        job = manager.jobs["fixture"]
+        assert job["source"] == "huggingface"
+        assert job["status"] == "queued"
+        assert job["total_bytes"] == job["downloaded_bytes"] == 0
+        assert job["files"] == []
+        release.set()
+        await manager.tasks["fixture"]
+        assert job["status"] == "completed"
+    finally:
+        release.set()
+        await manager.close()
 
 
 @pytest.mark.asyncio
@@ -148,7 +251,7 @@ async def test_server_ignores_range_replaces_instead_of_appending(tmp_path):
     job = {"id": "fixture", "downloaded_bytes": 0}
     try:
         async with httpx.AsyncClient(transport=manager.transport) as client:
-            await manager._file(client, item, payload / "model.bin", partials, job, 0, 0, 0)
+            await manager._file(client, item, payload / "model.bin", partials, job, 0, 0)
         assert (payload / "model.bin").read_bytes() == content
     finally:
         await manager.close()

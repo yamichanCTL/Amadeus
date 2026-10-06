@@ -1,0 +1,27 @@
+.storage-locations { border:1px solid #e0e7f0; border-radius:10px; padding:13px 15px; margin:12px 0; background:#fbfcfe; color:#4d607b; }
+.storage-location-heading { display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; }
+.storage-location-heading > span { font-size:10px; padding:3px 6px; color:#577797; background:#edf3f9; border-radius:4px; }
+.storage-root { display:flex; align-items:center; gap:12px; margin-top:8px; }
+.storage-root > code { flex:1; min-width:0; font-size:12px; color:#304864; overflow-wrap:anywhere; }
+.storage-root > button { flex-shrink:0; font-size:11px; padding:5px 10px; }
+.storage-locations .storage-description,.storage-locations .storage-caution { font-size:11px; margin:8px 0; }
+.storage-locations .storage-caution { color:#8b693c; }
+.storage-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.storage-actions > button { font-size:11px; padding:5px 10px; }
+.storage-actions > span { color:#7b8799; font-size:10px; }
+.storage-details { margin-top:12px; border-top:1px solid #e5ebf2; padding-top:9px; }
+.storage-details summary { font-size:11px; color:#667991; }
+.storage-details dl { display:grid; gap:8px; margin:14px 0; font-size:11px; }
+.storage-details dl > div { display:grid; grid-template-columns:80px minmax(0,1fr); gap:10px; }
+.storage-details dt { color:#7c8a9e; }.storage-details dd { margin:0; }
+.storage-details code { overflow-wrap:anywhere; }
+.storage-details > p,.storage-remove p,.storage-retained p { font-size:11px; color:#7b8799; margin:6px 0; line-height:1.6; }
+.storage-remove { display:flex; align-items:center; justify-content:space-between; gap:14px; border-top:1px solid #e4eaf2; padding-top:13px; }
+.storage-remove strong { font-size:11px; }.storage-remove > button { flex-shrink:0; font-size:11px; }
+.storage-retained { border-top:1px solid #e4eaf2; margin-top:14px; padding-top:10px; }
+.storage-retained h3 { font-size:12px; margin:0; }
+.storage-retained article { display:flex; flex-wrap:wrap; gap:7px 12px; align-items:center; padding:10px 0; border-bottom:1px solid #e5ebf2; font-size:11px; }
+.storage-retained article > code { flex:1; min-width:120px; }.storage-retained article > p { flex-basis:100%; margin:0; }
+.storage-retained article > div { display:flex; gap:6px; }.storage-retained button { font-size:11px; padding:4px 8px; }
+.storage-cleanup-result { color:#347862; font-size:11px; }
+@media(max-width:760px) { .storage-remove { flex-direction:column; align-items:flex-start; }.storage-details dl > div { grid-template-columns:65px minmax(0,1fr); } }

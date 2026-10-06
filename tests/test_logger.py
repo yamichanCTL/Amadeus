@@ -28,6 +28,16 @@ class TestGetLogger:
         logger = get_logger()
         assert hasattr(logger, "info")
 
+    def test_runner_logger_survives_backend_structlog_configuration(self) -> None:
+        import structlog
+
+        before = structlog.get_config().copy()
+        try:
+            structlog.configure(logger_factory=structlog.PrintLoggerFactory())
+            log_agent_run("mock", "宿主日志配置变化", True, True, 0.1)
+        finally:
+            structlog.configure(**before)
+
 
 class TestLogAgentRun:
     """log_agent_run structured logging tests."""

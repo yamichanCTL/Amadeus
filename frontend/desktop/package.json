@@ -1,6 +1,6 @@
 {
   "name": "amadeus-desktop",
-  "version": "0.1.0",
+  "version": "0.1.12",
   "private": true,
   "description": "Amadeus Electron desktop voice client",
   "main": "dist-electron/main.js",

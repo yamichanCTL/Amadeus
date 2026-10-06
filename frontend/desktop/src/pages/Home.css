@@ -1,0 +1,16 @@
+.home-intro, .home-records { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.home-intro h1, .home-records h2 { margin: 0 0 8px; }
+.home-intro p, .home-records p, .home-connection-settings > p { color: var(--muted); line-height: 1.8; margin: 0; }
+.home-task-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.home-task-card { display: flex; flex-direction: column; text-align: left; align-items: flex-start; gap: 8px; white-space: normal; padding: 24px; }
+.home-task-card h2 { margin: 4px 0; }
+.home-task-card p { margin: 0; line-height: 1.8; color: var(--muted); font-weight: normal; }
+.home-task-card small { color: var(--muted); overflow-wrap: anywhere; font-weight: normal; }
+.home-task-card > strong { margin-top: 10px; color: var(--primary); }
+.home-task-icon { border-radius: 12px; background: var(--panel); padding: 8px 14px; font-size: 24px; color: var(--primary); }
+.home-environment { display: flex; flex-direction: column; gap: 12px; }
+.home-environment > .local-runtime-panel { margin-bottom: 0; }
+.home-connection-settings summary { cursor: pointer; font-size: 15px; font-weight: 600; }
+.home-connection-settings > p { margin: 16px 0; }
+@media (max-width: 860px) { .home-task-grid { grid-template-columns: 1fr; } .home-intro, .home-records { align-items: flex-start; flex-direction: column; } }
+.home-workspace { --muted: #687792; --primary: #1d4e89; --panel: rgba(245,248,255,.7); display: flex; flex-direction: column; gap: 18px; }

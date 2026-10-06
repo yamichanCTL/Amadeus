@@ -3,12 +3,61 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Protocol
 
 from app.config import get_settings
 from app.core.asr.base import ASRResult, BaseASREngine, EngineOptions
+
+
+_INFERENCE_TIMING_FIELDS = (
+    "queue_wait_sec",
+    "model_ready_sec",
+    "model_inference_sec",
+    "audio_prepare_sec",
+    "audio_decode_sec",
+    "sdk_inference_sec",
+    "model_generate_sec",
+    "result_format_sec",
+)
+
+
+def inference_timing_from_result(result: ASRResult) -> dict[str, float]:
+    """Expose optional measured ASR stages, never treating them as extra totals."""
+    raw_timing = (result.raw or {}).get("inference_timing")
+    if not isinstance(raw_timing, dict):
+        return {}
+    timing: dict[str, float] = {}
+    for key in _INFERENCE_TIMING_FIELDS:
+        value = raw_timing.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            if math.isfinite(value) and value >= 0:
+                timing[key] = round(float(value), 6)
+    return timing
+
+
+def _with_scheduler_timing(
+    result: ASRResult,
+    *,
+    queue_wait_sec: float,
+    model_ready_sec: float,
+    model_inference_sec: float,
+) -> ASRResult:
+    # Copy both levels: engines may reuse raw dictionaries between batch results.
+    # Each request owns its queue wait; readiness/inference are the wall-clock
+    # stages all requests in this batch wait for, not an apportioned GPU cost.
+    raw = dict(result.raw or {})
+    engine_timing = raw.get("inference_timing")
+    timing = dict(engine_timing) if isinstance(engine_timing, dict) else {}
+    timing.update({
+        "queue_wait_sec": max(0.0, queue_wait_sec),
+        "model_ready_sec": max(0.0, model_ready_sec),
+        "model_inference_sec": max(0.0, model_inference_sec),
+    })
+    raw["inference_timing"] = timing
+    return replace(result, raw=raw)
 
 
 class EngineProvider(Protocol):
@@ -125,8 +174,12 @@ class _EngineExecutor:
         self.metrics.max_queue_wait_ms = max(self.metrics.max_queue_wait_ms, self.metrics.last_queue_wait_ms)
 
         try:
+            ready_started = time.perf_counter()
             engine = await self.provider.get_engine(self.engine_name)
+            inference_started = time.perf_counter()
+            model_ready_sec = inference_started - ready_started
             results = await engine.transcribe_batch([(item.audio_bytes, item.options) for item in batch])
+            model_inference_sec = time.perf_counter() - inference_started
             if len(results) != len(batch):
                 raise RuntimeError(
                     f"Engine '{self.engine_name}' returned {len(results)} batch results for {len(batch)} requests."
@@ -147,7 +200,12 @@ class _EngineExecutor:
             self.metrics.completed += 1
             self.metrics.total_queue_wait_ms += wait_ms
             if not request.future.done():
-                request.future.set_result(result)
+                request.future.set_result(_with_scheduler_timing(
+                    result,
+                    queue_wait_sec=wait_ms / 1000.0,
+                    model_ready_sec=model_ready_sec,
+                    model_inference_sec=model_inference_sec,
+                ))
 
     async def shutdown(self) -> None:
         self._closed = True
@@ -194,8 +252,16 @@ class InferenceScheduler:
         options: EngineOptions | None = None,
     ) -> ASRResult:
         if not self.enabled:
+            ready_started = time.perf_counter()
             engine = await self.provider.get_engine(engine_name)
-            return await engine.transcribe(audio_bytes, options)
+            inference_started = time.perf_counter()
+            result = await engine.transcribe(audio_bytes, options)
+            return _with_scheduler_timing(
+                result,
+                queue_wait_sec=0.0,
+                model_ready_sec=inference_started - ready_started,
+                model_inference_sec=time.perf_counter() - inference_started,
+            )
 
         loop = asyncio.get_running_loop()
         future: asyncio.Future[ASRResult] = loop.create_future()

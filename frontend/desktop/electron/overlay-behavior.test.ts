@@ -18,7 +18,7 @@ describe('desktop overlay implementation', () => {
   })
 
   it('hides the offline result overlay for both copy and close actions', () => {
-    expect(source).toMatch(/statusOverlay:copyResultDone[\s\S]{0,160}statusOverlay\?\.hide\(\)/)
-    expect(source).toMatch(/statusOverlay:closeResult[\s\S]{0,120}statusOverlay\?\.hide\(\)/)
+    expect(source).toMatch(/statusOverlay:copyResultDone[\s\S]{0,160}statusOverlayController\.hide\(\)/)
+    expect(source).toMatch(/statusOverlay:closeResult[\s\S]{0,120}statusOverlayController\.hide\(\)/)
   })
 })

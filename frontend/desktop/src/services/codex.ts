@@ -40,7 +40,7 @@ export type CodexVoiceEvent = {
 }
 
 export async function codexRequest<T>(base: string, path: string, init?: RequestInit): Promise<T> {
-  if (!base.trim()) throw new Error('请先在设置中确认后端地址。')
+  if (!base.trim()) throw new Error('请先在首页启动本机服务，或连接已有后端。')
   const response = await fetch(`${base.replace(/\/$/, '')}/v1/agents/codex${path}`, init)
   const body = await response.json()
   if (!response.ok) {
@@ -95,7 +95,7 @@ export async function streamCodexTurn(
 export async function streamCodexExplanation(
   base: string, body: object, signal: AbortSignal, onDelta: (text: string) => void,
 ): Promise<{ target: string; result: CodexReply }> {
-  if (!base.trim()) throw new Error('请先在设置中确认后端地址。')
+  if (!base.trim()) throw new Error('请先在首页启动本机服务，或连接已有后端。')
   const response = await fetch(`${base.replace(/\/$/, '')}/v1/agents/codex/explanations/stream`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
     body: JSON.stringify(body), signal,

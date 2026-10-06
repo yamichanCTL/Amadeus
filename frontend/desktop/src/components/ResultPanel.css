@@ -1,0 +1,8 @@
+.result-panel .result-head { align-items: center; flex-wrap: wrap; }
+.result-panel .result-head h2 { margin-bottom: 4px; font-size: 17px; }
+.result-current-label { color: #687792; font-size: 12px; margin: 10px 0; }
+.result-export-menu { position: relative; font-size: 13px; }
+.result-export-menu > summary { cursor: pointer; padding: 8px 12px; border: 1px solid #d9e3f2; border-radius: 8px; background: #fff; }
+.result-export-menu > div { position: absolute; right: 0; top: calc(100% + 6px); min-width: 150px; z-index: 5; display: grid; gap: 4px; padding: 6px; background: #fff; border: 1px solid #d9e3f2; border-radius: 8px; box-shadow: 0 10px 25px #1c35551f; }
+.result-export-menu button { text-align: left; box-shadow: none; }
+.result-export-menu > summary:focus-visible { outline: 2px solid #3069b4; outline-offset: 3px; }

@@ -1,13 +1,16 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => {
   let relayActive = true
   let referenceDelayMs = 0
   let resolveTts: ((value: unknown) => void) | null = null
+  let streamEvent: ((event: Record<string, unknown>) => void) | null = null
   return {
-    recorderStart: vi.fn(async () => undefined),
+    recorderStart: vi.fn(async (): Promise<void> => undefined),
+    recorderPrepare: vi.fn(async () => undefined),
+    recorderCancel: vi.fn(),
     recorderStop: vi.fn(async () => ({
       blob: new Blob([new Uint8Array(4096)], { type: 'audio/wav' }),
       durationSec: 1,
@@ -27,10 +30,18 @@ const mocks = vi.hoisted(() => {
     higgsAudioToSpeech: vi.fn(() => new Promise(() => undefined)),
     higgsSpeak: vi.fn(() => new Promise((resolve) => { resolveTts = resolve })),
     voiceStreamStart: vi.fn(async (_config: Record<string, unknown>) => undefined),
+    voiceStreamStop: vi.fn(),
+    stopInjectedAudio: vi.fn(),
+    relayStop: vi.fn(),
+    relayStart: vi.fn(async () => ({ sinkApplied: true })),
+    devicePlay: vi.fn(async (_blob: Blob, _device?: string) => ({ stop: vi.fn(), sinkApplied: true, sampleRate: 48000 })),
+    set streamEvent(value: ((event: Record<string, unknown>) => void) | null) { streamEvent = value },
+    emitStream(event: Record<string, unknown>) { streamEvent?.(event) },
     reset() {
       relayActive = true
       referenceDelayMs = 0
       resolveTts = null
+      streamEvent = null
     },
     get relayActive() { return relayActive },
     set relayActive(value: boolean) { relayActive = value },
@@ -52,17 +63,18 @@ vi.mock('@/services/api', () => ({
 
 vi.mock('@/services/audio', () => ({
   AudioRecorder: class {
-    prepare = vi.fn(async () => undefined)
+    prepare = mocks.recorderPrepare
     takePreparedStream = vi.fn(() => undefined)
     start = mocks.recorderStart
     stop = mocks.recorderStop
-    cancel = vi.fn()
+    cancel = mocks.recorderCancel
   },
   AudioRelayMixer: class {
     isActive = () => mocks.relayActive
     createInputStream = mocks.relayCreateInputStream
-    start = vi.fn(async () => ({ sinkApplied: true }))
-    stop = vi.fn()
+    start = mocks.relayStart
+    stop = mocks.relayStop
+    stopInjectedAudio = mocks.stopInjectedAudio
     setOutputDevice = vi.fn(async () => undefined)
     playBlob = vi.fn(async () => undefined)
     pushPcm16 = vi.fn(async () => undefined)
@@ -75,13 +87,14 @@ vi.mock('@/services/audio', () => ({
     getPlaybackRemainingMs = vi.fn(async () => 0)
   },
   VoiceTTSStreamingClient: class {
+    constructor(_url: string, onEvent: (event: Record<string, unknown>) => void) { mocks.streamEvent = onEvent }
     start = mocks.voiceStreamStart
-    stop = vi.fn()
+    stop = mocks.voiceStreamStop
     setOutputPlaybackActive = vi.fn()
   },
   listAudioOutputDevices: vi.fn(async () => []),
   playAudioBlob: vi.fn(async () => ({ audio: new Audio(), url: 'blob:output', sinkApplied: true })),
-  playAudioBlobToDevice: vi.fn(async () => ({ stop: vi.fn(), sinkApplied: true, sampleRate: 48000 })),
+  playAudioBlobToDevice: mocks.devicePlay,
   testAudioOutputDevice: vi.fn(async () => ({ sinkApplied: true, sampleRate: 48000 })),
 }))
 
@@ -135,13 +148,17 @@ vi.mock('@/services/telemetry', () => ({
   recordTelemetryStage: vi.fn(),
   finishTelemetryTrace: vi.fn(),
 }))
+vi.mock('@/pages/Models', () => ({ ModelsPage: () => <div>模型配置占位</div> }))
 
 import { VoiceChangerPage } from './VoiceChanger'
+import { useActivityStore } from '@/services/activity'
 
 describe('VoiceChanger end-to-end ASR delivery and microphone isolation', () => {
   beforeEach(() => {
     mocks.reset()
     vi.clearAllMocks()
+    useActivityStore.setState({ tasks: {} })
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined)
     vi.stubGlobal('URL', {
       createObjectURL: vi.fn(() => 'blob:test'),
       revokeObjectURL: vi.fn(),
@@ -156,11 +173,13 @@ describe('VoiceChanger end-to-end ASR delivery and microphone isolation', () => 
     })
   })
 
-  afterEach(() => cleanup())
+  afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
   it('shows the ASR result within 500ms while TTS is still pending', async () => {
     mocks.referenceDelayMs = 220
     render(<VoiceChangerPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: /语音转换/ }))
 
     fireEvent.click(screen.getByRole('button', { name: '录音' }))
     await waitFor(() => expect(mocks.recorderStart).toHaveBeenCalledTimes(1))
@@ -176,6 +195,8 @@ describe('VoiceChanger end-to-end ASR delivery and microphone isolation', () => 
   it('records from the selected physical microphone even when relay output is active', async () => {
     render(<VoiceChangerPage />)
 
+    fireEvent.click(screen.getByRole('button', { name: /语音转换/ }))
+
     fireEvent.click(screen.getByRole('button', { name: '录音' }))
     await waitFor(() => expect(mocks.recorderStart).toHaveBeenCalledTimes(1))
 
@@ -190,8 +211,8 @@ describe('VoiceChanger end-to-end ASR delivery and microphone isolation', () => 
   it('keeps realtime ASR on the selected microphone instead of the relay mix', async () => {
     render(<VoiceChangerPage />)
 
-    fireEvent.click(screen.getByRole('button', { name: '实时 ASR + TTS' }))
-    fireEvent.click(screen.getByRole('button', { name: '开始实时 ASR + TTS' }))
+    fireEvent.click(screen.getByRole('button', { name: /实时转换/ }))
+    fireEvent.click(screen.getByRole('button', { name: '开始实时转换' }))
     await waitFor(() => expect(mocks.voiceStreamStart).toHaveBeenCalledTimes(1))
 
     const config = mocks.voiceStreamStart.mock.calls[0][0]
@@ -204,6 +225,7 @@ describe('VoiceChanger end-to-end ASR delivery and microphone isolation', () => 
     const latencies: number[] = []
     for (let index = 0; index < 30; index += 1) {
       render(<VoiceChangerPage />)
+      fireEvent.click(screen.getByRole('button', { name: /语音转换/ }))
       fireEvent.click(screen.getByRole('button', { name: '录音' }))
       await waitFor(() => expect(mocks.recorderStart).toHaveBeenCalledTimes(index + 1))
       fireEvent.click(screen.getByRole('button', { name: '停止并处理' }))
@@ -219,5 +241,111 @@ describe('VoiceChanger end-to-end ASR delivery and microphone isolation', () => 
     const maximum = ordered.at(-1) || 0
     console.info(`[ASR fill stress] runs=${latencies.length} p50=${p50.toFixed(1)}ms p95=${p95.toFixed(1)}ms max=${maximum.toFixed(1)}ms`)
     expect(maximum).toBeLessThan(500)
+  })
+
+  it('starts in text mode and never opens the microphone just by switching tasks', () => {
+    render(<VoiceChangerPage />)
+    expect(screen.getByLabelText('合成文本')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '启用中转' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: /语音转换/ }))
+    expect(mocks.recorderPrepare).not.toHaveBeenCalled()
+    expect(mocks.recorderStart).not.toHaveBeenCalled()
+  })
+
+  it('keeps stop actions and the global activity available after switching away from recording', async () => {
+    render(<VoiceChangerPage />)
+    fireEvent.click(screen.getByRole('button', { name: /语音转换/ }))
+    fireEvent.click(screen.getByRole('button', { name: '录音' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '停止并处理' }).hasAttribute('disabled')).toBe(false))
+    fireEvent.click(screen.getByRole('button', { name: /文字合成/ }))
+    expect(screen.getByRole('button', { name: '取消录音' })).toBeTruthy()
+    expect(useActivityStore.getState().tasks['voice-work'].label).toContain('录音中')
+    act(() => { void useActivityStore.getState().tasks['voice-work'].onStop?.() })
+    expect(mocks.recorderCancel).toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: '取消录音' })).toBeNull()
+    expect(useActivityStore.getState().tasks['voice-work']).toBeUndefined()
+    expect(mocks.referenceAudioAsr).not.toHaveBeenCalled()
+  })
+
+  it('cancels microphone startup on unmount and cleans up a late startup completion', async () => {
+    let release!: () => void
+    mocks.recorderStart.mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve }))
+    const view = render(<VoiceChangerPage />)
+    fireEvent.click(screen.getByRole('button', { name: /语音转换/ }))
+    fireEvent.click(screen.getByRole('button', { name: '录音' }))
+    view.unmount()
+    expect(mocks.recorderCancel).toHaveBeenCalledTimes(1)
+    await act(async () => { release(); await Promise.resolve() })
+    expect(mocks.recorderCancel).toHaveBeenCalledTimes(2)
+    expect(useActivityStore.getState().tasks['voice-work']).toBeUndefined()
+  })
+
+  it('stops realtime capture across task switches and ignores old events', async () => {
+    render(<VoiceChangerPage />)
+    fireEvent.click(screen.getByRole('button', { name: /实时转换/ }))
+    fireEvent.click(screen.getByRole('button', { name: '开始实时转换' }))
+    fireEvent.click(screen.getByRole('button', { name: /文字合成/ }))
+    fireEvent.click(screen.getByRole('button', { name: '停止实时模式' }))
+    expect(mocks.voiceStreamStop).toHaveBeenCalled()
+    act(() => mocks.emitStream({ type: 'final', text: '已停止会话的迟到文字' }))
+    expect(screen.queryByText('已停止会话的迟到文字')).toBeNull()
+    expect(useActivityStore.getState().tasks['voice-work']).toBeUndefined()
+  })
+
+  it('drops a cancelled synthesis result and sends only when explicitly requested', async () => {
+    mocks.relayActive = false
+    render(<VoiceChangerPage />)
+    fireEvent.change(screen.getByLabelText('合成文本'), { target: { value: '你好' } })
+    fireEvent.click(screen.getByRole('button', { name: '生成语音' }))
+    fireEvent.click(screen.getByRole('button', { name: '取消等待' }))
+    const result = { audio: new Blob(['fixture'], { type: 'audio/wav' }), text: '你好', timing: { tts_sec: 0.2, total_sec: 0.2 } }
+    await act(async () => { mocks.resolveTts(result); await Promise.resolve() })
+    expect(screen.queryByLabelText('合成语音本机试听')).toBeNull()
+    expect(mocks.devicePlay).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '生成语音' }))
+    await act(async () => { mocks.resolveTts(result); await Promise.resolve() })
+    expect(screen.getByLabelText('合成语音本机试听')).toBeTruthy()
+    expect(mocks.devicePlay).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '发送到所选输出设备' }))
+    await waitFor(() => expect(mocks.devicePlay).toHaveBeenCalledWith(result.audio, 'virtual-cable-output'))
+  })
+
+  it('cleans up a pending relay start when leaving the page', async () => {
+    mocks.relayActive = false
+    let release!: (value: { sinkApplied: boolean }) => void
+    mocks.relayStart.mockImplementationOnce(() => new Promise((resolve) => { release = resolve }))
+    const view = render(<VoiceChangerPage />)
+    fireEvent.click(screen.getByRole('button', { name: /直播混音与音效/ }))
+    fireEvent.click(screen.getByRole('button', { name: '启用中转' }))
+    expect(useActivityStore.getState().tasks['voice-relay']).toBeTruthy()
+    view.unmount()
+    await act(async () => { release({ sinkApplied: true }); await Promise.resolve() })
+    expect(mocks.relayStop).toHaveBeenCalledTimes(2)
+    expect(useActivityStore.getState().tasks['voice-relay']).toBeUndefined()
+  })
+
+  it('stops the microphone stream when realtime reports an error', async () => {
+    render(<VoiceChangerPage />)
+    fireEvent.click(screen.getByRole('button', { name: /实时转换/ }))
+    fireEvent.click(screen.getByRole('button', { name: '开始实时转换' }))
+    act(() => mocks.emitStream({ type: 'error', message: '模型连接中断' }))
+    expect(screen.getByRole('alert').textContent).toContain('模型连接中断')
+    expect(mocks.voiceStreamStop).toHaveBeenCalled()
+    expect(useActivityStore.getState().tasks['voice-work']).toBeUndefined()
+    expect(screen.queryByRole('button', { name: '停止实时模式' })).toBeNull()
+  })
+
+  it('stops output and shows an error if the chosen device was not applied', async () => {
+    mocks.relayActive = false
+    const stop = vi.fn()
+    mocks.devicePlay.mockResolvedValueOnce({ stop, sinkApplied: false, sampleRate: 48000 })
+    render(<VoiceChangerPage />)
+    fireEvent.change(screen.getByLabelText('合成文本'), { target: { value: '路由测试' } })
+    fireEvent.click(screen.getByRole('button', { name: '生成语音' }))
+    await act(async () => { mocks.resolveTts({ audio: new Blob(['fixture']), text: '路由测试', timing: { tts_sec: 0.1, total_sec: 0.1 } }); await Promise.resolve() })
+    fireEvent.click(screen.getByRole('button', { name: '发送到所选输出设备' }))
+    await screen.findByRole('alert')
+    expect(stop).toHaveBeenCalled()
+    expect(screen.getByRole('alert').textContent).toContain('无法使用所选输出设备')
   })
 })

@@ -1,0 +1,5 @@
+.backend-connection-settings { display: grid; gap: 10px; }
+.backend-connection-settings p { margin: 0; }
+.backend-connection-settings .inline-control input { min-width: 0; flex: 1; }
+.backend-connection-settings > small { overflow-wrap: anywhere; }
+.backend-connection-settings .soft-badge { justify-self: start; }

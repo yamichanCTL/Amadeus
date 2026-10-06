@@ -100,23 +100,24 @@ export class AudioRecorder {
     }
     const request = ++this.startRequest
     const normalizedDeviceId = deviceId || ''
+    let acquiredStream: MediaStream
     if (inputStream) {
-      this.stream = inputStream
+      acquiredStream = inputStream
     } else if (this.preparedStream?.active && this.preparedDeviceId === normalizedDeviceId) {
-      this.stream = this.preparedStream
+      acquiredStream = this.preparedStream
       this.preparedStream = null
       this.preparedDeviceId = ''
     } else {
-      this.stream = await navigator.mediaDevices.getUserMedia({
+      acquiredStream = await navigator.mediaDevices.getUserMedia({
         audio: this.audioConstraints(deviceId),
         video: false,
       })
     }
     if (request !== this.startRequest) {
-      this.stream?.getTracks().forEach((track) => track.stop())
-      this.stream = null
+      acquiredStream.getTracks().forEach((track) => track.stop())
       throw new Error('录音启动已取消')
     }
+    this.stream = acquiredStream
     if (!this.stream?.active) throw new Error('麦克风音频轨道未就绪')
     if (!inputStream) this.assertDirectMicrophone(this.stream)
     this.captureTrackSettings = this.stream.getAudioTracks()[0]?.getSettings() || null
@@ -218,11 +219,13 @@ export class AudioRecorder {
     this.pcmGapSamples = 0
     this.pcmOverlapSamples = 0
     this.pcmContext = new AudioContext()
+    const context = this.pcmContext
     this.pcmSampleRate = this.pcmContext.sampleRate
     this.pcmSource = this.pcmContext.createMediaStreamSource(stream)
     try {
       if (!this.pcmContext.audioWorklet) throw new Error('AudioWorklet is not supported')
       await this.pcmContext.audioWorklet.addModule(getPcmCaptureWorkletUrl())
+      if (this.pcmContext !== context) return
       this.pcmWorkletNode = new AudioWorkletNode(this.pcmContext, 'amadeus-pcm-capture', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1] })
       this.pcmWorkletNode.port.onmessage = (event) => {
         const buffer = event.data?.buffer as ArrayBuffer | undefined
@@ -237,6 +240,7 @@ export class AudioRecorder {
       this.pcmWorkletNode.connect(this.pcmSilenceGain)
       this.pcmSilenceGain.connect(this.pcmContext.destination)
     } catch {
+      if (this.pcmContext !== context) return
       try { this.pcmWorkletNode?.disconnect() } catch { /* ignore */ }
       this.pcmWorkletNode = null
       this.pcmProcessor = this.pcmContext.createScriptProcessor(2048, 1, 1)
@@ -251,7 +255,7 @@ export class AudioRecorder {
       this.pcmProcessor.connect(this.pcmSilenceGain)
       this.pcmSilenceGain.connect(this.pcmContext.destination)
     }
-    await this.pcmContext.resume()
+    if (this.pcmContext === context) await context.resume()
   }
 
   private stopPcmRecorder() {
@@ -1417,7 +1421,7 @@ export class StreamingASRClient {
       this.releasePendingInput()
       this.onEvent({
         type: 'error',
-        message: '未配置后端地址。请在「设置 → 后端地址」填写并点击「确认」后再开始实时识别。',
+        message: '未配置后端地址。请先在首页启动本机服务，或连接已有后端，再开始实时识别。',
       })
       return
     }
@@ -1730,7 +1734,7 @@ export class VoiceTTSStreamingClient {
     if (this.urls.length === 0) {
       this.onEvent({
         type: 'error',
-        message: '未配置后端地址。请在「设置 → 后端地址」填写并点击「确认」后再开始。',
+        message: '未配置后端地址。请先在首页启动本机服务，或连接已有后端。',
       })
       return
     }

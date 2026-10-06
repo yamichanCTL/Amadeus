@@ -1,10 +1,10 @@
 {
   "status": "pass",
-  "blend": "F:\\Project\\Model3D\\Amadeus\\assets\\digital_human\\aemeath\\v03\\Aemeath_DigitalHuman_v03.blend",
+  "blend": "assets/digital_human/aemeath/v03/Aemeath_DigitalHuman_v03.blend",
   "blender": "5.2.2 LTS",
   "fresh_process": true,
   "autoexec_disabled": true,
-  "source": "F:\\Project\\Model3D\\Dance_Project\\Wuthering_Waves_V9_AEMEATH_DYNAMIC_REVIEW.blend",
+  "source": "<USER_SUPPLIED_MODEL>",
   "checks": {
     "source_hash_matches_build": {
       "pass": true,

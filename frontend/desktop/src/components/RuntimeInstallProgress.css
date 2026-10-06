@@ -1,0 +1,29 @@
+.runtime-install-progress { border:1px solid #d9e5f4; background:#f8faff; border-radius:10px; margin:14px 0; padding:14px 16px; color:#344865; font-size:12px; }
+.runtime-install-progress > header { display:flex; justify-content:space-between; gap:12px; align-items:center; }
+.runtime-install-progress > header > div { display:flex; align-items:center; gap:8px; }
+.runtime-install-progress > header > span { color:#6d7b91; font-variant-numeric:tabular-nums; }
+.runtime-progress-dot { width:7px; height:7px; background:#739185; border-radius:50%; }
+.runtime-progress-dot.is-active { background:#3972cf; box-shadow:0 0 0 4px #e5edfc; }
+.runtime-download-summary { display:flex; flex-wrap:wrap; gap:8px 22px; padding:12px 0 4px; color:#62748f; }
+.runtime-download-summary strong { color:#284c88; }
+.runtime-install-progress .runtime-progress-note { font-size:11px; color:#738199; line-height:1.6; margin:7px 0; }
+.runtime-download-columns,.runtime-download-item { display:grid; grid-template-columns:minmax(0,1fr) 125px 110px; gap:12px; align-items:center; }
+.runtime-download-columns { color:#8490a3; font-size:10px; border-bottom:1px solid #e1e8f2; padding:10px 0 7px; }
+.runtime-download-list { padding:0; list-style:none; margin:0; max-height:290px; overflow:auto; }
+.runtime-download-item { padding:9px 0; border-bottom:1px solid #e7edf5; }
+.runtime-download-item:last-child { border:0; }
+.runtime-download-name { min-width:0; }
+.runtime-download-name strong { color:#344865; font-size:12px; overflow-wrap:anywhere; }
+.runtime-download-name > span { color:#6d7f97; margin-left:7px; font-size:11px; }
+.runtime-download-name small,.runtime-download-size small { display:block; color:#7f8ca0; font-size:10px; margin-top:4px; }
+.runtime-download-size { font-size:11px; color:#526581; font-variant-numeric:tabular-nums; }
+.runtime-download-state { font-size:11px; color:#3c68aa; }
+.runtime-download-state progress { display:block; height:5px; width:90%; margin:6px 0 0; accent-color:#457fd1; }
+.runtime-download-state small { display:block; margin-top:4px; color:#75839a; }
+.runtime-download-item[data-status="installed"] .runtime-download-state,.runtime-download-item[data-status="downloaded"] .runtime-download-state,.runtime-download-item[data-status="prepared"] .runtime-download-state { color:#42806b; }
+.runtime-download-item[data-status="failed"] .runtime-download-state { color:#ab473e; }
+.runtime-install-progress .runtime-details-toggle { font-size:11px; border:0; background:transparent; color:#41679d; padding:7px 0; }
+.runtime-install-progress > footer { display:flex; align-items:center; flex-wrap:wrap; gap:6px 12px; padding-top:10px; margin-top:8px; border-top:1px solid #e0e8f3; font-size:11px; color:#75839a; }
+.runtime-install-progress > footer strong { color:#526785; }
+.runtime-install-progress > footer small { font-size:10px; flex-basis:100%; }
+@media(max-width:760px) { .runtime-install-progress { padding:12px; }.runtime-download-columns,.runtime-download-item { grid-template-columns:minmax(0,1fr) 85px 65px; gap:8px; }.runtime-download-size { font-size:10px; } }

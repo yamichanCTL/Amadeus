@@ -119,9 +119,9 @@ class TestSkillRegistry:
     def test_run_safe_command_allowed(self) -> None:
         registry = SkillRegistry()
         result = registry.execute(
-            SkillCall(name="run_safe_command", params={"command": "ls -la"})
+            SkillCall(name="run_safe_command", params={"command": "git --version"})
         )
-        # ls is allowed, should succeed
+        # Git is already required by this repository and works on Windows too.
         assert result.success is True
 
     def test_run_safe_command_blocked(self) -> None:

@@ -10,10 +10,11 @@ import logging
 from pathlib import Path
 
 import httpx
+from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-TTS_DIR = Path(__file__).resolve().parents[5] / "tts"
+TTS_DIR = get_settings().tts_data_dir
 PRETRAINED_DIR = TTS_DIR / "pretrained_models"
 
 # Models required for GPT-SoVITS to work

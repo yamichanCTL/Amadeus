@@ -3,6 +3,9 @@ import { ASRApi, HiggsAudioResult, HiggsTTSRequest, type HiggsVoicePreset } from
 import { AudioRecorder, AudioRelayMixer, Pcm16ChunkPlayer, VoiceTTSStreamingClient, listAudioOutputDevices, playAudioBlob, playAudioBlobToDevice, testAudioOutputDevice } from '@/services/audio'
 import { finishTelemetryTrace, recordTelemetryStage, startTelemetryTrace, type TelemetryTrace } from '@/services/telemetry'
 import { useASRStore } from '@/store/useASRStore'
+import { ModelsPage } from '@/pages/Models'
+import { useActivityTask } from '@/services/activity'
+import './VoiceChanger.css'
 
 type VoiceMode = 'voice' | 'text' | 'realtime'
 type WorkStatus = 'idle' | 'recording' | 'processing' | 'streaming' | 'done' | 'error'
@@ -14,9 +17,14 @@ type SoundEffectItem = {
 }
 
 const modeLabels: Record<VoiceMode, string> = {
-  voice: '语音转 TTS',
-  text: '文字转 TTS',
-  realtime: '实时 ASR + TTS'
+  voice: '语音转换',
+  text: '文字合成',
+  realtime: '实时转换'
+}
+const modeDescriptions: Record<VoiceMode, string> = {
+  text: '输入文字，生成所选音色的语音。',
+  voice: '录音或上传文件，识别后用所选音色重新合成。',
+  realtime: '持续采集麦克风，逐段识别并发送到输出设备。',
 }
 
 function roundSec(value?: number) {
@@ -61,15 +69,22 @@ export function VoiceChangerPage() {
   const statusRef = useRef<WorkStatus>('idle')
   const fileRef = useRef<HTMLInputElement>(null)
   const soundFileRef = useRef<HTMLInputElement>(null)
+  const mountedRef = useRef(true)
+  const operationRef = useRef(0)
+  const relayOperationRef = useRef(0)
+  const outputOperationRef = useRef(0)
+  const relayPendingRef = useRef(false)
+  const devicePlaybackRef = useRef<{ stop: () => void } | null>(null)
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null)
 
-  const [mode, setMode] = useState<VoiceMode>('voice')
+  const [mode, setMode] = useState<VoiceMode>('text')
   const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([])
-  const [ttsText, setTtsText] = useState('你好，这是 Higgs Audio v3 的桌面端 TTS 测试。')
+  const [ttsText, setTtsText] = useState('')
   const [transcript, setTranscript] = useState('')
   const [partialText, setPartialText] = useState('')
   const [inputAudioUrl, setInputAudioUrl] = useState('')
   const [outputAudioUrl, setOutputAudioUrl] = useState('')
-  const [status, setStatus] = useState<WorkStatus>('idle')
+  const [status, setStatusState] = useState<WorkStatus>('idle')
   const [statusText, setStatusText] = useState('等待输入')
   const [error, setError] = useState('')
   const [health, setHealth] = useState('')
@@ -81,6 +96,58 @@ export function VoiceChangerPage() {
   const [voicePresets, setVoicePresets] = useState<HiggsVoicePreset[]>([])
   const [outputTest, setOutputTest] = useState('')
   const [testingOutput, setTestingOutput] = useState(false)
+  const [modelSettingsOpen, setModelSettingsOpen] = useState(false)
+  const [mixingOpen, setMixingOpen] = useState(false)
+  const [captureStarting, setCaptureStarting] = useState(false)
+  const [relayStarting, setRelayStarting] = useState(false)
+  const [sendingOutput, setSendingOutput] = useState(false)
+
+  const updateStatus = useCallback((value: WorkStatus) => {
+    statusRef.current = value
+    setStatusState(value)
+  }, [])
+  const isCurrent = useCallback((operation: number) => mountedRef.current && operationRef.current === operation, [])
+  const stopPlayback = useCallback(() => {
+    outputOperationRef.current += 1
+    previewAudioRef.current?.pause()
+    playbackRef.current?.pause()
+    devicePlaybackRef.current?.stop()
+    relayMixerRef.current.stopInjectedAudio()
+    devicePlaybackRef.current = null
+    if (mountedRef.current) setSendingOutput(false)
+  }, [])
+
+  const stopWork = useCallback(() => {
+    const hadWork = ['recording', 'processing', 'streaming'].includes(statusRef.current)
+    operationRef.current += 1
+    const stream = streamClientRef.current
+    streamClientRef.current = null
+    stream?.stop()
+    recorderRef.current?.cancel()
+    recorderRef.current = null
+    realtimePcmPlayerRef.current?.stop()
+    realtimePcmPlayerRef.current = null
+    realtimeChunkJobsRef.current.clear()
+    stopPlayback()
+    if (mountedRef.current) {
+      updateStatus('idle')
+      setCaptureStarting(false)
+      setPartialText('')
+      setStatusText('已停止本次任务')
+    }
+    if (hadWork) void window.electronAPI?.hideStatusOverlay()
+  }, [stopPlayback, updateStatus])
+
+  const stopRelay = useCallback(() => {
+    relayOperationRef.current += 1
+    relayPendingRef.current = false
+    relayMixerRef.current.stop()
+    if (mountedRef.current) {
+      setRelayStarting(false)
+      setRelayActive(false)
+      setRelayStatus('已停止：麦克风不再透传')
+    }
+  }, [])
 
   useEffect(() => {
     statusRef.current = status
@@ -156,6 +223,7 @@ export function VoiceChangerPage() {
   }, [setOutputBlob])
 
   const playResult = useCallback(async (blob?: Blob, trace?: TelemetryTrace) => {
+    const outputOperation = ++outputOperationRef.current
     const fromArg = Boolean(blob)
     const fromRef = Boolean(!blob && outputBlobRef.current)
     const targetBlob = blob || outputBlobRef.current || (outputAudioUrl ? await fetch(outputAudioUrl).then((res) => res.blob()).catch(() => null) : null)
@@ -173,7 +241,7 @@ export function VoiceChangerPage() {
     try {
       if (relayMixerRef.current.isActive()) {
         if (trace) recordTelemetryStage(trace, '播放提交', { detail: '共享麦克风混音总线' })
-        await relayMixerRef.current.playBlob(targetBlob)
+        await relayMixerRef.current.playBlob(targetBlob, () => mountedRef.current && outputOperation === outputOperationRef.current)
         if (trace) recordTelemetryStage(trace, '已注入中转混音')
         console.log('[playResult] relay mixer playBlob 完成')
         return
@@ -182,6 +250,11 @@ export function VoiceChangerPage() {
       playbackRef.current?.pause()
       if (trace) recordTelemetryStage(trace, '播放提交', { detail: settings.audioOutputDeviceId || '系统默认' })
       const playback = await playAudioBlob(targetBlob, settings.audioOutputDeviceId || undefined)
+      if (!mountedRef.current || outputOperation !== outputOperationRef.current) {
+        playback.audio.pause()
+        URL.revokeObjectURL(playback.url)
+        return
+      }
       if (trace) recordTelemetryStage(trace, '开始播放')
       console.log('[playResult] playAudioBlob 返回: sinkApplied=%s', playback.sinkApplied)
       playbackRef.current = playback.audio
@@ -206,32 +279,39 @@ export function VoiceChangerPage() {
         relayMixerRef.current.isActive(),
         settings.audioOutputDeviceId || '系统默认')
       if (relayMixerRef.current.isActive()) {
-        await relayMixerRef.current.playBlob(item.file)
+        const outputOperation = outputOperationRef.current
+        await relayMixerRef.current.playBlob(item.file, () => mountedRef.current && outputOperation === outputOperationRef.current)
         setStatusText(`已注入音效：${item.name}`)
       } else {
-        await playAudioBlob(item.file, settings.audioOutputDeviceId || undefined)
+        await playResult(item.file)
         setStatusText(`已播放音效：${item.name}`)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : '音效播放失败')
-      setStatus('error')
     }
-  }, [settings.audioOutputDeviceId])
+  }, [playResult, settings.audioOutputDeviceId])
 
   const toggleRelay = useCallback(async () => {
-    if (relayMixerRef.current.isActive()) {
-      relayMixerRef.current.stop()
-      setRelayActive(false)
-      setRelayStatus('已停止：麦克风不再透传')
+    if (relayPendingRef.current || relayMixerRef.current.isActive()) {
+      stopRelay()
       return
     }
+    const relayOperation = ++relayOperationRef.current
+    const mixer = new AudioRelayMixer()
+    relayMixerRef.current = mixer
+    relayPendingRef.current = true
+    setRelayStarting(true)
     setError('')
     setRelayStatus('正在接管麦克风并建立混音总线')
     try {
-      const result = await relayMixerRef.current.start({
+      const result = await mixer.start({
         inputDeviceId: settings.audioInputDeviceId || undefined,
         outputDeviceId: settings.audioOutputDeviceId || undefined,
       })
+      if (!mountedRef.current || relayOperation !== relayOperationRef.current) {
+        mixer.stop()
+        return
+      }
       setRelayActive(true)
       setRelayStatus(
         settings.audioOutputDeviceId
@@ -240,12 +320,18 @@ export function VoiceChangerPage() {
       )
       setOutputDevices(await listAudioOutputDevices().catch(() => []))
     } catch (relayError) {
-      relayMixerRef.current.stop()
+      mixer.stop()
+      if (!mountedRef.current || relayOperation !== relayOperationRef.current) return
       setRelayActive(false)
       setRelayStatus('启动失败')
       setError(relayError instanceof Error ? relayError.message : '无法启动麦克风中转')
+    } finally {
+      if (mountedRef.current && relayOperation === relayOperationRef.current) {
+        relayPendingRef.current = false
+        setRelayStarting(false)
+      }
     }
-  }, [settings.audioInputDeviceId, settings.audioOutputDeviceId])
+  }, [relayStarting, settings.audioInputDeviceId, settings.audioOutputDeviceId, stopRelay])
 
   const changeOutputDevice = useCallback(async (deviceId: string) => {
     updateSettings({ audioOutputDeviceId: deviceId })
@@ -370,43 +456,28 @@ export function VoiceChangerPage() {
     outputAudioUrlRef.current = outputAudioUrl
   }, [outputAudioUrl])
 
-  useEffect(() => () => {
-    streamClientRef.current?.stop()
-    relayMixerRef.current.stop()
-    realtimePcmPlayerRef.current?.stop()
-    recorderRef.current?.cancel()
-    playbackRef.current?.pause()
-    if (playbackUrlRef.current) URL.revokeObjectURL(playbackUrlRef.current)
-    if (inputAudioUrlRef.current) URL.revokeObjectURL(inputAudioUrlRef.current)
-    if (outputAudioUrlRef.current) URL.revokeObjectURL(outputAudioUrlRef.current)
-  }, [])
-
   useEffect(() => {
-    if (mode !== 'voice' || status !== 'idle') return
-    const recorder = recorderRef.current || new AudioRecorder({ rejectLoopbackInput: true })
-    recorderRef.current = recorder
-    void recorder.prepare(settings.audioInputDeviceId || undefined).catch(() => {
-      if (recorderRef.current === recorder && statusRef.current === 'idle') {
-        recorder.cancel()
-        recorderRef.current = null
-      }
-    })
+    mountedRef.current = true
     return () => {
-      if (recorderRef.current === recorder && statusRef.current === 'idle') {
-        recorder.cancel()
-        recorderRef.current = null
-      }
+      mountedRef.current = false
+      stopWork()
+      stopRelay()
+      if (playbackUrlRef.current) URL.revokeObjectURL(playbackUrlRef.current)
+      if (inputAudioUrlRef.current) URL.revokeObjectURL(inputAudioUrlRef.current)
+      if (outputAudioUrlRef.current) URL.revokeObjectURL(outputAudioUrlRef.current)
     }
-  }, [mode, settings.audioInputDeviceId, status])
+  }, [stopRelay, stopWork])
 
   const runTextTts = useCallback(async (text = ttsText, source: VoiceMode = 'text') => {
+    if (['recording', 'processing', 'streaming'].includes(statusRef.current)) return null
     const clean = text.trim()
     if (!clean) {
       setError('请输入要合成的文本')
-      setStatus('error')
+      updateStatus('error')
       return null
     }
-    setStatus('processing')
+    const operation = ++operationRef.current
+    updateStatus('processing')
     setStatusText('Higgs TTS 合成中')
     setError('')
     // 覆盖 Electron 状态浮窗为 thinking 动画，清理之前录音残留的「语音输入中」
@@ -415,26 +486,28 @@ export function VoiceChangerPage() {
     try {
       recordTelemetryStage(trace, 'TTS 请求发送')
       const result = await api.higgsSpeak({ ...commonPayload(), text: clean })
+      if (!isCurrent(operation)) return null
       recordTelemetryStage(trace, 'TTS 音频响应', { backendMs: result.timing.tts_sec * 1000 })
       applyResult(result, source)
-      await playResult(result.audio, trace)
       finishTelemetryTrace(trace, `${result.audio.size} bytes`)
-      setStatus('done')
+      updateStatus('done')
       setStatusText(`${modeLabels[source]} 完成`)
       void window.electronAPI?.hideStatusOverlay()
       return result
     } catch (err) {
+      if (!isCurrent(operation)) return null
       finishTelemetryTrace(trace, err instanceof Error ? err.message : 'TTS 合成失败', 'error')
       setError(err instanceof Error ? err.message : 'TTS 合成失败')
-      setStatus('error')
+      updateStatus('error')
       setStatusText('合成失败')
       void window.electronAPI?.hideStatusOverlay()
       return null
     }
-  }, [activeVoice, api, applyResult, commonPayload, playResult, settings.higgsTtsVoice, ttsText])
+  }, [activeVoice, api, applyResult, commonPayload, isCurrent, settings.higgsTtsVoice, ttsText, updateStatus])
 
   const runAudioPipeline = useCallback(async (blob: Blob) => {
-    setStatus('processing')
+    const operation = ++operationRef.current
+    updateStatus('processing')
     setStatusText('ASR 识别后合成 TTS')
     setError('')
     setTranscript('')
@@ -451,6 +524,7 @@ export function VoiceChangerPage() {
         settings.offlineEngine,
         settings.defaultLanguage === 'auto' ? '' : settings.defaultLanguage,
       )
+      if (!isCurrent(operation)) return
       const text = asrResult.text.trim()
       if (!text) throw new Error('ASR 未识别到有效文本')
       const asrSec = Number(asrResult.elapsed_sec || 0)
@@ -466,6 +540,7 @@ export function VoiceChangerPage() {
       setStatusText('ASR 已回填，Higgs TTS 合成中')
 
       const ttsResult = await api.higgsSpeak({ ...commonPayload(), text })
+      if (!isCurrent(operation)) return
       const result: HiggsAudioResult = {
         ...ttsResult,
         text,
@@ -481,19 +556,19 @@ export function VoiceChangerPage() {
       }
       recordTelemetryStage(trace, 'TTS 完成并接收音频', { durationMs: result.timing.tts_sec * 1000, backendMs: result.timing.tts_sec * 1000 })
       applyResult(result, 'voice')
-      await playResult(result.audio, trace)
       finishTelemetryTrace(trace, `${result.audio.size} bytes`)
-      setStatus('done')
+      updateStatus('done')
       setStatusText('语音转 TTS 完成')
       void window.electronAPI?.hideStatusOverlay()
     } catch (err) {
+      if (!isCurrent(operation)) return
       finishTelemetryTrace(trace, err instanceof Error ? err.message : '语音转 TTS 失败', 'error')
       setError(err instanceof Error ? err.message : '语音转 TTS 失败')
-      setStatus('error')
+      updateStatus('error')
       setStatusText('处理失败')
       void window.electronAPI?.hideStatusOverlay()
     }
-  }, [api, applyResult, commonPayload, playResult, settings.offlineEngine, settings.defaultLanguage])
+  }, [api, applyResult, commonPayload, isCurrent, settings.offlineEngine, settings.defaultLanguage, updateStatus])
 
   const streamConfig = useCallback(() => ({
     engine: settings.streamingEngine,
@@ -555,9 +630,11 @@ export function VoiceChangerPage() {
   ])
 
   const handleRecord = useCallback(async () => {
-    if (status === 'recording') {
+    if (statusRef.current === 'recording') {
+      if (captureStarting) return
+      const operation = operationRef.current
       statusRef.current = 'processing'
-      setStatus('processing')
+      updateStatus('processing')
       setStatusText('录音已停止，正在上传识别并合成 TTS')
       setPartialText('')
       void window.electronAPI?.showStatusOverlay('thinking', 0, '录音已停止，正在识别并合成 TTS')
@@ -565,12 +642,13 @@ export function VoiceChangerPage() {
       recorderRef.current = null
       if (!recorder) {
         setError('录音器状态异常，请重新录音')
-        setStatus('error')
+        updateStatus('error')
         setStatusText('录音失败')
         return
       }
       try {
         const { blob } = await recorder.stop()
+        if (!isCurrent(operation)) return
         if (!blob.size || blob.size < 800) throw new Error('没有录到有效音频')
         setInputAudioUrl((prev) => {
           if (prev) URL.revokeObjectURL(prev)
@@ -578,13 +656,18 @@ export function VoiceChangerPage() {
         })
         await runAudioPipeline(blob)
       } catch (err) {
+        if (!isCurrent(operation)) return
         setError(err instanceof Error ? err.message : '录音处理失败')
-        setStatus('error')
+        updateStatus('error')
         setStatusText('录音处理失败')
         void window.electronAPI?.hideStatusOverlay()
       }
       return
     }
+
+    if (['processing', 'streaming'].includes(statusRef.current)) return
+    const operation = ++operationRef.current
+    setCaptureStarting(true)
 
     if (streamClientRef.current) {
       streamClientRef.current.stop()
@@ -594,7 +677,7 @@ export function VoiceChangerPage() {
     realtimePcmPlayerRef.current = null
     setMode('voice')
     statusRef.current = 'recording'
-    setStatus('recording')
+    updateStatus('recording')
     setStatusText('录音中，再次点击停止并处理')
     void window.electronAPI?.showStatusOverlay('recording', 0)
     setError('')
@@ -621,22 +704,29 @@ export function VoiceChangerPage() {
         5000,
         '麦克风启动超时，请检查输入设备是否被其他软件独占'
       )
+      if (!isCurrent(operation)) { recorder.cancel(); return }
+      setCaptureStarting(false)
     } catch (err) {
       recorder.cancel()
+      if (!isCurrent(operation)) return
       recorderRef.current = null
+      setCaptureStarting(false)
       statusRef.current = 'error'
       setError(err instanceof Error ? err.message : '无法启动麦克风录音')
-      setStatus('error')
+      updateStatus('error')
       setStatusText('录音启动失败')
       void window.electronAPI?.hideStatusOverlay()
     }
   }, [
     runAudioPipeline,
+    captureStarting,
+    isCurrent,
     settings.audioInputDeviceId,
     status,
   ])
 
   const handleFile = useCallback((file: File) => {
+    if (['recording', 'processing', 'streaming'].includes(statusRef.current)) return
     setMode('voice')
     setInputAudioUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev)
@@ -647,29 +737,25 @@ export function VoiceChangerPage() {
 
   const toggleRealtime = useCallback(async () => {
     if (streamClientRef.current) {
-      streamClientRef.current?.stop()
-      streamClientRef.current = null
-      realtimePcmPlayerRef.current?.stop()
-      realtimePcmPlayerRef.current = null
-      realtimeChunkJobsRef.current.clear()
-      setStatus('idle')
-      setStatusText('实时流已停止')
-      setPartialText('')
+      stopWork()
       return
     }
+    if (['recording', 'processing', 'streaming'].includes(statusRef.current)) return
 
     if (!backendReady) {
-      setError('未确认后端地址。请先在设置中输入后端 IP/地址并点击确认。')
+      setError('未确认后端地址。请先在首页启动本机服务，或连接已有后端。')
       return
     }
+    const operation = ++operationRef.current
     setMode('realtime')
-    setStatus('streaming')
+    updateStatus('streaming')
     setStatusText('正在连接实时 ASR + TTS…')
     setError('')
     setTranscript('')
     setLiveSegments([])
     realtimeChunkJobsRef.current.clear()
     const client = new VoiceTTSStreamingClient(settings.serverUrl, (event) => {
+      if (!isCurrent(operation) || streamClientRef.current !== client) return
       if (event.type === 'accepted') {
         setStatusText('连接成功，等待模型加载…')
       } else if (event.type === 'loading') {
@@ -702,7 +788,7 @@ export function VoiceChangerPage() {
           }
           const player = realtimePcmPlayerRef.current
           void player.start()
-            .then(() => player.push(event.audio))
+            .then(() => { if (isCurrent(operation)) return player.push(event.audio); player.stop() })
             .catch((playError) => {
               setError(playError instanceof Error ? playError.message : '流式播放失败')
             })
@@ -719,9 +805,9 @@ export function VoiceChangerPage() {
           const remainingMs = relayMixerRef.current.isActive()
             ? await relayMixerRef.current.getPcmPlaybackRemainingMs()
             : await realtimePcmPlayerRef.current?.getPlaybackRemainingMs() || 0
-          client.setOutputPlaybackActive(false, remainingMs + 350)
+          if (isCurrent(operation)) client.setOutputPlaybackActive(false, remainingMs + 350)
         })()
-        setStatus('streaming')
+        updateStatus('streaming')
         setStatusText('实时 ASR 监听中')
         const doneTrace = realtimeTraceRef.current
         if (doneTrace) {
@@ -759,7 +845,7 @@ export function VoiceChangerPage() {
           }
         }
         applyResult(result, 'realtime')
-        setStatus('streaming')
+        updateStatus('streaming')
         setStatusText('实时 ASR 监听中')
         // Record telemetry for non-streaming (or final) TTS result
         if (!alreadyStreamed) {
@@ -787,24 +873,25 @@ export function VoiceChangerPage() {
       } else if (event.type === 'echo_suppressed') {
         setStatusText(`已拦截 TTS 回声：${event.text || event.matchedText}`)
       } else if (event.type === 'error') {
-        client.setOutputPlaybackActive(false, 300)
+        stopWork()
         setError(event.message)
-        setStatus('error')
+        updateStatus('error')
       } else if (event.type === 'closed') {
-        if (streamClientRef.current === client) streamClientRef.current = null
-        setStatus((current) => {
-          if (current !== 'streaming') return current
-          if (event.intentional) {
-            setStatusText('实时流已停止')
-            return 'idle'
-          }
-          setStatusText('实时流异常断开')
-          return 'error'
-        })
+        stopWork()
+        setStatusText(event.intentional ? '实时流已停止' : '实时流异常断开')
+        updateStatus(event.intentional ? 'idle' : 'error')
       }
     })
     streamClientRef.current = client
-    await client.start(streamConfig())
+    try {
+      await client.start(streamConfig())
+      if (!isCurrent(operation)) client.stop()
+    } catch (err) {
+      if (!isCurrent(operation)) { client.stop(); return }
+      stopWork()
+      setError(err instanceof Error ? err.message : '实时模式启动失败')
+      updateStatus('error')
+    }
   }, [
     applyResult,
     settings.streamingEngine,
@@ -813,212 +900,114 @@ export function VoiceChangerPage() {
     settings.serverUrl,
     status,
     playResult,
-    streamConfig
+    streamConfig,
+    isCurrent,
+    stopWork,
+    updateStatus,
+    backendReady,
   ])
 
-  const busy = status === 'processing'
+  const sendToOutput = useCallback(async () => {
+    const blob = outputBlobRef.current
+    if (!blob) return
+    stopPlayback()
+    const outputOperation = outputOperationRef.current
+    setSendingOutput(true)
+    setError('')
+    try {
+      if (relayMixerRef.current.isActive()) {
+        await relayMixerRef.current.playBlob(blob, () => mountedRef.current && outputOperation === outputOperationRef.current)
+      } else {
+        const playback = await playAudioBlobToDevice(blob, settings.audioOutputDeviceId || undefined)
+        if (!mountedRef.current || outputOperation !== outputOperationRef.current) { playback.stop(); return }
+        if (settings.audioOutputDeviceId && !playback.sinkApplied) {
+          playback.stop()
+          throw new Error('无法使用所选输出设备，请重新选择或明确切换为系统默认输出。')
+        }
+        devicePlaybackRef.current = playback
+      }
+    } catch (err) {
+      if (mountedRef.current && outputOperation === outputOperationRef.current) setError(err instanceof Error ? err.message : '发送到输出设备失败')
+    } finally {
+      if (mountedRef.current && outputOperation === outputOperationRef.current) setSendingOutput(false)
+    }
+  }, [settings.audioOutputDeviceId, stopPlayback])
 
-  return (
-    <div className="page voice-workbench-page">
-      <div className="page-heading">
-        <div>
-          <h1>变声器 / TTS</h1>
-          <p>支持语音转 TTS、文字 TTS 和实时 ASR+TTS。</p>
+  const working = ['recording', 'processing', 'streaming'].includes(status)
+  const outputName = outputDevices.find((device) => device.deviceId === settings.audioOutputDeviceId)?.label || (settings.audioOutputDeviceId ? '已保存的输出设备' : '系统默认输出')
+  const workLabel = status === 'recording' ? '语音转换 · 录音中' : status === 'streaming' ? '实时语音转换' : '语音合成处理中'
+  useActivityTask('voice-work', working ? { label: workLabel, detail: statusText, page: 'voice', onStop: stopWork } : null)
+  useActivityTask('voice-relay', relayActive || relayStarting ? { label: '麦克风中转', detail: relayStatus, page: 'voice', onStop: stopRelay } : null)
+
+  return <div className="page voice-workbench-page">
+    <header className="page-heading">
+      <div><h1>语音合成</h1><p>把文字或声音变成所选音色，先试听，再决定输出到哪里。</p></div>
+      <span className={`soft-badge ${status === 'done' ? 'success' : ''}`}>{statusText}</span>
+    </header>
+
+    <nav className="voice-task-tabs" aria-label="语音合成任务">
+      {(['text', 'voice', 'realtime'] as VoiceMode[]).map((item, index) => <button key={item} type="button" aria-pressed={mode === item} onClick={() => setMode(item)}>
+        <span className="voice-task-number" aria-hidden="true">0{index + 1}</span><strong>{modeLabels[item]}</strong><small>{modeDescriptions[item]}</small>
+      </button>)}
+    </nav>
+
+    {(working || relayActive || relayStarting) && <section className="voice-active-tasks" aria-label="语音合成活动任务">
+      {working && <div><span><strong>{workLabel}</strong><small>{statusText}{status === 'processing' ? ' · 取消等待后不会播放迟到的结果。' : ''}</small></span><div className="row-actions">
+        {status === 'recording' && <button type="button" disabled={captureStarting} onClick={() => void handleRecord()}>停止并处理</button>}
+        <button type="button" onClick={stopWork}>{status === 'processing' ? '取消等待' : status === 'recording' ? '取消录音' : '停止实时模式'}</button>
+      </div></div>}
+      {(relayActive || relayStarting) && <div><span><strong>麦克风中转{relayStarting ? '正在启动' : '运行中'}</strong><small>{relayStatus}</small></span><button type="button" onClick={stopRelay}>停止中转</button></div>}
+    </section>}
+
+    <div className="voice-workspace-grid">
+      <section className="panel voice-compose-panel" aria-label="语音输入与合成">
+        <div className="section-head compact"><div><h2>{modeLabels[mode]}</h2><p>{modeDescriptions[mode]}</p></div></div>
+        <div className="voice-choice-row">
+          <label htmlFor="voice-preset">本次使用音色<select id="voice-preset" value={activeVoice} disabled={working} onChange={(event) => { setActiveVoice(event.target.value); applyVoicePreset(event.target.value) }}>
+            {Array.from(new Set(['default', ...settings.higgsTtsVoices, settings.higgsTtsVoice].filter(Boolean))).map((voice) => <option key={voice} value={voice}>{voice === 'default' ? '服务默认音色' : voice}</option>)}
+          </select></label>
+          <button type="button" aria-expanded={modelSettingsOpen} aria-controls="voice-task-model-settings" onClick={() => setModelSettingsOpen((open) => !open)}>{modelSettingsOpen ? '收起模型配置' : '模型与音色配置'}</button>
         </div>
-        <span className={`soft-badge ${status === 'done' || status === 'streaming' ? 'success' : ''}`}>{statusText}</span>
-      </div>
+        {mode === 'text' && <div className="voice-mode-pane">
+          <label htmlFor="voice-tts-input" className="voice-input-label">合成文本</label>
+          <textarea id="voice-tts-input" value={ttsText} onChange={(event) => setTtsText(event.target.value)} rows={6} placeholder="输入你想让她说的话…" />
+          <div className="voice-compose-footer"><small>{ttsText.trim().length} 字 · 生成后可自行试听或发送</small><button type="button" className="primary voice-run-button" disabled={working || !ttsText.trim()} onClick={() => void runTextTts()}>生成语音</button></div>
+        </div>}
+        {mode === 'voice' && <div className="voice-mode-pane">
+          <div className="voice-record-surface"><span aria-hidden="true" className="voice-record-symbol">●</span><strong>{status === 'recording' ? captureStarting ? '正在打开麦克风…' : '正在录音' : '录下你想转换的声音'}</strong><p>只在你点击录音后打开麦克风。结束后识别文字，再生成新音色。</p></div>
+          <div className="row-actions"><button type="button" className="primary" disabled={working} onClick={() => void handleRecord()}>录音</button><button type="button" disabled={working} onClick={() => fileRef.current?.click()}>上传音频</button></div>
+          <input ref={fileRef} type="file" aria-label="转换音频文件" accept="audio/*" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) handleFile(file); event.currentTarget.value = '' }} />
+          {inputAudioUrl && <div className="voice-input-preview"><small>原始音频 · 本机试听</small><audio controls src={inputAudioUrl} aria-label="原始音频本机试听" /></div>}
+        </div>}
+        {mode === 'realtime' && <div className="voice-mode-pane">
+          <div className="voice-record-surface"><span aria-hidden="true" className="voice-record-symbol">≋</span><strong>边说边转换</strong><p>每段识别结果会自动合成并发送到 {outputName}。切换本页任务后仍可在上方停止；离开本页会停止采集。</p></div>
+          <button type="button" className="primary voice-run-button" disabled={working} onClick={() => void toggleRealtime()}>开始实时转换</button>
+          <div className="live-text" aria-live="polite">{partialText || transcript || '识别到的片段会显示在这里。'}</div>
+          {liveSegments.length > 0 && <div className="live-segment-list">{liveSegments.map((item, index) => <article key={`${item.text}-${index}`}><span>首包 {formatSec(item.timing)}{item.totalTiming ? ` / 总 ${formatSec(item.totalTiming)}` : ''}</span><p>{item.text}</p></article>)}</div>}
+        </div>}
+        {error && <div className="error" role="alert">{error}</div>}
+      </section>
 
-      <div className="voice-workbench">
-        <section className="panel voice-control-panel">
-          <div className="mode-switch">
-            {(['voice', 'text', 'realtime'] as VoiceMode[]).map((item) => (
-              <button key={item} type="button" className={mode === item ? 'active' : ''} onClick={() => setMode(item)}>
-                {modeLabels[item]}
-              </button>
-            ))}
-          </div>
-
-          <div className="voice-form">
-            <div className="voice-runtime-card wide">
-              <span>{health || '尚未检查服务'}</span>
-              <button type="button" onClick={() => void refreshRuntime()}>检查</button>
-            </div>
-            <label className="wide">
-              本次使用音色
-              <div className="inline-control">
-                <select value={activeVoice} onChange={(event) => {
-                  const nextVoice = event.target.value
-                  setActiveVoice(nextVoice)
-                  applyVoicePreset(nextVoice)
-                }}>
-                  {Array.from(new Set(['default', ...settings.higgsTtsVoices, settings.higgsTtsVoice].filter(Boolean))).map((voice) => (
-                    <option key={voice} value={voice}>{voice}</option>
-                  ))}
-                </select>
-                <button type="button" onClick={() => void refreshRuntime()} title="刷新音色列表和预设">刷新</button>
-              </div>
-              {activeVoice !== 'default' && (
-                <small>
-                  {(() => {
-                    const preset = voicePresets.find((p) => p.name === activeVoice)
-                    if (preset) {
-                      return `参考来源：${preset.reference_codes_json ? 'Code JSON' : preset.reference_audio ? '已保存音频' : preset.reference_url ? preset.reference_url : '未知'}`
-                    }
-                    return settings.higgsTtsReferenceAudioDataUrl
-                      ? `参考来源：${settings.higgsTtsReferenceAudioName || '已上传音频'}`
-                      : settings.higgsTtsReferenceUrl
-                        ? `参考来源：${settings.higgsTtsReferenceUrl}`
-                        : settings.higgsTtsReferenceCodesJson
-                          ? '参考来源：Code JSON'
-                          : '未找到已保存的预设，后端将自动匹配参考信息'
-                  })()}
-                </small>
-              )}
-            </label>
-            <label className="wide">
-              语音输出设备
-              <div className="inline-control">
-                <select value={settings.audioOutputDeviceId} onChange={(event) => void changeOutputDevice(event.target.value)}>
-                  <option value="">系统默认输出</option>
-                  {outputDevices.map((device) => (
-                    <option key={device.deviceId} value={device.deviceId}>{device.label || device.deviceId}</option>
-                  ))}
-                </select>
-                <button type="button" onClick={() => void refreshRuntime()}>刷新</button>
-                <button type="button" disabled={testingOutput} onClick={() => void testOutput()}>
-                  {testingOutput ? '测试中' : '测试输出'}
-                </button>
-              </div>
-              {outputTest && <small>{outputTest}</small>}
-            </label>
-            <div className={`voice-relay-card wide ${relayActive ? 'active' : ''}`}>
-              <div>
-                <strong>麦克风音频中转</strong>
-                <small>{relayStatus}</small>
-                <small>中转输入已启用 AEC；实体扬声器仍建议使用耳机，虚拟声卡不要将同一 monitor 同时选为 ASR 输入。</small>
-              </div>
-              <button type="button" className={relayActive ? 'record-button recording' : 'primary'} onClick={() => void toggleRelay()}>
-                {relayActive ? '停止中转' : '启用中转'}
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <section className="panel voice-action-panel">
-          {mode === 'text' && (
-            <div className="voice-mode-pane">
-              <textarea value={ttsText} onChange={(event) => setTtsText(event.target.value)} rows={8} placeholder="输入要合成的文本" />
-              <button type="button" className="primary voice-run-button" disabled={busy} onClick={() => void runTextTts()}>
-                生成 TTS
-              </button>
-            </div>
-          )}
-
-          {mode === 'voice' && (
-            <div className="voice-mode-pane">
-              <div className="voice-capture-row">
-                <button type="button" className={status === 'recording' ? 'record-button recording' : 'record-button primary'} disabled={busy} onClick={() => void handleRecord()}>
-                  {status === 'recording' ? '停止并处理' : '录音'}
-                </button>
-                <button type="button" disabled={busy} onClick={() => fileRef.current?.click()}>上传音频</button>
-                <input ref={fileRef} type="file" accept="audio/*" hidden onChange={(event) => {
-                  const file = event.target.files?.[0]
-                  if (file) handleFile(file)
-                  event.currentTarget.value = ''
-                }} />
-              </div>
-              {inputAudioUrl ? <audio controls src={inputAudioUrl} /> : <div className="empty voice-empty">点击录音后再次点击停止，前端会上传完整音频，后端完成 ASR 后送入 Higgs TTS；上传音频会直接处理完整文件。</div>}
-            </div>
-          )}
-
-          {mode === 'realtime' && (
-            <div className="voice-mode-pane">
-              <button type="button" className={streamClientRef.current ? 'record-button recording' : 'primary voice-run-button'} onClick={() => void toggleRealtime()}>
-                {streamClientRef.current ? '停止实时模式' : '开始实时 ASR + TTS'}
-              </button>
-              <div className="live-text">
-                {partialText || transcript || '实时最终识别片段会逐段触发 Higgs TTS。'}
-              </div>
-              <div className="live-segment-list">
-                {liveSegments.map((item, index) => (
-                  <article key={`${item.text}-${index}`}>
-                    <span>
-                      首包 {formatSec(item.timing)}
-                      {item.totalTiming ? ` / 总 ${formatSec(item.totalTiming)}` : ''}
-                    </span>
-                    <p>{item.text}</p>
-                  </article>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {error && <div className="error">{error}</div>}
-        </section>
-
-        <section className="panel voice-output-panel">
-          <div className="section-head compact">
-            <div>
-              <h2>输出</h2>
-              <p>{settings.audioOutputDeviceId ? '播放按钮会输出到已选设备' : '播放按钮使用系统默认输出'}</p>
-            </div>
-            <button
-              type="button"
-              disabled={!outputBlobRef.current}
-              onClick={() => {
-                const blob = outputBlobRef.current
-                if (!blob) return
-                if (relayMixerRef.current.isActive()) {
-                  // 中转激活时：注入 relay 混音总线，不影响麦克风透传
-                  void relayMixerRef.current.playBlob(blob).catch((err) => setError(err instanceof Error ? err.message : '中转播放失败'))
-                } else {
-                  // 中转未激活：用独立 AudioContext 路由到指定设备，播放结束自动关闭
-                  void playAudioBlobToDevice(blob, settings.audioOutputDeviceId || undefined).catch((err) => {
-                    setError(err instanceof Error ? err.message : '播放到输出设备失败')
-                  })
-                }
-              }}
-            >播放到输出设备</button>
-          </div>
-          {outputAudioUrl ? <audio controls src={outputAudioUrl} /> : <div className="empty voice-empty">生成的 TTS 音频会显示在这里。</div>}
-          {transcript && (
-            <div className="voice-transcript">
-              <strong>识别 / 合成文本</strong>
-              <p>{transcript}</p>
-            </div>
-          )}
-        </section>
-
-        <section className="panel voice-sfx-panel">
-          <div className="section-head compact">
-            <div>
-              <h2>音效</h2>
-              <p>{settings.audioOutputDeviceId ? '点击后输出到已选设备' : '点击后输出到系统默认设备'}</p>
-            </div>
-            <div className="row-actions">
-              <button type="button" onClick={() => soundFileRef.current?.click()}>导入音效</button>
-              <button type="button" disabled={!soundEffects.length} onClick={() => setSoundEffects([])}>清空</button>
-              <input ref={soundFileRef} type="file" accept="audio/*" multiple hidden onChange={(event) => {
-                importSoundEffects(event.target.files)
-                event.currentTarget.value = ''
-              }} />
-            </div>
-          </div>
-          {soundEffects.length ? (
-            <div className="sfx-grid">
-              {soundEffects.map((item) => (
-                <article key={item.id}>
-                  <button type="button" onClick={() => void playSoundEffect(item)}>{item.name}</button>
-                  <button type="button" className="ghost tiny" onClick={() => setSoundEffects((prev) => prev.filter((effect) => effect.id !== item.id))}>移除</button>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div className="empty voice-empty">导入常用音频后，可一键播放到当前输出设备。</div>
-          )}
-        </section>
-
-      </div>
+      <section className="panel voice-output-panel" aria-label="合成结果">
+        <div className="section-head compact"><div><h2>合成结果</h2><p>{activeVoice || '默认音色'} · {settings.higgsTtsProvider === 'boson' ? settings.higgsTtsRemoteModel || 'Boson API' : '本地 Higgs TTS'}</p></div></div>
+        {outputAudioUrl ? <>
+          <div className="voice-local-preview"><h3>本机试听</h3><p>通过本机默认扬声器播放，不发送到虚拟输出设备。</p><audio ref={previewAudioRef} controls src={outputAudioUrl} aria-label="合成语音本机试听" onPlay={() => { outputOperationRef.current += 1; devicePlaybackRef.current?.stop(); devicePlaybackRef.current = null; playbackRef.current?.pause(); relayMixerRef.current.stopInjectedAudio() }} /></div>
+          <div className="voice-output-send"><strong>发送到所选输出设备</strong><small>当前：{outputName}{relayActive ? ' · 叠加到麦克风中转' : ''}</small><div className="row-actions"><button type="button" className="primary" disabled={sendingOutput || working} onClick={() => void sendToOutput()}>{sendingOutput ? '正在发送…' : '发送到所选输出设备'}</button><button type="button" onClick={stopPlayback}>停止播放</button></div></div>
+        </> : <div className="empty voice-result-empty"><span aria-hidden="true">♪</span><strong>等待第一段语音</strong><p>生成后，在这里试听并选择发送方式。</p></div>}
+        {transcript && <div className="voice-transcript"><strong>识别 / 合成文本</strong><p>{transcript}</p></div>}
+        <details className="voice-output-settings"><summary>输出设备设置 · {outputName}</summary><label htmlFor="voice-output-device">语音输出设备</label><div className="voice-device-row"><select id="voice-output-device" disabled={working || relayStarting} value={settings.audioOutputDeviceId} onChange={(event) => void changeOutputDevice(event.target.value)}><option value="">系统默认输出</option>{settings.audioOutputDeviceId && !outputDevices.some(device => device.deviceId === settings.audioOutputDeviceId) && <option value={settings.audioOutputDeviceId}>已保存的输出设备</option>}{outputDevices.map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label || device.deviceId}</option>)}</select><button type="button" onClick={() => void refreshRuntime()}>刷新</button><button type="button" disabled={testingOutput} onClick={() => void testOutput()}>{testingOutput ? '测试中' : '测试输出'}</button></div>{outputTest && <small>{outputTest}</small>}</details>
+      </section>
     </div>
-  )
+
+    {modelSettingsOpen && <section id="voice-task-model-settings" className="panel voice-model-settings" aria-label="TTS 模型设置"><div className="section-head compact"><div><h2>模型与音色配置</h2><p>复用已保存的服务连接、模型和音色，无需在每个模式重新配置。</p></div><button type="button" onClick={() => setModelSettingsOpen(false)}>收起</button></div><div className="voice-runtime-card"><span>{health || '尚未检查服务'}</span><button type="button" onClick={() => void refreshRuntime()}>检查服务</button></div><ModelsPage initialTab="tts" allowedTabs={['tts']} embedded /></section>}
+
+    <section className="panel voice-advanced-panel"><button type="button" className="voice-advanced-toggle" aria-expanded={mixingOpen} aria-controls="voice-mixing-settings" onClick={() => setMixingOpen((open) => !open)}><span><strong>直播混音与音效</strong><small>需要麦克风透传或音效时再展开。</small></span><span aria-hidden="true">{mixingOpen ? '−' : '+'}</span></button>
+      {mixingOpen && <div id="voice-mixing-settings" className="voice-mixing-body">
+        <div className={`voice-relay-card ${relayActive ? 'active' : ''}`}><div><strong>麦克风音频中转</strong><small>{relayStatus}</small><small>将真实麦克风、TTS 和音效叠加到 {outputName}。请避免将同一虚拟声卡同时作为识别输入和输出。</small></div><button type="button" onClick={() => void toggleRelay()}>{relayActive || relayStarting ? '停止中转' : '启用中转'}</button></div>
+        <div className="section-head compact"><div><h3>音效</h3><p>点击音效会直接发送到 {outputName}。</p></div><div className="row-actions"><button type="button" onClick={() => soundFileRef.current?.click()}>导入音效</button><button type="button" disabled={!soundEffects.length} onClick={() => setSoundEffects([])}>清空</button></div></div>
+        <input ref={soundFileRef} type="file" accept="audio/*" multiple hidden onChange={(event) => { importSoundEffects(event.target.files); event.currentTarget.value = '' }} />
+        {soundEffects.length ? <div className="sfx-grid">{soundEffects.map((item) => <article key={item.id}><button type="button" onClick={() => void playSoundEffect(item)}>{item.name}</button><button type="button" className="ghost tiny" onClick={() => setSoundEffects(prev => prev.filter(effect => effect.id !== item.id))}>移除</button></article>)}</div> : <p className="empty">尚未导入音效，可选择本地音频文件。</p>}
+      </div>}
+    </section>
+  </div>
 }

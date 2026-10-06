@@ -5,6 +5,15 @@ export class TextInjectionCancelledError extends Error {
   }
 }
 
+/** Only an explicitly pre-delivery failure may be repeated. A lost reply or
+ * partial SendInput can already have delivered text, so retrying duplicates it. */
+export class TextInjectionNotSentError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'TextInjectionNotSentError'
+  }
+}
+
 export async function runTextInjectionWithRecovery(
   attempt: () => Promise<boolean>,
   reset: () => void,
@@ -13,12 +22,12 @@ export async function runTextInjectionWithRecovery(
   let lastError: unknown
   for (let index = 0; index < Math.max(1, maxAttempts); index += 1) {
     try {
-      // false is an intentional "focused control is not editable" result.
-      // Retrying it can paste into a different target, so only exceptions retry.
+      // false is an intentional refusal. Never retry an ambiguous delivery.
       return await attempt()
     } catch (error) {
       lastError = error
       if (error instanceof TextInjectionCancelledError) break
+      if (!(error instanceof TextInjectionNotSentError)) break
       if (index + 1 >= maxAttempts) break
       reset()
     }

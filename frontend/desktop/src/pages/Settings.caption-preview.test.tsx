@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/services/audio', () => ({
   audioRelayMixer: {
@@ -19,7 +19,16 @@ import { DEFAULT_SETTINGS, useASRStore } from '@/store/useASRStore'
 
 describe('caption preview live updates', () => {
   beforeEach(() => {
-    useASRStore.setState({ settings: { ...useASRStore.getState().settings, ...DEFAULT_SETTINGS } })
+    useASRStore.setState({ page: 'settings', settings: { ...useASRStore.getState().settings, ...DEFAULT_SETTINGS } })
+  })
+  afterEach(cleanup)
+
+  it('directs environment setup to the homepage without duplicating controls', () => {
+    render(<SettingsPage />)
+    expect(screen.queryByLabelText('后端地址')).toBeNull()
+    expect(screen.queryByRole('button', { name: '一键安装并启动' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '前往首页' }))
+    expect(useASRStore.getState().page).toBe('home')
   })
 
   it('updates an open preview when caption width changes', async () => {

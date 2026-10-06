@@ -57,7 +57,10 @@ vi.mock('@/store/useASRStore', () => ({
 }))
 
 vi.mock('./audio', () => ({
-  speechRecorder: { prepare: vi.fn(), cancel: vi.fn() },
+  speechRecorder: {
+    prepare: vi.fn(async () => undefined), cancel: vi.fn(), start: vi.fn(async () => undefined), takePreparedStream: vi.fn(),
+    stop: vi.fn(async () => ({ blob: new Blob([new Uint8Array(1024)], { type: 'audio/webm' }) })),
+  },
   captureSpeakerAudio: vi.fn(),
   blobToBase64: vi.fn(async () => ''),
 }))
@@ -116,6 +119,68 @@ describe('consecutive offline ASR auto-fill latency', () => {
     store.state.settings.llmAutoTranslate = false
     vi.restoreAllMocks()
     vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(() => 'blob:e2e') })
+  })
+
+  it('keeps the result visible when native injection refuses a non-editable target', async () => {
+    const overlay = vi.fn(async () => true)
+    const hide = vi.fn(async () => true)
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: {
+      injectText: vi.fn(async () => false), showStatusOverlay: overlay, hideStatusOverlay: hide,
+      getDefaultArchiveDir: vi.fn(async () => ''),
+    } })
+    const service = new RecordingService()
+    await service.runTranscription(new Blob([new Uint8Array(1024)]), 'first.wav', true)
+    expect(store.state.currentResult.full_text).toBe('第1次识别')
+    expect(store.state.transcribeStatus).toBe('done')
+    expect(store.state.error).toContain('没有可编辑的输入框')
+    expect(overlay).toHaveBeenCalledWith('result', 0, '第1次识别')
+    expect(hide).not.toHaveBeenCalled()
+  })
+
+  it('waits for this recording capture and refuses delivery after capture failed', async () => {
+    let resolveCapture!: (value: boolean) => void
+    const captured = new Promise<boolean>(resolve => { resolveCapture = resolve })
+    const inject = vi.fn(async () => true)
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: {
+      captureTextTarget: vi.fn(() => captured), injectText: inject,
+      showStatusOverlay: vi.fn(async () => true), hideStatusOverlay: vi.fn(async () => true),
+      getDefaultArchiveDir: vi.fn(async () => ''),
+    } })
+    const service = new RecordingService()
+    await service.toggle(true)
+    const stopping = service.toggle(true)
+    await vi.waitFor(() => expect(store.state.currentResult?.full_text).toBe('第1次识别'))
+    expect(inject).not.toHaveBeenCalled()
+    resolveCapture(false)
+    await stopping
+    expect(inject).not.toHaveBeenCalled()
+    expect(store.state.error).toContain('没有捕获到原输入窗口')
+    expect(store.state.currentResult.full_text).toBe('第1次识别')
+  })
+
+  it('does not claim success when the native injection API is unavailable', async () => {
+    const hide = vi.fn(async () => true)
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: {
+      showStatusOverlay: vi.fn(async () => true), hideStatusOverlay: hide,
+      getDefaultArchiveDir: vi.fn(async () => ''),
+    } })
+    await new RecordingService().runTranscription(new Blob([new Uint8Array(1024)]), 'first.wav', true)
+    expect(store.state.error).toContain('自动填充未完成')
+    expect(hide).not.toHaveBeenCalled()
+  })
+
+  it('reports our fixed native refusal reason without leaking arbitrary upstream error text', async () => {
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: {
+      injectText: vi.fn(async () => { throw new Error('Error invoking remote method: 自动填充未完成：剪贴板正被其他软件占用。结果已保留，可点击复制。') }),
+      showStatusOverlay: vi.fn(async () => true), hideStatusOverlay: vi.fn(async () => true),
+      getDefaultArchiveDir: vi.fn(async () => ''),
+    } })
+    await new RecordingService().runTranscription(new Blob([new Uint8Array(1024)]), 'first.wav', true)
+    expect(store.state.error).toBe('自动填充未完成：剪贴板正被其他软件占用。结果已保留，可点击复制。')
+    window.electronAPI!.injectText = vi.fn(async () => { throw new Error('private window title and contents') })
+    await new RecordingService().runTranscription(new Blob([new Uint8Array(1024)]), 'second.wav', true)
+    expect(store.state.error).not.toContain('private')
+    expect(store.state.error).toContain('运行权限')
   })
 
   it('fills the second result immediately when the first Electron injection is stuck', async () => {

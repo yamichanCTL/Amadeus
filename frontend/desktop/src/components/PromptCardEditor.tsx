@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { PromptCard } from '@/store/useASRStore'
 
 type PromptCardEditorProps = {
+  compact?: boolean
   title: string
   description: string
   cards: PromptCard[]
@@ -9,7 +10,7 @@ type PromptCardEditorProps = {
   onChange: (value: { cards: PromptCard[]; activeCardId: string; prompt: string }) => void
 }
 
-export function PromptCardEditor({ title, description, cards, activeCardId, onChange }: PromptCardEditorProps) {
+export function PromptCardEditor({ compact = false, title, description, cards, activeCardId, onChange }: PromptCardEditorProps) {
   const activeCard = useMemo(
     () => cards.find((card) => card.id === activeCardId) || cards[0],
     [activeCardId, cards],
@@ -46,13 +47,26 @@ export function PromptCardEditor({ title, description, cards, activeCardId, onCh
     onChange({ cards: next, activeCardId: next[0].id, prompt: next[0].prompt })
   }
 
+  const form = <div className="prompt-card-form">
+    <label>卡片名称<input value={draft.name} maxLength={60} onChange={(event) => setDraft((value) => ({ ...value, name: event.target.value }))} /></label>
+    <label>Prompt 内容<textarea rows={5} value={draft.prompt} onChange={(event) => setDraft((value) => ({ ...value, prompt: event.target.value }))} /></label>
+    <div className="prompt-card-actions">
+      <button type="button" className="primary" onClick={save}>保存修改</button>
+      <button type="button" disabled={cards.length <= 1} onClick={remove}>删除卡片</button>
+    </div>
+  </div>
+
   return (
-    <section className="prompt-card-editor">
+    <section className={`prompt-card-editor${compact ? ' prompt-card-editor-compact' : ''}`}>
       <div className="section-head compact">
         <div><h2>{title}</h2><p>{description}</p></div>
         <button type="button" onClick={add}>＋ 新增卡片</button>
       </div>
-      <div className="prompt-card-list">
+      {compact ? <>
+        <label className="prompt-template-choice">当前模板<select aria-label="当前处理模板" value={activeCard?.id || ''} onChange={(event) => { const card = cards.find((item) => item.id === event.target.value); if (card) select(card) }}>{cards.map((card) => <option key={card.id} value={card.id}>{card.name}</option>)}</select></label>
+        <p className="prompt-template-preview">{activeCard?.prompt || '此模板还没有提示词，展开下方编辑内容。'}</p>
+        <details className="prompt-template-details"><summary>编辑提示词与模板名称</summary>{form}</details>
+      </> : <><div className="prompt-card-list">
         {cards.map((card) => (
           <button type="button" key={card.id} className={card.id === activeCardId ? 'prompt-card active' : 'prompt-card'} onClick={() => select(card)}>
             <strong>{card.name}</strong>
@@ -61,14 +75,7 @@ export function PromptCardEditor({ title, description, cards, activeCardId, onCh
           </button>
         ))}
       </div>
-      <div className="prompt-card-form">
-        <label>卡片名称<input value={draft.name} maxLength={60} onChange={(event) => setDraft((value) => ({ ...value, name: event.target.value }))} /></label>
-        <label>Prompt 内容<textarea rows={5} value={draft.prompt} onChange={(event) => setDraft((value) => ({ ...value, prompt: event.target.value }))} /></label>
-        <div className="prompt-card-actions">
-          <button type="button" className="primary" onClick={save}>保存修改</button>
-          <button type="button" disabled={cards.length <= 1} onClick={remove}>删除卡片</button>
-        </div>
-      </div>
+      {form}</>}
     </section>
   )
 }

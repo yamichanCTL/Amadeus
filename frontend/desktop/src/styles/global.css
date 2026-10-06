@@ -386,6 +386,8 @@ pre { white-space: pre-wrap; word-break: break-word; }
 
 .settings-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
 .settings-tabs button { min-width: 118px; }
+.settings-environment-link { margin-bottom: 16px; }
+.settings-environment-link .section-head { margin-bottom: 0; align-items: center; }
 .settings-section { min-height: 520px; }
 .settings-section-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
 .settings-section-grid .wide { grid-column: 1 / -1; }

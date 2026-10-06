@@ -4,6 +4,8 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import http from 'node:http'
 import net from 'node:net'
+import { RuntimeInstallObserver, runtimeInstallMessages, type RuntimeInstallProgress } from './runtime-install-progress'
+import { managedRuntimeEnvironment, type ManagedStoragePaths } from './storage-layout'
 
 export interface LocalRuntimeState {
   phase: 'missing' | 'installing' | 'ready' | 'starting' | 'running' | 'stopping' | 'error'
@@ -15,6 +17,7 @@ export interface LocalRuntimeState {
   root: string
   logPath: string
   progress?: number
+  installProgress?: RuntimeInstallProgress
   owned: boolean
 }
 
@@ -22,11 +25,19 @@ interface RuntimeOptions {
   root: string
   bundlePath: string
   uvPath: string
+  storagePaths?: ManagedStoragePaths
   onChange?: (state: LocalRuntimeState) => void
 }
 
 interface SourceFile { relative: string; source: string }
 const runtimeExtras = new Set(['whisper', 'sensevoice', 'qwen3asr', 'formalasr', 'firered', 'sherpa', 'x-asr'])
+const runtimeModules: Record<string, string[]> = {
+  whisper: ['faster_whisper'], sensevoice: ['funasr', 'torch', 'torchaudio', 'kaldi_native_fbank'],
+  qwen3asr: ['qwen_asr', 'torch', 'transformers', 'accelerate'],
+  formalasr: ['qwen_asr', 'torch', 'transformers', 'accelerate'],
+  firered: ['torch', 'torchaudio', 'transformers', 'kaldi_native_fbank', 'kaldiio', 'cn2an', 'peft'],
+  sherpa: ['sherpa_onnx'], 'x-asr': ['sherpa_onnx'],
+}
 
 /** Logs are intended for user troubleshooting; provider credentials must stay private. */
 export function redactRuntimeLog(value: string): string {
@@ -114,6 +125,7 @@ export class LocalRuntimeManager {
   private logQueue: Promise<void> = Promise.resolve()
   private child: ChildProcess | null = null
   private installer: ChildProcess | null = null
+  private installObserver: RuntimeInstallObserver | null = null
   private installation: Promise<LocalRuntimeState> | null = null
   private extraInstallation = false
   private disposed = false
@@ -177,24 +189,25 @@ export class LocalRuntimeManager {
     }).catch(() => undefined)
   }
 
-  private capture(child: ChildProcess, installation = false): void {
+  private capture(child: ChildProcess, onLine?: (line: string) => void): void {
     for (const stream of [child.stdout, child.stderr]) {
       if (!stream) continue
       let pending = ''
+      const report = (line: string) => {
+        if (this.disposed) return
+        if (line.trim()) { this.log(line); onLine?.(redactRuntimeLog(line)) }
+      }
+      const flush = () => { report(pending); pending = '' }
       stream.setEncoding('utf8')
       stream.on('data', (chunk: string) => {
         pending += chunk
         const lines = pending.split(/[\r\n]+/)
         pending = lines.pop() ?? ''
-        for (const line of lines) if (line.trim()) this.log(line)
-        if (pending.length > 65_536) { this.log(pending); pending = '' }
-        if (installation) {
-          const combined = lines.join(' ')
-          if (/Downloading|download/i.test(combined)) this.update({ message: '正在下载 Python 和依赖，请保持联网……', progress: 30 })
-          if (/Installing|Prepared|Uninstalled/i.test(combined)) this.update({ message: '正在安装并校验后端依赖……', progress: 70 })
-        }
+        for (const line of lines) report(line)
+        if (pending.length > 65_536) flush()
       })
-      stream.on('end', () => { if (pending.trim()) this.log(pending) })
+      stream.on('end', flush)
+      child.once('close', flush)
     }
   }
 
@@ -216,7 +229,8 @@ export class LocalRuntimeManager {
     return { ...env, PYTHONUTF8: '1', PYTHONUNBUFFERED: '1', UV_NO_CONFIG: '1', UV_NATIVE_TLS: 'true', UV_PYTHON_PREFERENCE: 'only-managed',
       UV_PYTHON_INSTALL_DIR: path.join(this.state.root, 'python'), UV_CACHE_DIR: path.join(this.state.root, 'cache'),
       UV_PYTHON_BIN_DIR: path.join(this.state.root, 'bin'), UV_PYTHON_INSTALL_REGISTRY: 'false', UV_LINK_MODE: 'copy',
-      UV_HTTP_TIMEOUT: '120', UV_NO_PROGRESS: '1', UV_PYTHON_DOWNLOADS: 'automatic' }
+      UV_HTTP_TIMEOUT: '120', UV_NO_PROGRESS: '1', UV_PYTHON_DOWNLOADS: 'automatic',
+      ...(this.options.storagePaths ? managedRuntimeEnvironment(this.options.storagePaths) : {}) }
   }
 
   async status(): Promise<LocalRuntimeState> { await this.ready; return { ...this.state } }
@@ -228,7 +242,7 @@ export class LocalRuntimeManager {
     if (this.installation) return this.installation
     const operation = this.mutate(async () => {
       if (process.platform !== 'win32') throw new Error('一键环境安装目前支持 Windows 10/11。')
-      if (this.child) throw new Error('请先停止本机后端再更新环境。')
+      if (this.child) await this.stopChild()
       if (!await exists(this.options.uvPath)) throw new Error('安装包缺少环境安装器，请重新下载安装完整的 Windows 版本。')
       const repairing = this.state.installed
       const extrasPath = path.join(this.state.root, 'extras.json')
@@ -238,34 +252,71 @@ export class LocalRuntimeManager {
         if (Array.isArray(saved)) extras = saved.filter((value): value is string => typeof value === 'string' && runtimeExtras.has(value))
       } catch { /* Basic environment or no extras selected yet. */ }
       if (extra && !extras.includes(extra)) extras.push(extra)
-      this.update({ phase: 'installing', progress: 5, message: '正在准备独立的 Python 环境……', error: undefined, url: null })
+      this.update({ phase: 'installing', progress: undefined, installProgress: undefined, message: '正在准备独立的 Python 环境……', error: undefined, url: null })
       const bundle = await this.sourceBundle
-      for (const file of bundle.files) {
-        const destination = path.join(this.appPath, file.relative)
-        await fs.mkdir(path.dirname(destination), { recursive: true })
-        await fs.copyFile(file.source, destination)
-      }
-      this.log('开始安装 Python 3.12 及锁定的后端依赖。')
-      await new Promise<void>((resolve, reject) => {
-        const child = spawn(this.options.uvPath, ['sync', '--locked', '--no-dev', '--python', '3.12', '--project', this.appPath, ...extras.flatMap(value => ['--extra', value]), ...(repairing && !extra ? ['--reinstall'] : [])], { cwd: this.appPath, env: this.environment(), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], shell: false })
-        this.installer = child
-        this.capture(child, true)
-        const timeout = setTimeout(() => {
-          void this.terminateOwned(child).then(() => reject(new Error('安装超过 30 分钟。请检查网络后重试；已下载的文件会复用。')))
-        }, 30 * 60_000)
-        const finish = (error?: Error) => {
-          clearTimeout(timeout)
-          if (this.installer === child) this.installer = null
-          error ? reject(error) : resolve()
-        }
-        child.once('error', error => finish(new Error(`无法运行环境安装器：${error.message}`)))
-        child.once('close', (code, signal) => finish(code === 0 ? undefined : new Error(`环境安装未完成（${code ?? signal}）。请检查网络连接及磁盘空间，打开日志查看原因后重试。`)))
+      const storage = this.options.storagePaths
+      if (storage) await Promise.all([storage.pythonRoot, storage.modelsRoot, storage.cacheRoot, storage.tempRoot, storage.backendDataRoot].map(directory => fs.mkdir(directory, { recursive: true })))
+      const environment = this.environment()
+      const observer = new RuntimeInstallObserver(await fs.readFile(path.join(this.options.bundlePath, 'uv.lock'), 'utf8'), [environment.UV_CACHE_DIR!, environment.UV_PYTHON_INSTALL_DIR!], installProgress => {
+        if (!this.disposed && this.installObserver === observer) this.update({ installProgress, message: runtimeInstallMessages[installProgress.stage], progress: undefined })
       })
-      if (this.disposed) return
-      if (!await exists(this.pythonPath)) throw new Error('依赖安装结束但找不到 Python，请打开日志后重试安装。')
-      await fs.writeFile(extrasPath, JSON.stringify(extras), 'utf8')
-      await fs.writeFile(this.markerPath, JSON.stringify({ version: 1, fingerprint: bundle.fingerprint, installedAt: new Date().toISOString() }, null, 2), 'utf8')
-      this.update({ phase: 'ready', installed: true, progress: 100, message: '环境安装完成。点击启动即可使用。', error: undefined })
+      this.installObserver = observer
+      observer.start()
+      try {
+        for (const file of bundle.files) {
+          const destination = path.join(this.appPath, file.relative)
+          await fs.mkdir(path.dirname(destination), { recursive: true })
+          await fs.copyFile(file.source, destination)
+        }
+        if (this.disposed) return
+        this.log('开始安装 Python 3.12 及锁定的后端依赖。')
+        // A failed dependency change must not retain a marker claiming that the
+        // previous environment still satisfies the current package.
+        await fs.rm(this.markerPath, { force: true })
+        this.update({ installed: false })
+        await new Promise<void>((resolve, reject) => {
+          const child = spawn(this.options.uvPath, ['sync', '--locked', '--no-dev', '--python', '3.12', '--project', this.appPath, ...extras.flatMap(value => ['--extra', value]), ...(repairing && !extra ? ['--reinstall'] : [])], { cwd: this.appPath, env: environment, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], shell: false })
+          this.installer = child
+          const recentErrors: string[] = []
+          this.capture(child, line => {
+            observer.consume(line)
+            if (/error:|caused by:|failed to|no solution|certificate|×/i.test(line)) {
+              recentErrors.push(line.trim())
+              if (recentErrors.length > 4) recentErrors.shift()
+            }
+          })
+          let settled = false
+          let timeoutError: Error | undefined
+          const timeout = setTimeout(() => {
+            timeoutError = new Error('安装超过 30 分钟。请检查网络后重试；已下载的文件会复用。')
+            void this.terminateOwned(child).then(() => finish(timeoutError), error => finish(error))
+          }, 30 * 60_000)
+          const finish = (error?: Error) => {
+            if (settled) return
+            settled = true
+            clearTimeout(timeout)
+            if (this.installer === child) this.installer = null
+            const failure = timeoutError ?? error
+            failure ? reject(failure) : resolve()
+          }
+          child.once('error', error => finish(new Error(`无法运行环境安装器：${error.message}`)))
+          child.once('close', (code, signal) => finish(code === 0 ? undefined : new Error(`环境安装未完成（${code ?? signal}）。${recentErrors.length ? recentErrors.join(' ').slice(-600) : '请检查网络连接及磁盘空间，打开日志查看原因后重试。'}`)))
+        })
+        if (this.disposed) return
+        if (!await exists(this.pythonPath)) throw new Error('依赖安装结束但找不到 Python，请打开日志后重试安装。')
+        if (extras.length) await this.verifyRuntimeComponents(extras)
+        if (this.disposed) return
+        await fs.writeFile(extrasPath, JSON.stringify(extras), 'utf8')
+        await fs.writeFile(this.markerPath, JSON.stringify({ version: 1, fingerprint: bundle.fingerprint, installedAt: new Date().toISOString() }, null, 2), 'utf8')
+        observer.stop('complete')
+        this.update({ phase: 'ready', installed: true, progress: undefined, message: '环境安装完成。点击启动即可使用。', error: undefined })
+      } catch (error) {
+        observer.stop(this.disposed ? 'cancelled' : 'failed')
+        throw error
+      } finally {
+        observer.stop('cancelled')
+        if (this.installObserver === observer) this.installObserver = null
+      }
     })
     this.installation = operation
     void operation.finally(() => { if (this.installation === operation) this.installation = null })
@@ -280,13 +331,63 @@ export class LocalRuntimeManager {
     this.extraInstallation = true
     try {
       const before = await this.status()
-      if (!before.installed) throw new Error('请先安装基础运行环境。')
-      if (!before.owned || before.phase !== 'running') throw new Error('请先启动本机服务。')
-      const stopped = await this.stop()
-      if (stopped.owned || stopped.phase === 'error') return stopped
+      const restart = before.owned && before.phase === 'running'
+      if (before.owned) {
+        const stopped = await this.stop()
+        if (stopped.owned || stopped.phase === 'error') return stopped
+      }
       const installed = await this.install(extra)
-      return installed.phase === 'ready' ? await this.start() : installed
+      return installed.phase === 'ready' && restart ? await this.start() : installed
     } finally { this.extraInstallation = false }
+  }
+
+  private async verifyRuntimeComponents(extras: string[]): Promise<void> {
+    const modules = [...new Set(extras.flatMap(extra => runtimeModules[extra] ?? []))]
+    this.installObserver?.setStage('verifying')
+    this.update({ message: '正在检查模型运行组件；首次检查 CUDA 组件可能需要 1～3 分钟，请稍候……', progress: undefined })
+    // Module names come exclusively from the bundled allowlist. Importing the
+    // actual packages catches missing DLLs/transitive dependencies that a mere
+    // successful uv exit or find_spec would miss.
+    const script = [
+      'import importlib',
+      `for name in ${JSON.stringify(modules)}:`,
+      "    print('Amadeus checking module: ' + name, flush=True)",
+      '    importlib.import_module(name)',
+      ...(modules.includes('torch') ? [
+        'import torch',
+        'if torch.version.cuda is None:',
+        "    raise RuntimeError('当前 PyTorch 是 CPU 版本，缺少默认 CUDA 加载所需组件。请重新安装该模型运行组件。')",
+        'if torch.cuda.is_available():',
+        "    print('Amadeus checking CUDA operation', flush=True)",
+        "    value = torch.ones((2, 2), device='cuda').sum().item()",
+        "    print('CUDA 实际运算检查通过：' + torch.cuda.get_device_name(0))",
+        'else:',
+        "    print('CUDA 运行组件已安装；本机未检测到可用 NVIDIA GPU，需要在识别设置中显式选择 CPU。')",
+      ] : []),
+      "print('Amadeus runtime components ready')",
+    ].join('\n')
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(this.pythonPath, ['-c', script], { cwd: this.appPath, env: this.environment(), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], shell: false })
+      this.installer = child
+      const errors: string[] = []
+      this.capture(child, line => {
+        const module = line.match(/^Amadeus checking module: ([a-z_]+)$/)?.[1]
+        if (module) this.update({ message: `正在检查运行组件 ${module}；首次检查可能需要 1～3 分钟……`, progress: undefined })
+        if (line === 'Amadeus checking CUDA operation') this.update({ message: '正在验证显卡能否执行 CUDA 运算……', progress: undefined })
+        errors.push(line.trim())
+        if (errors.length > 5) errors.shift()
+      })
+      const timeout = setTimeout(() => {
+        void this.terminateOwned(child).then(() => reject(new Error('运行组件检查超时，请打开日志后重新安装该模型的运行组件。')))
+      }, 180_000)
+      const finish = (error?: Error) => {
+        clearTimeout(timeout)
+        if (this.installer === child) this.installer = null
+        error ? reject(error) : resolve()
+      }
+      child.once('error', error => finish(new Error(`无法检查运行组件：${error.message}`)))
+      child.once('close', code => finish(code === 0 ? undefined : new Error(`运行组件安装后仍无法加载：${errors.join(' ').slice(-600) || '请打开日志查看原因。'}`)))
+    })
   }
 
   start(): Promise<LocalRuntimeState> {
@@ -294,11 +395,14 @@ export class LocalRuntimeManager {
       if (this.child && this.state.phase === 'running') return
       if (!this.state.installed || !await exists(this.pythonPath)) throw new Error('请先点击“安装本机环境”，完成后再启动。')
       if (this.child) await this.stopChild()
-      this.update({ phase: 'starting', progress: undefined, message: '正在启动本机后端……', error: undefined, url: null })
+      this.update({ phase: 'starting', progress: undefined, installProgress: undefined, message: '正在启动本机后端……', error: undefined, url: null })
       const port = await findRuntimePort()
       const url = `http://127.0.0.1:${port}`
       const env = { ...this.environment(), PROJECT_ROOT: this.state.root, MODELS_DIR: path.join(this.state.root, 'models'),
-        CODEX_RUNTIME_DIR: path.join(this.state.root, 'codex'), PRELOAD_DEFAULT_ENGINE: 'false', CELERY_TASK_ALWAYS_EAGER: 'true', APP_ENV: 'production' }
+        DEFAULT_QWEN3ASR_DEVICE: 'cuda:0', QWEN3ASR_TORCH_DTYPE: 'auto',
+        DEFAULT_FORMALASR_DEVICE: 'cuda:0', FORMALASR_TORCH_DTYPE: 'auto',
+        CODEX_RUNTIME_DIR: path.join(this.state.root, 'codex'), PRELOAD_DEFAULT_ENGINE: 'false', CELERY_TASK_ALWAYS_EAGER: 'true', APP_ENV: 'production',
+        ...(this.options.storagePaths ? managedRuntimeEnvironment(this.options.storagePaths) : {}) }
       const child = spawn(this.pythonPath, ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(port), '--log-level', 'warning'], { cwd: path.join(this.appPath, 'backend'), env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], shell: false })
       this.child = child
       this.update({ owned: true })
@@ -381,6 +485,7 @@ export class LocalRuntimeManager {
 
   async dispose(): Promise<void> {
     this.disposed = true
+    this.installObserver?.stop('cancelled')
     await this.ready
     if (this.installer) await this.terminateOwned(this.installer)
     await this.stopChild()

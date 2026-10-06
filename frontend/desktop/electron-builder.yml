@@ -1,6 +1,7 @@
 appId: com.asrapp.desktop
 productName: Amadeus
 beforePack: scripts/prepare-runtime.cjs
+afterSign: scripts/verify-windows-icon.cjs
 icon: ../../img/Amadeus/amadeus-icon.png
 directories:
   output: release
@@ -20,7 +21,7 @@ extraResources:
       - amadeus-icon.png
       - amadeus.ico
 win:
-  icon: ../../img/Amadeus/amadeus-icon.png
+  icon: ../../img/Amadeus/amadeus.ico
   extraResources:
     - from: ../../.runtime/windows-bootstrap
       to: runtime
@@ -45,13 +46,17 @@ win:
       to: backend-bundle/pyproject.toml
     - from: ../../uv.lock
       to: backend-bundle/uv.lock
-  signAndEditExecutable: false
+  # Resource editing writes the app icon and version even when no signing certificate is set.
+  signAndEditExecutable: true
   signDlls: false
   target:
     - target: nsis
       arch:
         - x64
 nsis:
+  include: electron/installer-storage.nsh
+  installerIcon: ../../img/Amadeus/amadeus.ico
+  uninstallerIcon: ../../img/Amadeus/amadeus.ico
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true

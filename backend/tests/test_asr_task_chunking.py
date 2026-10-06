@@ -6,6 +6,7 @@ import pytest
 import soundfile as sf
 
 from app.core.asr.base import ASRResult, EngineOptions, Segment
+from app.core.inference_scheduler import inference_timing_from_result
 from app.tasks.asr_task import (
     _build_audio_inference_chunks,
     _merge_chunk_results,
@@ -125,3 +126,48 @@ def test_merge_written_chunks_keeps_punctuation_and_does_not_invent_timestamps()
     assert result.raw["native_punctuation"] is True
     assert result.raw["supports_timestamps"] is False
     assert result.raw["chunk_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_long_audio_timing_sums_sequential_stages_without_repeating_model_load() -> None:
+    calls = 0
+
+    async def transcribe(engine_name, audio_bytes, options):
+        nonlocal calls
+        calls += 1
+        return ASRResult(full_text=f"chunk-{calls}", raw={"inference_timing": {
+            "queue_wait_sec": calls / 10,
+            "model_ready_sec": 2.0 if calls == 1 else 0.0,
+            "model_inference_sec": 1.0,
+            "audio_prepare_sec": 0.1,
+            "sdk_inference_sec": 0.8,
+            "result_format_sec": 0.1,
+        }})
+
+    result, meta = await _transcribe_audio_via_scheduler(
+        engine_name="formalasr", audio_bytes=make_wav_bytes(duration_sec=2.2),
+        options=None, chunk_sec=1.0, transcribe=transcribe,
+    )
+
+    assert meta == {"asr_chunk_count": 3, "asr_chunk_sec": 1.0}
+    assert inference_timing_from_result(result) == {
+        "queue_wait_sec": 0.6, "model_ready_sec": 2.0, "model_inference_sec": 3.0,
+        "audio_prepare_sec": 0.3, "sdk_inference_sec": 2.4, "result_format_sec": 0.3,
+    }
+    assert [chunk["inference_timing"]["model_ready_sec"] for chunk in result.raw["chunks"]] == [2.0, 0.0, 0.0]
+    assert "asr_sec" not in result.raw["inference_timing"]
+    assert "total_sec" not in result.raw["inference_timing"]
+
+
+def test_merge_chunk_timing_does_not_publish_partial_stage_as_complete() -> None:
+    chunks = _build_audio_inference_chunks(make_wav_bytes(duration_sec=2.0), chunk_sec=1.0)
+    result = _merge_chunk_results([
+        (chunks[0], ASRResult(full_text="one", raw={"inference_timing": {
+            "model_inference_sec": 1.0, "sdk_inference_sec": 0.9,
+        }})),
+        (chunks[1], ASRResult(full_text="two", raw={"inference_timing": {
+            "model_inference_sec": 2.0,
+        }})),
+    ])
+    assert inference_timing_from_result(result) == {"model_inference_sec": 3.0}
+    assert result.raw["chunks"][0]["inference_timing"]["sdk_inference_sec"] == 0.9

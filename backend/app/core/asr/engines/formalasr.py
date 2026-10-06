@@ -50,7 +50,7 @@ class FormalASREngine(Qwen3ASREngine):
             **extra,
         )
 
-    def _call_model(self, audio_path: str, opts: EngineOptions) -> Any:
+    def _call_model(self, audio_path: Any, opts: EngineOptions) -> Any:
         if opts.task != "transcribe":
             raise ValueError("FormalASR supports Chinese written transcription, not translation.")
         language = _qwen_language(opts.language)

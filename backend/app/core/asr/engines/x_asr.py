@@ -250,7 +250,9 @@ class XASREngine(BaseASREngine):
         return int(suffix_match.group(1)) if suffix_match else 160
 
     def _variant_available(self, model_name: str) -> bool:
-        model_dir = settings.x_asr_model_dir.parent / model_name
+        # A task can select an imported/custom model directory. Discover its
+        # sibling windows beside the active model instead of the global default.
+        model_dir = self._model_dir.parent / model_name
         match = re.search(r"chunk-(\d+)ms", model_name)
         if not match:
             return False

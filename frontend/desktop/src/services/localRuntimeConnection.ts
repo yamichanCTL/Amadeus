@@ -16,6 +16,15 @@ function rememberUrl(value: string) {
   try { localStorage.setItem(LAST_MANAGED_URL, normalizedUrl(value)) } catch { /* Storage may be unavailable. */ }
 }
 
+/** Installation temporarily clears state.url; retain the identity of the
+ * selected local service without treating an unrelated remote backend as it. */
+export function isSelectedLocalRuntime(state: LocalRuntimeState | null, configuredUrl: string): boolean {
+  const selected = normalizedUrl(configuredUrl)
+  if (!state || !selected) return false
+  const local = normalizedUrl(state.url || rememberedUrl())
+  return Boolean(local && selected === local)
+}
+
 /** A user click can select local service; background events must preserve a remote server. */
 export function connectLocalRuntime(state: LocalRuntimeState, explicit = false) {
   if (state.phase !== 'running' || !state.url) return

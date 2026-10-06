@@ -56,7 +56,7 @@ class ModelRuntimeError(RuntimeError):
 
 
 def classify_model_error(exc: BaseException, model: str) -> ModelRuntimeError:
-    """Map native CUDA/ONNX failures to the two supported client outcomes."""
+    """Map runtime failures to stable messages with a concrete recovery step."""
 
     if isinstance(exc, ModelRuntimeError):
         return exc
@@ -65,12 +65,37 @@ def classify_model_error(exc: BaseException, model: str) -> ModelRuntimeError:
     normalized = detail.lower()
     display_name = model.strip() or "ASR"
 
+    if "no module named" in normalized or ("requires " in normalized and "install" in normalized):
+        return ModelRuntimeError(
+            code="runtime_dependency_missing",
+            user_message=(
+                f"{display_name} 缺少运行组件。请在“语音识别 → 识别配置 → 模型下载”中安装运行组件后重新加载；"
+                "已下载的模型权重无需重新下载。"
+            ),
+            model=display_name,
+            detail=detail,
+        )
+
     if any(marker in normalized for marker in _OOM_MARKERS):
         return ModelRuntimeError(
             code="gpu_out_of_memory",
             user_message=(
                 f"显存不足：无法加载或运行 {display_name} 模型，"
                 "请先卸载其他 GPU 模型后重试。"
+            ),
+            model=display_name,
+            detail=detail,
+        )
+
+    if any(marker in normalized for marker in (
+        "not compiled with cuda", "no cuda gpus are available", "found no nvidia driver",
+    )):
+        return ModelRuntimeError(
+            code="gpu_not_available",
+            user_message=(
+                f"当前运行环境无法使用 CUDA 加载 {display_name}。"
+                "请安装 CUDA 版运行组件（PyTorch）并检查 NVIDIA 显卡驱动；"
+                "如需使用 CPU，请明确选择“CPU”或“自动”。"
             ),
             model=display_name,
             detail=detail,

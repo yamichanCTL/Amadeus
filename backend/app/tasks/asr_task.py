@@ -32,6 +32,7 @@ import numpy as np
 from celery import Task  # type: ignore[import]
 
 from app.core.asr.base import ASRResult, EngineOptions, Segment
+from app.core.inference_scheduler import inference_timing_from_result
 from app.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
@@ -168,6 +169,7 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
                 timing["asr_sec"] = round(time.perf_counter() - asr_started, 6)
                 timing["asr_scheduler_enabled"] = 1.0
                 timing.update(chunk_meta)
+                timing.update(inference_timing_from_result(result))
                 return result
 
             timeout_sec = max(
@@ -218,6 +220,7 @@ async def _run(task_id: str, llm_options: dict | None = None) -> dict:
                 llm_opts = LLMAutoOptions.model_validate(llm_options)
                 outputs, llm_error = await run_auto_processing(
                     text=result.full_text,
+                    provider=llm_opts.provider,
                     model=llm_opts.model,
                     base_url=llm_opts.base_url,
                     api_token=llm_opts.api_token,
@@ -449,6 +452,7 @@ def _merge_chunk_results(results: list[tuple[AudioInferenceChunk, ASRResult]]) -
     confidences: list[float] = []
     languages: list[str] = []
     raw_chunks: list[dict[str, object]] = []
+    chunk_timings: list[dict[str, float]] = []
     engine_name = "unknown"
 
     for index, (chunk, result_obj) in enumerate(results):
@@ -484,15 +488,18 @@ def _merge_chunk_results(results: list[tuple[AudioInferenceChunk, ASRResult]]) -
                 )
             )
 
-        raw_chunks.append(
-            {
-                "index": index,
-                "start_sec": chunk.start_sec,
-                "end_sec": chunk.end_sec,
-                "text_chars": len(result.full_text),
-                "segment_count": len(result.segments),
-            }
-        )
+        raw_chunk: dict[str, object] = {
+            "index": index,
+            "start_sec": chunk.start_sec,
+            "end_sec": chunk.end_sec,
+            "text_chars": len(result.full_text),
+            "segment_count": len(result.segments),
+        }
+        chunk_timing = inference_timing_from_result(result)
+        chunk_timings.append(chunk_timing)
+        if chunk_timing:
+            raw_chunk["inference_timing"] = chunk_timing
+        raw_chunks.append(raw_chunk)
 
     confidence = round(sum(confidences) / len(confidences), 6) if confidences else None
     raw: dict[str, object] = {
@@ -500,6 +507,15 @@ def _merge_chunk_results(results: list[tuple[AudioInferenceChunk, ASRResult]]) -
         "chunk_count": len(results),
         "chunks": raw_chunks,
     }
+    # Chunk calls run sequentially, so their stage times can be added. Only
+    # publish a complete stage total; an uninstrumented chunk must not appear
+    # as a zero-duration inference. These totals remain subsets of asr_sec.
+    common_timing_keys = set.intersection(*(set(item) for item in chunk_timings))
+    if common_timing_keys:
+        raw["inference_timing"] = {
+            key: round(sum(item[key] for item in chunk_timings), 6)
+            for key in sorted(common_timing_keys)
+        }
     # Preserve output semantics after chunk merging: rewritten text must not
     # gain invented timestamps or pass through a second punctuation model.
     for key in ("output_kind", "native_punctuation", "supports_timestamps"):

@@ -1,9 +1,33 @@
 from __future__ import annotations
 
 import pytest
+import httpx
 
 from app.core import llm
 from app.schemas.llm import ArchiveSummaryRequest
+
+
+@pytest.mark.asyncio
+async def test_provider_empty_initial_delta_does_not_end_summary_stream(monkeypatch) -> None:
+    """Qwen/OpenAI may emit an empty role delta before the actual answer."""
+    body = (
+        'data: {"choices":[{"delta":{"role":"assistant","content":""}}]}\n\n'
+        'data: {"choices":[{"delta":{"content":"完成事项"}}]}\n\n'
+        'data: {"choices":[{"delta":{"content":"；下一步检查对话。"}}]}\n\n'
+        'data: [DONE]\n\n'
+    )
+    real_client = httpx.AsyncClient
+    transport = httpx.MockTransport(lambda request: httpx.Response(
+        200, text=body, headers={"content-type": "text/event-stream"}
+    ))
+    monkeypatch.setattr(llm.httpx, "AsyncClient", lambda **kwargs: real_client(
+        transport=transport, **kwargs
+    ))
+    chunks = [chunk async for chunk in llm._chat_completion_messages_stream(
+        model="qwen-fixture", base_url="https://llm.test/v1", api_token="fixture",
+        messages=[{"role": "user", "content": "测试总结"}], temperature=0.2, timeout=5,
+    )]
+    assert chunks == ["完成事项", "；下一步检查对话。"]
 
 
 @pytest.mark.asyncio

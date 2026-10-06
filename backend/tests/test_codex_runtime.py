@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 import sys
 
 import pytest
@@ -49,7 +50,7 @@ plugins = true
 """)
     monkeypatch.setenv("TEST_CODEX_TOKEN", "private-provider-token")
     monkeypatch.setenv("UNRELATED_SECRET", "private-unrelated-token")
-    binary = tmp_path / "fake-codex"
+    binary = tmp_path / ("fake-codex.cmd" if os.name == "nt" else "fake-codex")
     binary.write_text(
         f"#!{sys.executable}\n"
         + r"""
@@ -102,6 +103,19 @@ for line in sys.stdin:
 """
     )
     binary.chmod(0o700)
+    if os.name == "nt":
+        # Windows cannot execute a Python shebang. Launch this protocol fixture
+        # with Python directly so termination still targets the real child
+        # instead of leaving a cmd.exe wrapper's Python process alive.
+        real_popen = subprocess.Popen
+
+        def launch_fixture(args, *positional, **kwargs):
+            if isinstance(args, (list, tuple)) and args[0] == str(binary):
+                args = [sys.executable, str(binary), *args[1:]]
+                kwargs["env"] = {**kwargs["env"], "PYTHONIOENCODING": "utf-8"}
+            return real_popen(args, *positional, **kwargs)
+
+        monkeypatch.setattr(subprocess, "Popen", launch_fixture)
     return Settings(
         _env_file=None,
         project_root=tmp_path,
@@ -131,7 +145,11 @@ def test_imports_only_selected_connection(connection_settings):
     assert "UNRELATED_SECRET" not in connection.env
     assert connection.env["TEST_CODEX_TOKEN"] == "private-provider-token"
     assert connection.endpoint == "https://example.test/v1"
-    assert (connection.home / "auth.json").stat().st_mode & 0o077 == 0
+    if os.name == "posix":
+        assert (connection.home / "auth.json").stat().st_mode & 0o077 == 0
+    assert json.loads((connection.home / "auth.json").read_text()) == {
+        "OPENAI_API_KEY": "private-source-token"
+    }
     (connection.home / "auth.json").write_text("refreshed-credentials")
     assert prepare_connection(connection_settings).home == connection.home
     assert (connection.home / "auth.json").read_text() == "refreshed-credentials"
@@ -188,14 +206,13 @@ async def test_cancel_stops_actual_process_and_session_can_restart(runtime):
 
     task = asyncio.create_task(runtime.turn("WAIT", CodexOptions(), emit=emit))
     await asyncio.wait_for(started.wait(), 5)
-    pid = runtime._sessions["default"].client.process.pid
+    process = runtime._sessions["default"].client.process
     with pytest.raises(CodexError, match="已有"):
         await runtime.turn("duplicate", CodexOptions())
     assert await runtime.cancel("default") is True
     result = await task
     assert result.status == "cancelled"
-    with pytest.raises(ProcessLookupError):
-        os.kill(pid, 0)
+    assert process.poll() is not None
     await asyncio.sleep(0)
     assert (await runtime.turn("restart", CodexOptions())).status == "completed"
 
@@ -406,10 +423,9 @@ async def test_bridge_disconnect_cancels_active_turn_and_discards_queue(runtime)
     await bridge.submit({"type": "final", "job_id": "2", "text": "must not run"})
     while (await asyncio.wait_for(output.get(), 5))["type"] != "agent.started":
         pass
-    pid = runtime._sessions["disconnect"].client.process.pid
+    process = runtime._sessions["disconnect"].client.process
     await bridge.close()
-    with pytest.raises(ProcessLookupError):
-        os.kill(pid, 0)
+    assert process.poll() is not None
     assert (await runtime.ledger.summary("disconnect"))["calls"] == 1
 
 

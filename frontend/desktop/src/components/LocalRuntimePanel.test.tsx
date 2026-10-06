@@ -50,7 +50,7 @@ describe('Windows local environment setup', () => {
     await act(async () => finishInstall(ready))
     await waitFor(() => expect(api.localRuntimeStart).toHaveBeenCalledTimes(1))
     expect(useASRStore.getState().settings).toMatchObject({ serverUrl: running.url, backendConfirmed: true })
-    expect(screen.getByRole('button', { name: '进入实时语音对话' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '停止本机服务' })).toBeTruthy()
   })
 
   it('supports installing in advance without starting or changing remote server settings', async () => {
@@ -71,7 +71,7 @@ describe('Windows local environment setup', () => {
     expect((await screen.findByRole('alert')).textContent).toContain('下载失败')
     expect(api.localRuntimeStart).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '重试安装并启动' }))
-    await screen.findByRole('button', { name: '进入实时语音对话' })
+    await screen.findByRole('button', { name: '停止本机服务' })
     expect(api.localRuntimeInstall).toHaveBeenCalledTimes(2)
   })
 

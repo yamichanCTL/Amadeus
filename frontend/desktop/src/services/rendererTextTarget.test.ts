@@ -47,4 +47,15 @@ describe('Amadeus renderer text target', () => {
     input.remove()
     expect(insertIntoRendererTextTarget(target, '不会写入')).toBe(false)
   })
+
+  it('ignores a retained Amadeus editor when another application has foreground focus', () => {
+    const textarea = document.createElement('textarea')
+    document.body.appendChild(textarea)
+    textarea.focus()
+    const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    expect(document.activeElement).toBe(textarea)
+    expect(captureRendererTextTarget(document)).toBeNull()
+    expect(textarea.value).toBe('')
+    hasFocus.mockRestore()
+  })
 })

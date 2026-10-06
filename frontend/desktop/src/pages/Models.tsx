@@ -1,49 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ASRApi, describeRequestError, isAbortError, isAsyncResponse, type HiggsHealthResult, type HiggsVoicePreset, type HiggsVoicesResult, type HotwordConfig, type LLMModelsResult, type ModelInfo, type TranscribeOptions } from '@/services/api'
+import { ASRApi, describeRequestError, isAbortError, isAsyncResponse, type HiggsHealthResult, type HiggsVoicePreset, type HiggsVoicesResult, type HotwordConfig, type ModelInfo, type TranscribeOptions } from '@/services/api'
 import { AudioRecorder } from '@/services/audio'
-import { getProviderPreset, LLM_PROVIDER_PRESETS, type LLMProvider } from '@/services/llmProviders'
-import { useASRStore, type AsrModelConfig } from '@/store/useASRStore'
+import { DEFAULT_SETTINGS, useASRStore, type AsrModelConfig } from '@/store/useASRStore'
 import { FormalAsrNotice } from '@/components/FormalAsrNotice'
 import { ModelDownloads } from '@/components/ModelDownloads'
+import { TaskModelSettings } from '@/components/TaskModelSettings'
+import { isSelectedLocalRuntime } from '@/services/localRuntimeConnection'
+import type { LocalRuntimeState } from '@/services/localRuntimeTypes'
+import { ASR_ENGINE_LABELS as engineLabels, asrLoadPayload as buildAsrLoadPayload, fallbackAsrConfig, getAsrModelModes } from '@/services/asrModels'
+export { getAsrModelModes } from '@/services/asrModels'
+import './Models.css'
 
 const xAsrVariants = [160, 480, 960, 1920] as const
-type ModelTab = 'asr' | 'llm' | 'tts'
-type AsrModelMode = 'offline' | 'streaming'
-
-const defaultAsrConfigs: Record<string, AsrModelConfig> = {
-  fireredasr2: { modelName: 'FireRedASR2-AED', device: 'cuda', computeType: '', extraJson: '{"beam_size":3,"batch_size":1}' },
-  sensevoice: { modelName: 'SenseVoiceSmall', device: 'cuda:0', computeType: '', extraJson: '{"batch_size_s":60}' },
-  qwen3asr: { modelName: 'Qwen/Qwen3-ASR-1.7B', device: 'cuda:0', computeType: 'bfloat16', extraJson: '{}' },
-  formalasr: { modelName: 'TaurenMountain/FormalASR-1.7B', device: 'cuda:0', computeType: 'bfloat16', extraJson: '{}' },
-  whisper: { modelName: 'base', device: 'cuda', computeType: 'float16', extraJson: '{}' },
-  'x-asr': { modelName: 'chunk-960ms-model', device: 'cuda', computeType: '', extraJson: '{"num_threads":1,"text_format":"none"}' }
-}
-
-const engineLabels: Record<string, string> = {
-  fireredasr2: 'FireRedASR2',
-  sensevoice: 'SenseVoice',
-  qwen3asr: 'Qwen3-ASR',
-  formalasr: 'FormalASR · 中文口语整理',
-  whisper: 'Whisper',
-  'x-asr': 'X-ASR'
-}
-
-export function getAsrModelModes(model: ModelInfo): AsrModelMode[] {
-  const advertised = Array.isArray(model.extra?.model_modes)
-    ? model.extra.model_modes.filter((mode): mode is AsrModelMode => mode === 'offline' || mode === 'streaming')
-    : []
-  if (advertised.length) return Array.from(new Set(advertised))
-  return model.extra?.supports_streaming === true ? ['streaming'] : ['offline']
-}
-
-function fallbackAsrConfig(engine: string, model?: ModelInfo): AsrModelConfig {
-  return defaultAsrConfigs[engine] || {
-    modelName: model?.model_name || engine,
-    device: model?.device || 'cuda',
-    computeType: model?.compute_type || '',
-    extraJson: '{}',
-  }
-}
+export type ModelTab = 'asr' | 'llm' | 'tts'
+export type AsrSettingsSection = 'all' | 'models' | 'downloads' | 'hotwords' | 'none'
 
 const higgsEmotionOptions = [
   ['', '无'],
@@ -126,15 +96,20 @@ function extensionFromMimeType(mimeType: string) {
   return 'webm'
 }
 
-export function ModelsPage() {
+export function ModelsPage({ initialTab = 'asr', allowedTabs = ['asr', 'llm', 'tts'], embedded = false, asrSection = 'all', taskSelectionInShortcut = false }: {
+  initialTab?: ModelTab; allowedTabs?: ModelTab[]; embedded?: boolean; asrSection?: AsrSettingsSection; taskSelectionInShortcut?: boolean
+} = {}) {
   const settings = useASRStore((state) => state.settings)
+  const serverStatus = useASRStore((state) => state.serverStatus)
   const models = useASRStore((state) => state.models)
   const setModels = useASRStore((state) => state.setModels)
   const updateSettings = useASRStore((state) => state.updateSettings)
-  const [activeTab, setActiveTab] = useState<ModelTab>('asr')
+  const recognitionBusy = useASRStore((state) => state.asrModelLoading || state.fileBatchRunning
+    || state.recordStatus !== 'idle' || !['idle', 'error'].includes(state.liveCaptionStatus)
+    || ['uploading', 'processing', 'polling'].includes(state.transcribeStatus))
+  const [activeTab, setActiveTab] = useState<ModelTab>(() => allowedTabs.includes(initialTab) ? initialTab : allowedTabs[0] || 'asr')
   const [busyEngines, setBusyEngines] = useState<Set<string>>(new Set())
   const [error, setError] = useState('')
-  const [llmModels, setLlmModels] = useState<LLMModelsResult | null>(null)
   const [ttsHealth, setTtsHealth] = useState<HiggsHealthResult | null>(null)
   const [ttsProbe, setTtsProbe] = useState(false)
   const [ttsDialogOpen, setTtsDialogOpen] = useState(false)
@@ -142,17 +117,18 @@ export function ModelsPage() {
   const [voicePresetBusy, setVoicePresetBusy] = useState(false)
   const [referenceTextBusy, setReferenceTextBusy] = useState(false)
   const [referenceRecording, setReferenceRecording] = useState(false)
-  const [expandedAsrEngine, setExpandedAsrEngine] = useState<string>('')
+  const [selectedAsrEngine, setSelectedAsrEngine] = useState<string>('')
   const [hotwordConfig, setHotwordConfig] = useState<HotwordConfig | null>(null)
   const [hotwordPreview, setHotwordPreview] = useState('')
   const [hotwordPreviewResult, setHotwordPreviewResult] = useState('')
   const [hotwordBusy, setHotwordBusy] = useState(false)
-  const [modelProbe, setModelProbe] = useState<'llm' | ''>('')
+  const [localRuntime, setLocalRuntime] = useState<LocalRuntimeState | null>(null)
   const referenceAudioRef = useRef<HTMLAudioElement | null>(null)
   const referenceRecorderRef = useRef<AudioRecorder | null>(null)
   const refreshControllerRef = useRef<AbortController | null>(null)
+  const hotwordControllerRef = useRef<AbortController | null>(null)
+  const localRuntimeRef = useRef<LocalRuntimeState | null>(null)
   const api = useMemo(() => new ASRApi(settings.serverUrl), [settings.serverUrl])
-  const llmPreset = getProviderPreset(settings.llmProvider)
   const currentVoicePreset = voicePresets.find((preset) => preset.name === settings.higgsTtsVoice)
   const ttsVoiceCount = Array.from(new Set([...settings.higgsTtsVoices, ...voicePresets.map((preset) => preset.name)])).filter(Boolean).length
   const referenceSource = settings.higgsTtsReferenceCodesJson.trim()
@@ -165,13 +141,44 @@ export function ModelsPage() {
           ? '已保存音色'
           : '未设置'
   const backendReady = Boolean(settings.backendConfirmed && settings.serverUrl.trim())
+  const backendPaused = isSelectedLocalRuntime(localRuntime, settings.serverUrl)
+    && ['stopping', 'installing', 'starting'].includes(localRuntime!.phase)
+  const isBackendPaused = () => {
+    const value = localRuntimeRef.current
+    return isSelectedLocalRuntime(value, useASRStore.getState().settings.serverUrl)
+      && ['stopping', 'installing', 'starting'].includes(value!.phase)
+  }
+
+  useEffect(() => {
+    const host = window.electronAPI
+    if (!host?.localRuntimeStatus || !host.onLocalRuntimeState) return
+    let active = true
+    let receivedEvent = false
+    const receive = (value: LocalRuntimeState) => {
+      if (!active) return
+      localRuntimeRef.current = value
+      setLocalRuntime(value)
+      if (isSelectedLocalRuntime(value, useASRStore.getState().settings.serverUrl)
+        && ['stopping', 'installing', 'starting'].includes(value.phase)) {
+        refreshControllerRef.current?.abort()
+        refreshControllerRef.current = null
+        hotwordControllerRef.current?.abort()
+        hotwordControllerRef.current = null
+        setError('')
+      }
+    }
+    const off = host.onLocalRuntimeState(value => { receivedEvent = true; receive(value) })
+    void host.localRuntimeStatus().then(value => { if (!receivedEvent) receive(value) }).catch(() => {})
+    return () => { active = false; off() }
+  }, [])
 
   const refresh = useCallback(async () => {
+    if (isBackendPaused()) return
     if (!backendReady) {
       refreshControllerRef.current?.abort(new DOMException('未确认后端地址', 'AbortError'))
       refreshControllerRef.current = null
       setModels([])
-      setError('未确认后端地址，模型管理不会连接后端。请先在设置中输入后端 IP/地址并点击确认。')
+      setError('未确认后端地址，模型管理不会连接后端。请先在首页启动本机服务，或连接已有后端。')
       return
     }
     refreshControllerRef.current?.abort(new DOMException('模型列表刷新已被新请求替代', 'AbortError'))
@@ -180,7 +187,7 @@ export function ModelsPage() {
     try {
       setError('')
       const nextModels = await api.models({ signal: controller.signal, timeoutMs: 20_000 })
-      if (refreshControllerRef.current === controller) {
+      if (refreshControllerRef.current === controller && !controller.signal.aborted && !isBackendPaused()) {
         setModels(nextModels)
         const latest = useASRStore.getState().settings
         const discoveredOffline = nextModels.filter((model) => getAsrModelModes(model).includes('offline')).map((model) => model.engine)
@@ -191,49 +198,49 @@ export function ModelsPage() {
         })
       }
     } catch (modelError) {
-      if (!isAbortError(modelError)) setError(describeRequestError(modelError, '模型列表获取失败'))
+      if (refreshControllerRef.current === controller && !controller.signal.aborted && !isBackendPaused() && !isAbortError(modelError)) {
+        setError(describeRequestError(modelError, '模型列表获取失败'))
+      }
     } finally {
       if (refreshControllerRef.current === controller) refreshControllerRef.current = null
     }
-  }, [api, backendReady, setModels, updateSettings])
+  }, [api, backendReady, backendPaused, setModels, updateSettings])
 
   useEffect(() => {
+    if (activeTab !== 'asr') return
+    if (backendPaused) return
     void refresh()
     return () => {
       refreshControllerRef.current?.abort(new DOMException('模型管理页面已卸载', 'AbortError'))
       refreshControllerRef.current = null
     }
-  }, [refresh])
+  }, [activeTab, refresh, backendPaused, serverStatus === 'connected'])
 
   useEffect(() => {
     if (activeTab !== 'asr') return
+    if (backendPaused) return
     if (!backendReady) {
       setHotwordConfig(null)
       return
     }
-    void api.hotwords().then(setHotwordConfig).catch((loadError) => {
-      setError(loadError instanceof Error ? loadError.message : '热词配置读取失败')
+    const controller = new AbortController()
+    hotwordControllerRef.current = controller
+    void api.hotwords(controller.signal).then(value => {
+      if (hotwordControllerRef.current === controller && !controller.signal.aborted && !isBackendPaused()) setHotwordConfig(value)
+    }).catch((loadError) => {
+      if (hotwordControllerRef.current === controller && !controller.signal.aborted && !isBackendPaused() && !isAbortError(loadError)) {
+        setError(loadError instanceof Error ? loadError.message : '热词配置读取失败')
+      }
     })
-  }, [activeTab, api, backendReady])
-
-  useEffect(() => {
-    if (activeTab !== 'llm') return
-    if (!backendReady) {
-      setLlmModels(null)
-      return
+    return () => {
+      controller.abort()
+      if (hotwordControllerRef.current === controller) hotwordControllerRef.current = null
     }
-    if (!settings.llmBaseUrl.trim() || settings.llmApiToken.trim().length < 6) {
-      setLlmModels(null)
-      return
-    }
-    const timer = window.setTimeout(() => {
-      void checkRemoteModels()
-    }, 650)
-    return () => window.clearTimeout(timer)
-  }, [activeTab, settings.llmProvider, settings.llmBaseUrl, settings.llmApiToken, api, backendReady])
+  }, [activeTab, api, backendReady, backendPaused])
 
   useEffect(() => {
     if (activeTab !== 'tts') return
+    if (backendPaused) return
     if (!backendReady) {
       setTtsHealth(null)
       return
@@ -242,7 +249,7 @@ export function ModelsPage() {
       void refreshTtsRuntime()
     }, 500)
     return () => window.clearTimeout(timer)
-  }, [activeTab, settings.higgsTtsApiToken, settings.higgsTtsBaseUrl, settings.higgsTtsProvider, settings.higgsTtsRemoteBaseUrl, api, backendReady])
+  }, [activeTab, settings.higgsTtsApiToken, settings.higgsTtsBaseUrl, settings.higgsTtsProvider, settings.higgsTtsRemoteBaseUrl, api, backendReady, backendPaused])
 
   useEffect(() => () => {
     referenceRecorderRef.current?.cancel()
@@ -252,6 +259,15 @@ export function ModelsPage() {
   const rows: ModelInfo[] = modelList
   const offlineEngines = rows.filter((model) => getAsrModelModes(model).includes('offline')).map((model) => model.engine)
   const streamingEngines = rows.filter((model) => getAsrModelModes(model).includes('streaming')).map((model) => model.engine)
+  const selectedModel = rows.find((model) => model.engine === selectedAsrEngine)
+    || rows.find((model) => model.engine === settings.offlineEngine)
+    || rows[0]
+  const selectedConfig = selectedModel
+    ? settings.asrModelConfigs[selectedModel.engine] || fallbackAsrConfig(selectedModel.engine, selectedModel)
+    : null
+  const showModelSettings = asrSection === 'all' || asrSection === 'models'
+  const showHotwords = asrSection === 'all' || asrSection === 'hotwords'
+  const scopedAsr = activeTab === 'asr' && embedded && asrSection !== 'all'
 
   const updateAsrConfig = (engine: string, patch: Partial<AsrModelConfig>) => {
     const current = settings.asrModelConfigs[engine] || fallbackAsrConfig(engine, rows.find((model) => model.engine === engine))
@@ -265,29 +281,20 @@ export function ModelsPage() {
 
   const asrLoadPayload = (engine: string) => {
     const config = settings.asrModelConfigs[engine] || fallbackAsrConfig(engine, rows.find((model) => model.engine === engine))
-    let extra: Record<string, unknown> = {}
-    try {
-      extra = config.extraJson.trim() ? JSON.parse(config.extraJson) as Record<string, unknown> : {}
-    } catch {
-      throw new Error(`${engine} 的参数 JSON 无效`)
-    }
-    return {
-      model_name: config.modelName,
-      device: config.device,
-      compute_type: config.computeType || undefined,
-      extra
-    }
+    return buildAsrLoadPayload(engine, config)
   }
 
   const load = async (engine: string) => {
-    if (busyEngines.has(engine)) return
+    if (recognitionBusy || useASRStore.getState().asrModelLoading || busyEngines.has(engine) || isBackendPaused()) return
+    useASRStore.setState({ asrModelLoading: true })
     setBusyEngines((prev) => new Set(prev).add(engine))
     try {
       await api.loadModel(engine, asrLoadPayload(engine))
       await refresh()
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : `${engine} 模型加载失败`)
+      if (!isBackendPaused()) setError(loadError instanceof Error ? loadError.message : `${engine} 模型加载失败`)
     } finally {
+      useASRStore.setState({ asrModelLoading: false })
       setBusyEngines((prev) => {
         const next = new Set(prev)
         next.delete(engine)
@@ -297,14 +304,16 @@ export function ModelsPage() {
   }
 
   const unload = async (engine: string) => {
-    if (busyEngines.has(engine)) return
+    if (recognitionBusy || useASRStore.getState().asrModelLoading || busyEngines.has(engine) || isBackendPaused()) return
+    useASRStore.setState({ asrModelLoading: true })
     setBusyEngines((prev) => new Set(prev).add(engine))
     try {
       await api.unloadModel(engine)
       await refresh()
     } catch (unloadError) {
-      setError(unloadError instanceof Error ? unloadError.message : '模型卸载失败')
+      if (!isBackendPaused()) setError(unloadError instanceof Error ? unloadError.message : '模型卸载失败')
     } finally {
+      useASRStore.setState({ asrModelLoading: false })
       setBusyEngines((prev) => {
         const next = new Set(prev)
         next.delete(engine)
@@ -314,7 +323,7 @@ export function ModelsPage() {
   }
 
   const saveHotwords = async () => {
-    if (!hotwordConfig) return
+    if (!hotwordConfig || isBackendPaused()) return
     setHotwordBusy(true)
     setError('')
     try {
@@ -334,7 +343,7 @@ export function ModelsPage() {
   }
 
   const previewHotwords = async () => {
-    if (!hotwordPreview.trim()) return
+    if (!hotwordPreview.trim() || isBackendPaused()) return
     setHotwordBusy(true)
     try {
       const result = await api.previewHotwords(hotwordPreview)
@@ -345,57 +354,6 @@ export function ModelsPage() {
       setHotwordBusy(false)
     }
   }
-
-  const chooseLLMProvider = (provider: LLMProvider) => {
-    const preset = getProviderPreset(provider)
-    updateSettings({
-      llmProvider: provider,
-      llmBaseUrl: provider === 'custom' ? settings.llmBaseUrl : preset.baseUrl
-    })
-  }
-
-  const checkRemoteModels = async () => {
-    if (!backendReady) {
-      setError('未确认后端地址，无法通过后端检测大模型接口。')
-      return
-    }
-    const baseUrl = settings.llmBaseUrl
-    const apiToken = settings.llmApiToken
-    const provider = settings.llmProvider
-    if (!baseUrl.trim() || !apiToken.trim()) {
-      const empty: LLMModelsResult = {
-        connected: false,
-        models: [],
-        provider,
-        base_url: baseUrl,
-        message: '请先填写接口地址和 API Token'
-      }
-      setLlmModels(empty)
-      return
-    }
-    setModelProbe('llm')
-    try {
-      const result = await api.listLLMModels({
-        base_url: baseUrl,
-        api_token: apiToken,
-        provider
-      })
-      setLlmModels(result)
-    } catch (probeError) {
-      const failed: LLMModelsResult = {
-        connected: false,
-        models: [],
-        provider,
-        base_url: baseUrl,
-        message: probeError instanceof Error ? probeError.message : '模型连接检测失败'
-      }
-      setLlmModels(failed)
-    } finally {
-      setModelProbe('')
-    }
-  }
-
-  const chooseRemoteModel = (model: string) => updateSettings({ llmModel: model })
 
   const refreshVoicePresets = async () => {
     if (!backendReady) return []
@@ -409,8 +367,9 @@ export function ModelsPage() {
   }
 
   const refreshTtsRuntime = async () => {
+    if (isBackendPaused()) return
     if (!backendReady) {
-      setError('未确认后端地址，无法检查 TTS 运行状态。')
+      setError('未确认后端地址，无法检查 TTS 运行状态。请先在首页启动本机服务，或连接已有后端。')
       return
     }
     const baseUrl = settings.higgsTtsProvider === 'boson'
@@ -440,6 +399,7 @@ export function ModelsPage() {
         higgsTtsVoice: voices.includes(settings.higgsTtsVoice) ? settings.higgsTtsVoice : 'Elysia'
       })
     } catch (ttsError) {
+      if (isBackendPaused()) return
       setTtsHealth({
         connected: false,
         base_url: baseUrl,
@@ -464,7 +424,7 @@ export function ModelsPage() {
 
   const saveVoicePreset = async () => {
     if (!backendReady) {
-      setError('未确认后端地址，无法保存音色到后端。')
+      setError('未确认后端地址，无法保存音色到后端。请先在首页启动本机服务，或连接已有后端。')
       return
     }
     const name = settings.higgsTtsVoice.trim()
@@ -589,7 +549,7 @@ export function ModelsPage() {
 
   const generateReferenceText = async () => {
     if (!backendReady) {
-      setError('未确认后端地址，无法生成参考文本。')
+      setError('未确认后端地址，无法生成参考文本。请先在首页启动本机服务，或连接已有后端。')
       return
     }
     if (!settings.higgsTtsReferenceAudioDataUrl) {
@@ -618,255 +578,265 @@ export function ModelsPage() {
     }
   }
 
-  const renderProviderProbe = (result: LLMModelsResult | null) => {
-    const isChecking = modelProbe === 'llm'
-    const hasToken = Boolean(settings.llmApiToken.trim())
-    return (
-      <div className={result?.connected ? 'provider-status connected' : 'provider-status'}>
-        <div>
-          <strong>{isChecking ? '正在连接官方接口' : result?.connected ? '连接成功' : '未连接'}</strong>
-          <span>{result?.message || (hasToken ? '等待检测' : '填写 API Token 后自动检测')}</span>
-        </div>
-        <button type="button" disabled={isChecking} onClick={() => void checkRemoteModels()}>
-          {isChecking ? '检测中' : '刷新模型'}
-        </button>
-        {result?.models.length ? (
-          <div className="remote-model-list">
-            <select
-              value={settings.llmModel}
-              onChange={(event) => chooseRemoteModel(event.target.value)}
-            >
-              <option value="">选择可用模型</option>
-              {result.models.map((model) => <option key={model} value={model}>{model}</option>)}
-            </select>
-            {result.models.map((model) => (
-              <button key={model} type="button" onClick={() => chooseRemoteModel(model)}>
-                {model}
-              </button>
-            ))}
-          </div>
-        ) : (
-          <p className="empty">暂无可选模型。</p>
-        )}
-      </div>
-    )
-  }
+  if (activeTab === 'asr' && asrSection === 'none') return null
 
   return (
-    <div className="page models-page">
+    <div className={`${embedded ? 'models-page models-embedded' : 'page models-page'}${activeTab === 'asr' ? ' asr-workspace' : ''}${scopedAsr ? ' asr-workspace-scoped' : ''}`}>
       <section className="panel">
-        <div className="panel-head">
+        {!scopedAsr && <div className="panel-head">
           <div>
-            <h1>模型管理</h1>
-            <p>集中管理 ASR、本地模型和 OpenAI 兼容模型配置。</p>
+            {embedded ? <h2>{activeTab === 'asr' ? '识别模型与运行组件' : '语音合成模型'}</h2> : <h1>模型与服务连接</h1>}
+            <p>{embedded ? activeTab === 'asr' ? '下载模型权重、检查运行依赖，并加载所选识别引擎。' : '配置语音合成连接、音色和参考音频。' : '模型按任务独立选择；同一服务连接可在不同任务中复用。'}</p>
           </div>
-          <button type="button" disabled={busyEngines.size > 0} onClick={() => void refresh()}>刷新</button>
-        </div>
-        <div className="model-tabs">
-          <button type="button" className={activeTab === 'asr' ? 'active' : ''} onClick={() => setActiveTab('asr')}>ASR 模型设置</button>
-          <button type="button" className={activeTab === 'llm' ? 'active' : ''} onClick={() => setActiveTab('llm')}>LLM 设置</button>
-          <button type="button" className={activeTab === 'tts' ? 'active' : ''} onClick={() => setActiveTab('tts')}>TTS 模型设置</button>
-        </div>
-        {error && <p className="error">{error}</p>}
+          {activeTab !== 'llm' && <button type="button" disabled={backendPaused || busyEngines.size > 0 || ttsProbe} onClick={() => { if (activeTab === 'asr') void refresh(); else void refreshTtsRuntime() }}>刷新</button>}
+        </div>}
+        {allowedTabs.length > 1 && <div className="model-tabs">
+          {allowedTabs.includes('asr') && <button type="button" className={activeTab === 'asr' ? 'active' : ''} onClick={() => setActiveTab('asr')}>ASR 模型设置</button>}
+          {allowedTabs.includes('llm') && <button type="button" className={activeTab === 'llm' ? 'active' : ''} onClick={() => setActiveTab('llm')}>按任务选择大模型</button>}
+          {allowedTabs.includes('tts') && <button type="button" className={activeTab === 'tts' ? 'active' : ''} onClick={() => setActiveTab('tts')}>TTS 模型设置</button>}
+        </div>}
+        {error && !backendPaused && <p className="error">{error}</p>}
+        {backendPaused && (asrSection !== 'downloads' || activeTab !== 'asr') && <p role="status">{localRuntime!.message}，服务恢复后会自动刷新状态。</p>}
         {activeTab === 'asr' && (
-          <div className="model-section">
-            <ModelDownloads />
-            <div className="model-settings-grid">
-              <label>
-                离线识别模型
-                <select value={settings.offlineEngine} onChange={(event) => updateSettings({ offlineEngine: event.target.value })}>
-                  {offlineEngines.map((engine) => <option key={engine} value={engine}>{engineLabels[engine] || engine}</option>)}
-                </select>
-                <small>文件、录音和参考音频使用完整音频离线识别</small>
-              </label>
-              <label>
-                实时流式模型
-                <select value={settings.streamingEngine} onChange={(event) => updateSettings({ streamingEngine: event.target.value })}>
-                  {streamingEngines.map((engine) => <option key={engine} value={engine}>{engineLabels[engine] || engine}</option>)}
-                </select>
-                <small>实时字幕和实时对话只使用原生流式解码</small>
-              </label>
-              <label>
-                默认语言
-                <select value={settings.defaultLanguage} onChange={(event) => updateSettings({ defaultLanguage: event.target.value })}>
-                  <option value="zh">中文</option>
-                  <option value="en">英文</option>
-                  <option value="auto">自动</option>
-                </select>
-              </label>
-              <label className="check">
-                <input type="checkbox" checked={settings.enablePunctuation} onChange={(event) => updateSettings({ enablePunctuation: event.target.checked })} />
-                标点恢复
-              </label>
-            </div>
-            {settings.offlineEngine === 'formalasr' && <FormalAsrNotice />}
-            <div className="model-table">
-              {rows.map((model) => {
-                const config = settings.asrModelConfigs[model.engine] || fallbackAsrConfig(model.engine, model)
-                const modelModes = getAsrModelModes(model)
-                const isExpanded = expandedAsrEngine === model.engine
-                return (
-                  <article key={model.engine} className={isExpanded ? 'model-row expanded' : 'model-row'}>
-                    <button type="button" className="model-row-main" onClick={() => setExpandedAsrEngine(isExpanded ? '' : model.engine)}>
-                      <div>
-                        <strong>{engineLabels[model.engine] || model.engine}</strong>
-                        <span>{model.model_name}</span>
-                        <small>{modelModes.map((mode) => mode === 'streaming' ? '实时识别' : '离线识别').join(' / ')}</small>
-                        {model.engine === 'formalasr' && <small>语音直接生成书面文本 · 中文 · 离线句段识别</small>}
-                      </div>
-                      <span className={model.is_loaded ? 'loaded' : 'unloaded'}>{model.is_loaded ? '已加载' : '未加载'}</span>
-                      <span>{model.device || config.device || '-'}</span>
-                      <span>{model.compute_type || config.computeType || '-'}</span>
-                    </button>
-                    <div className="row-actions">
-                      {modelModes.includes('offline') && (
-                        <button type="button" onClick={() => updateSettings({ offlineEngine: model.engine })}>
-                          {settings.offlineEngine === model.engine ? '离线使用中' : '设为离线'}
+          <div className="asr-section">
+            {(asrSection === 'all' || asrSection === 'downloads') && <ModelDownloads />}
+            {showModelSettings && (
+              <>
+                <section className="asr-task-settings" aria-label="默认识别设置">
+                  <div className="asr-task-fields">
+                    {!taskSelectionInShortcut && <label>
+                      <span>离线识别模型</span>
+                      <select value={settings.offlineEngine} disabled={recognitionBusy} onChange={(event) => updateSettings({ offlineEngine: event.target.value })}>
+                        {offlineEngines.map((engine) => <option key={engine} value={engine}>{engineLabels[engine] || engine}</option>)}
+                      </select>
+                    </label>}
+                    {!taskSelectionInShortcut && <label>
+                      <span>实时流式模型</span>
+                      <select value={settings.streamingEngine} disabled={recognitionBusy} onChange={(event) => updateSettings({ streamingEngine: event.target.value })}>
+                        {streamingEngines.map((engine) => <option key={engine} value={engine}>{engineLabels[engine] || engine}</option>)}
+                      </select>
+                    </label>}
+                    <label>
+                      <span>默认语言</span>
+                      <select value={settings.defaultLanguage} onChange={(event) => updateSettings({ defaultLanguage: event.target.value })}>
+                        <option value="zh">中文</option>
+                        <option value="en">英文</option>
+                        <option value="auto">自动</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div className="asr-task-footer">
+                    <small className="asr-task-hint">离线：文件 / 录音 · 实时：字幕 / 对话</small>
+                    <label className="asr-check">
+                      <input type="checkbox" checked={settings.enablePunctuation} onChange={(event) => updateSettings({ enablePunctuation: event.target.checked })} />
+                      标点恢复
+                    </label>
+                    <span>已加载 {rows.filter((model) => model.is_loaded).length} / {rows.length} 个引擎</span>
+                    <button type="button" disabled={backendPaused || busyEngines.size > 0} onClick={() => void refresh()}>刷新状态</button>
+                  </div>
+                </section>
+                {asrSection === 'all' && settings.offlineEngine === 'formalasr' && <FormalAsrNotice />}
+                <div className="asr-engine-workspace">
+                  <section className="asr-engine-list" aria-label="识别引擎列表">
+                    <div className="asr-list-heading"><span>可用引擎</span><small>{rows.length}</small></div>
+                    <div className="asr-engine-options">
+                      {rows.map((model) => (
+                        <button
+                          type="button"
+                          key={model.engine}
+                          className="asr-engine-option"
+                          aria-pressed={selectedModel?.engine === model.engine}
+                          aria-controls="asr-engine-detail"
+                          onClick={() => setSelectedAsrEngine(model.engine)}
+                        >
+                          <span className="asr-engine-option-title">
+                            <strong>{engineLabels[model.engine] || model.engine}</strong>
+                            <span className={model.is_loaded ? 'asr-state-dot loaded' : 'asr-state-dot'} aria-hidden="true" />
+                          </span>
+                          <span className="asr-engine-option-meta">
+                            {getAsrModelModes(model).map((mode) => mode === 'streaming' ? '实时' : '离线').join(' / ')}
+                            <span>·</span>{model.is_loaded ? '已加载' : '未加载'}
+                          </span>
+                          {(settings.offlineEngine === model.engine || settings.streamingEngine === model.engine) && (
+                            <span className="asr-engine-assignment">
+                              {settings.offlineEngine === model.engine && <small>默认离线</small>}
+                              {settings.streamingEngine === model.engine && <small>默认实时</small>}
+                            </span>
+                          )}
                         </button>
-                      )}
-                      {modelModes.includes('streaming') && (
-                        <button type="button" onClick={() => updateSettings({ streamingEngine: model.engine })}>
-                          {settings.streamingEngine === model.engine ? '实时使用中' : '设为实时'}
-                        </button>
-                      )}
-                      {model.is_loaded ? (
-                        <button type="button" disabled={busyEngines.has(model.engine)} onClick={() => unload(model.engine)}>卸载</button>
-                      ) : (
-                        <button type="button" disabled={busyEngines.has(model.engine)} onClick={() => load(model.engine)}>加载</button>
-                      )}
+                      ))}
                     </div>
-                    {isExpanded && (
-                      <div className="model-detail-grid">
-                        {model.engine === 'formalasr' && (
-                          <p className="wide">FormalASR 将中文口语整理训练进语音模型，可去除口头禅和重复表达。录音结束或文件上传后输出完整结果，不提供逐字流式字幕。首次加载将下载模型，也可填写本机模型目录。</p>
-                        )}
-                        {model.engine === 'x-asr' ? (
-                          <fieldset className="xasr-variant-picker wide">
-                            <legend>流式窗口模型（选择后点击加载完成切换）</legend>
-                            {xAsrVariants.map((chunkMs) => {
-                              const modelName = `chunk-${chunkMs}ms-model`
-                              const available = Array.isArray(model.extra?.available_variants)
-                                ? model.extra.available_variants.includes(modelName)
-                                : false
-                              return (
-                                <label key={chunkMs}>
-                                  <input
-                                    type="radio"
-                                    name="xasr-model-variant"
-                                    checked={config.modelName === modelName}
-                                    onChange={() => updateAsrConfig(model.engine, { modelName })}
-                                  />
-                                  <span>{chunkMs} ms</span>
-                                  <small>{available ? '已下载' : '未下载'}</small>
-                                </label>
-                              )
-                            })}
-                            <small>来源：Hugging Face · GilgameshWind/X-ASR-zh-en</small>
-                          </fieldset>
+                  </section>
+                  {selectedModel && selectedConfig ? (
+                    <article className="asr-engine-detail" id="asr-engine-detail" aria-label={`${engineLabels[selectedModel.engine] || selectedModel.engine} 配置`}>
+                      <div className="asr-detail-heading">
+                        <div>
+                          <h3>{engineLabels[selectedModel.engine] || selectedModel.engine}</h3>
+                          <p className="asr-configured-model" title={selectedConfig.modelName}>{selectedConfig.modelName}</p>
+                        </div>
+                        <span className={selectedModel.is_loaded ? 'asr-state-badge loaded' : 'asr-state-badge'}>
+                          {busyEngines.has(selectedModel.engine) ? '正在处理' : selectedModel.is_loaded ? '已加载' : '待加载'}
+                        </span>
+                      </div>
+                      <div className="asr-detail-actions">
+                        {!taskSelectionInShortcut && <div>
+                          {getAsrModelModes(selectedModel).includes('offline') && (
+                            <button type="button" disabled={recognitionBusy || settings.offlineEngine === selectedModel.engine} onClick={() => updateSettings({ offlineEngine: selectedModel.engine })}>
+                              {settings.offlineEngine === selectedModel.engine ? '离线使用中' : '设为离线'}
+                            </button>
+                          )}
+                          {getAsrModelModes(selectedModel).includes('streaming') && (
+                            <button type="button" disabled={recognitionBusy || settings.streamingEngine === selectedModel.engine} onClick={() => updateSettings({ streamingEngine: selectedModel.engine })}>
+                              {settings.streamingEngine === selectedModel.engine ? '实时使用中' : '设为实时'}
+                            </button>
+                          )}
+                        </div>}
+                        {selectedModel.is_loaded ? (
+                          <button type="button" disabled={recognitionBusy || backendPaused || busyEngines.has(selectedModel.engine)} onClick={() => void unload(selectedModel.engine)}>卸载</button>
                         ) : (
-                          <label>
-                            模型 / 路径
-                            <input value={config.modelName} onChange={(event) => updateAsrConfig(model.engine, { modelName: event.target.value })} />
-                          </label>
+                          <button type="button" className="primary" disabled={recognitionBusy || backendPaused || busyEngines.has(selectedModel.engine)} onClick={() => void load(selectedModel.engine)}>
+                            {busyEngines.has(selectedModel.engine) ? '加载中…' : '加载'}
+                          </button>
+                        )}
+                      </div>
+                      <dl className="asr-runtime" aria-label="当前运行状态">
+                        <div><dt>当前运行设备</dt><dd>{selectedModel.is_loaded ? selectedModel.device || '后端未报告' : '尚未加载'}</dd></div>
+                        <div><dt>当前运行精度</dt><dd>{selectedModel.is_loaded ? selectedModel.compute_type || '后端未报告' : '—'}</dd></div>
+                      </dl>
+                      {selectedModel.engine === 'formalasr' && (
+                        <p className="asr-engine-description">中文口语直接整理为书面文本，去除口头禅与重复表达。录音结束后返回完整结果。</p>
+                      )}
+                      <div className="asr-detail-fields">
+                        {selectedModel.engine === 'x-asr' && (
+                          <fieldset className="asr-variants asr-wide">
+                            <legend>流式窗口</legend>
+                            <div>
+                              {xAsrVariants.map((chunkMs) => {
+                                const modelName = `chunk-${chunkMs}ms-model`
+                                const available = Array.isArray(selectedModel.extra?.available_variants)
+                                  ? selectedModel.extra.available_variants.includes(modelName)
+                                  : false
+                                return (
+                                  <label key={chunkMs}>
+                                    <input type="radio" name="xasr-model-variant" checked={selectedConfig.modelName === modelName} onChange={() => updateAsrConfig(selectedModel.engine, { modelName })} />
+                                    <span>{chunkMs} ms</span><small>{available ? '已下载' : '未下载'}</small>
+                                  </label>
+                                )
+                              })}
+                            </div>
+                          </fieldset>
                         )}
                         <label>
-                          启动方式
-                          <select value={config.device} onChange={(event) => updateAsrConfig(model.engine, { device: event.target.value })}>
+                          <span>加载设备</span>
+                          <select value={selectedConfig.device} onChange={(event) => updateAsrConfig(selectedModel.engine, { device: event.target.value, deviceConfigured: true })}>
+                            {['qwen3asr', 'formalasr'].includes(selectedModel.engine) && <option value="auto">自动（CPU / GPU）</option>}
                             <option value="cpu">CPU</option>
                             <option value="cuda">CUDA</option>
                             <option value="cuda:0">CUDA:0</option>
                           </select>
                         </label>
                         <label>
-                          Compute / dtype
-                          <input value={config.computeType} placeholder={model.engine === 'qwen3asr' || model.engine === 'formalasr' ? 'bfloat16' : 'int8 / float16 / float32'} onChange={(event) => updateAsrConfig(model.engine, { computeType: event.target.value })} />
+                          <span>计算精度 / dtype</span>
+                          <input value={selectedConfig.computeType} placeholder={['qwen3asr', 'formalasr'].includes(selectedModel.engine) ? 'auto / float32 / bfloat16' : 'int8 / float16 / float32'} onChange={(event) => updateAsrConfig(selectedModel.engine, { computeType: event.target.value, deviceConfigured: true })} />
                         </label>
-                        <label className="wide">
-                          参数 JSON
-                          <textarea rows={3} value={config.extraJson} onChange={(event) => updateAsrConfig(model.engine, { extraJson: event.target.value })} />
-                        </label>
+                        <p className="asr-field-hint asr-wide">
+                          下次加载生效。{['qwen3asr', 'formalasr'].includes(selectedModel.engine)
+                            ? 'auto 精度：CPU 使用 float32，CUDA 使用 bfloat16。'
+                            : '请按可用硬件选择模型支持的精度。'}
+                        </p>
                       </div>
-                    )}
-                  </article>
-                )
-              })}
-            </div>
-            {hotwordConfig && (
-              <section className="hotword-editor">
-                <div className="section-head compact">
-                  <div>
-                    <h2>离线识别热词</h2>
-                    <p>兼容 CapsWriter 写法，保存后下一次离线识别立即生效。</p>
-                  </div>
-                  <button type="button" disabled={hotwordBusy} onClick={() => void saveHotwords()}>
-                    {hotwordBusy ? '处理中' : '保存热词'}
-                  </button>
+                      <details className="asr-advanced" key={selectedModel.engine}>
+                        <summary>模型路径与高级参数 <span>下次加载生效</span></summary>
+                        <label>
+                          <span>模型 / 路径</span>
+                          <input value={selectedConfig.modelName} onChange={(event) => updateAsrConfig(selectedModel.engine, { modelName: event.target.value })} />
+                          <small>填写模型名称或本机模型目录。CUDA 需要 NVIDIA 显卡及 CUDA 版运行环境。</small>
+                        </label>
+                        <label>
+                          <span>参数 JSON</span>
+                          <textarea rows={4} spellCheck={false} value={selectedConfig.extraJson} onChange={(event) => updateAsrConfig(selectedModel.engine, { extraJson: event.target.value })} />
+                        </label>
+                      </details>
+                    </article>
+                  ) : (
+                    <div className="asr-empty">
+                      <strong>暂未发现识别引擎</strong>
+                      <p>连接后端后，刷新状态以读取可用模型。</p>
+                    </div>
+                  )}
                 </div>
-                <div className="model-settings-grid">
-                  <label className="check">
+              </>
+            )}
+            {showHotwords && (hotwordConfig ? (
+              <section className="asr-hotword-workspace" aria-label="热词纠错设置">
+                <div className="asr-hotword-toolbar">
+                  <label className="asr-check">
                     <input type="checkbox" checked={hotwordConfig.enabled} onChange={(event) => setHotwordConfig({ ...hotwordConfig, enabled: event.target.checked })} />
                     启用拼音热词纠错
                   </label>
-                  <label className="check">
+                  <button type="button" className="primary" disabled={hotwordBusy} onClick={() => void saveHotwords()}>
+                    {hotwordBusy ? '处理中…' : '保存热词'}
+                  </button>
+                </div>
+                <div className="asr-hotword-columns">
+                  <section className="asr-hotword-dictionary">
+                    <label>
+                      <span>热词词典</span>
+                      <small>每行一个标准词，可补充别名和不替换的词语。</small>
+                      <textarea rows={10} spellCheck={false} value={hotwordConfig.hotwords} placeholder="撒贝宁|撒贝你|撒贝林~~~撒贝宁工作室" onChange={(event) => setHotwordConfig({ ...hotwordConfig, hotwords: event.target.value })} />
+                    </label>
+                    <p className="asr-field-hint">兼容 hot.txt：标准词 | 别名 ~~~ 黑名单。保存后下次离线识别生效。</p>
+                  </section>
+                  <section className="asr-hotword-preview">
+                    <label>
+                      <span>效果预览</span>
+                      <small>使用后端已保存的规则；编辑后请先保存。</small>
+                      <textarea rows={4} value={hotwordPreview} placeholder="输入一段识别文本" onChange={(event) => setHotwordPreview(event.target.value)} />
+                    </label>
+                    <button type="button" disabled={hotwordBusy || !hotwordPreview.trim()} onClick={() => void previewHotwords()}>预览纠错结果</button>
+                    <div className="asr-preview-result" aria-live="polite">
+                      <span>纠错结果</span>
+                      <p>{hotwordPreviewResult || '输入文本后，查看热词纠错效果。'}</p>
+                    </div>
+                  </section>
+                </div>
+                <details className="asr-advanced">
+                  <summary>正则替换规则 <span>{hotwordConfig.rule_enabled ? '已开启' : '未开启'}</span></summary>
+                  <label className="asr-check">
                     <input type="checkbox" checked={hotwordConfig.rule_enabled} onChange={(event) => setHotwordConfig({ ...hotwordConfig, rule_enabled: event.target.checked })} />
                     启用正则替换
                   </label>
                   <label>
-                    自动替换阈值
-                    <input type="number" min="0" max="1" step="0.01" value={hotwordConfig.threshold} onChange={(event) => setHotwordConfig({ ...hotwordConfig, threshold: Number(event.target.value) })} />
+                    <span>替换规则</span>
+                    <textarea rows={5} spellCheck={false} value={hotwordConfig.rules} onChange={(event) => setHotwordConfig({ ...hotwordConfig, rules: event.target.value })} />
+                    <small>兼容 hot-rule.txt，每行一条：正则 = 替换文本。例如 50赫兹 = 50Hz。</small>
                   </label>
-                  <label>
-                    相似词提示阈值
-                    <input type="number" min="0" max="1" step="0.01" value={hotwordConfig.similar_threshold} onChange={(event) => setHotwordConfig({ ...hotwordConfig, similar_threshold: Number(event.target.value) })} />
-                  </label>
-                  <label className="wide">
-                    hot.txt（标准词|别名~~~黑名单）
-                    <textarea rows={8} value={hotwordConfig.hotwords} onChange={(event) => setHotwordConfig({ ...hotwordConfig, hotwords: event.target.value })} />
-                    <small>示例：撒贝宁|撒贝你|撒贝林~~~撒贝宁工作室</small>
-                  </label>
-                  <label className="wide">
-                    hot-rule.txt（正则 = 替换文本）
-                    <textarea rows={6} value={hotwordConfig.rules} onChange={(event) => setHotwordConfig({ ...hotwordConfig, rules: event.target.value })} />
-                    <small>示例：50赫兹 = 50Hz</small>
-                  </label>
-                  <label className="wide">
-                    即时预览
-                    <div className="inline-field">
-                      <input value={hotwordPreview} placeholder="输入一段识别文本" onChange={(event) => setHotwordPreview(event.target.value)} />
-                      <button type="button" disabled={hotwordBusy || !hotwordPreview.trim()} onClick={() => void previewHotwords()}>应用</button>
-                    </div>
-                    {hotwordPreviewResult && <small>结果：{hotwordPreviewResult}</small>}
-                  </label>
-                </div>
+                </details>
+                <details className="asr-advanced">
+                  <summary>高级匹配设置 <span>阈值</span></summary>
+                  <div className="asr-detail-fields">
+                    <label>
+                      <span>自动替换阈值</span>
+                      <input type="number" min="0" max="1" step="0.01" value={hotwordConfig.threshold} onChange={(event) => setHotwordConfig({ ...hotwordConfig, threshold: Number(event.target.value) })} />
+                    </label>
+                    <label>
+                      <span>相似词提示阈值</span>
+                      <input type="number" min="0" max="1" step="0.01" value={hotwordConfig.similar_threshold} onChange={(event) => setHotwordConfig({ ...hotwordConfig, similar_threshold: Number(event.target.value) })} />
+                    </label>
+                  </div>
+                </details>
               </section>
-            )}
+            ) : (
+              <div className="asr-empty"><strong>热词配置暂不可用</strong><p>请确认后端已连接，再刷新配置。</p><button type="button" disabled={!backendReady} onClick={() => { void api.hotwords().then(setHotwordConfig).catch((loadError) => setError(describeRequestError(loadError, '热词配置读取失败'))) }}>刷新配置</button></div>
+            ))}
           </div>
         )}
+
         {activeTab === 'llm' && (
           <div className="model-section">
-            <div className="model-settings-grid">
-              <label>
-                厂商
-                <select value={settings.llmProvider} onChange={(event) => chooseLLMProvider(event.target.value as LLMProvider)}>
-                  {LLM_PROVIDER_PRESETS.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}
-                </select>
-              </label>
-              <label>
-                接口地址
-                <input value={settings.llmBaseUrl} placeholder={llmPreset.baseUrl || 'https://example.com/v1'} onChange={(event) => updateSettings({ llmBaseUrl: event.target.value })} />
-              </label>
-              <label>
-                模型
-                <input value={settings.llmModel} placeholder={llmPreset.modelPlaceholder} onChange={(event) => updateSettings({ llmModel: event.target.value })} />
-              </label>
-              <label>
-                API Token
-                <input type="password" value={settings.llmApiToken} placeholder={`${llmPreset.tokenPlaceholder}，仅保存在本机`} onChange={(event) => updateSettings({ llmApiToken: event.target.value })} />
-              </label>
-              <div className="wide">
-                {renderProviderProbe(llmModels)}
-              </div>
-            </div>
+            <TaskModelSettings task="asr" />
+            <TaskModelSettings task="summary" />
+            <TaskModelSettings task="realtime" />
           </div>
         )}
         {activeTab === 'tts' && (

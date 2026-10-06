@@ -7,6 +7,10 @@ const on = <T>(channel: string, callback: (payload: T) => void) => {
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  storageStatus: () => ipcRenderer.invoke('storage:status'),
+  storageChooseDirectory: () => ipcRenderer.invoke('storage:chooseDirectory'),
+  storageOpenFolder: (target?: string) => ipcRenderer.invoke('storage:openFolder', target),
+  storageClearManagedData: (target?: string) => ipcRenderer.invoke('storage:clearManagedData', target),
   localAvatarStatus: () => ipcRenderer.invoke('avatar:status'),
   localAvatarRead: () => ipcRenderer.invoke('avatar:read'),
   localAvatarImport: () => ipcRenderer.invoke('avatar:import'),

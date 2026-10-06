@@ -20,7 +20,11 @@ except ImportError:
 def _build_logger() -> logging.Logger | object:
     """Build a structured or fallback logger."""
     if structlog is not None:
-        structlog.configure(
+        # Keep runner logging independent of the hosting FastAPI process's
+        # structlog configuration. Mixing its PrintLogger with stdlib-only
+        # processors raises AttributeError when the first agent task logs.
+        return structlog.wrap_logger(
+            logging.getLogger("asrapp"),
             processors=[
                 structlog.stdlib.filter_by_level,
                 structlog.stdlib.add_logger_name,
@@ -35,11 +39,9 @@ def _build_logger() -> logging.Logger | object:
                 else structlog.processors.JSONRenderer(),
             ],
             context_class=dict,
-            logger_factory=structlog.stdlib.LoggerFactory(),
             wrapper_class=structlog.stdlib.BoundLogger,
             cache_logger_on_first_use=True,
         )
-        return structlog.get_logger("asrapp")
     else:
         # Fallback: plain stdlib logger
         logger = logging.getLogger("asrapp")

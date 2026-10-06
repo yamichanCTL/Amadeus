@@ -5,11 +5,11 @@ function pad(value: number, size = 2) {
 }
 
 export function formatTimestamp(seconds: number, separator = ',') {
-  const safe = Math.max(0, seconds || 0)
-  const hours = safe / 3600
-  const minutes = (safe % 3600) / 60
-  const secs = safe % 60
-  const millis = Math.round((secs - Math.floor(secs)) * 1000)
+  const milliseconds = Math.round(Math.max(0, Number.isFinite(seconds) ? seconds : 0) * 1000)
+  const hours = milliseconds / 3_600_000
+  const minutes = (milliseconds % 3_600_000) / 60_000
+  const secs = (milliseconds % 60_000) / 1000
+  const millis = milliseconds % 1000
   return `${pad(hours)}:${pad(minutes)}:${pad(secs)}${separator}${pad(millis, 3)}`
 }
 
@@ -31,11 +31,8 @@ export function resultToJson(result: TranscribeResponse) {
 }
 
 export async function saveResult(result: TranscribeResponse, filename: string, type: 'txt' | 'srt' | 'json') {
-  const api = window.electronAPI
   const content = type === 'txt' ? resultToTxt(result) : type === 'srt' ? segmentsToSrt(result.segments) : resultToJson(result)
-  const target = await api?.saveFileDialog(filename)
-  if (!target) return false
-  return api?.writeFile(target, content)
+  return saveText(content, filename)
 }
 
 export async function saveText(content: string, filename: string) {

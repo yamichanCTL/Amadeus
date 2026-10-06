@@ -39,6 +39,9 @@ backend/app/core/asr/engines/FireRedASR2S/
 /thirdparty/X-ASR/
 /models/
 /research/
+# Local acceptance reports may contain machine paths or user test data.
+# Public installation and usage documentation belongs in doc/desktop/.
+/doc/reports/
 # Local evaluation entry points; production tests and documented tools are tracked.
 /scripts/benchmark_gemini_barge_in.py
 /scripts/benchmark_gemini_tool.py

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -9,7 +10,7 @@ import pytest
 from app.core.asr.base import ASRResult, BaseASREngine, EngineOptions, Segment
 from app.core.asr.registry import available_engines
 from app.core.asr.engines.fireredasr2 import FireRedASR2Engine
-from app.core.inference_scheduler import InferenceScheduler
+from app.core.inference_scheduler import InferenceScheduler, inference_timing_from_result
 
 
 class ScheduledEngine(BaseASREngine):
@@ -156,6 +157,115 @@ async def test_scheduler_shutdown_cancels_pending_requests() -> None:
 
     assert queued.cancelled()
     assert first.cancelled()
+
+
+class _Clock:
+    def __init__(self, current: float = 10.0) -> None:
+        self.current = current
+
+    def perf_counter(self) -> float:
+        return self.current
+
+    def advance(self, seconds: float) -> None:
+        self.current += seconds
+
+
+@pytest.mark.asyncio
+async def test_scheduler_direct_timing_measures_readiness_once_and_preserves_engine_stages(monkeypatch) -> None:
+    import app.core.inference_scheduler as scheduler_module
+
+    clock = _Clock()
+    monkeypatch.setattr(scheduler_module, "time", SimpleNamespace(perf_counter=clock.perf_counter))
+    original = ASRResult(full_text="test", raw={"inference_timing": {"sdk_inference_sec": 2.5}})
+
+    class TimedEngine(ScheduledEngine):
+        async def transcribe(self, audio_bytes, options=None):
+            clock.advance(3.0)
+            return original
+
+    class TimedProvider:
+        def __init__(self):
+            self.engine = TimedEngine("mock")
+            self.loaded = False
+
+        async def get_engine(self, name):
+            if not self.loaded:
+                clock.advance(2.0)
+                self.loaded = True
+            return self.engine
+
+    scheduler = InferenceScheduler(TimedProvider(), enabled=False)
+    cold = await scheduler.transcribe("mock", b"cold")
+    warm = await scheduler.transcribe("mock", b"warm")
+
+    assert inference_timing_from_result(cold) == {
+        "queue_wait_sec": 0.0, "model_ready_sec": 2.0,
+        "model_inference_sec": 3.0, "sdk_inference_sec": 2.5,
+    }
+    assert inference_timing_from_result(warm)["model_ready_sec"] == 0.0
+    assert inference_timing_from_result(warm)["model_inference_sec"] == 3.0
+    assert original.raw == {"inference_timing": {"sdk_inference_sec": 2.5}}
+    assert cold.raw is not warm.raw
+    assert cold.raw["inference_timing"] is not warm.raw["inference_timing"]
+
+
+@pytest.mark.asyncio
+async def test_scheduler_batch_timing_keeps_each_request_queue_and_engine_metadata(monkeypatch) -> None:
+    import app.core.inference_scheduler as scheduler_module
+
+    clock = _Clock()
+    monkeypatch.setattr(scheduler_module, "time", SimpleNamespace(perf_counter=clock.perf_counter))
+    originals = [
+        ASRResult(full_text="first", raw={"inference_timing": {"audio_decode_sec": 0.1}}),
+        ASRResult(full_text="second", raw={"inference_timing": {"audio_decode_sec": 0.2}}),
+    ]
+
+    class TimedEngine(ScheduledEngine):
+        async def transcribe_batch(self, items):
+            clock.advance(5.0)
+            return originals
+
+    class TimedProvider:
+        async def get_engine(self, name):
+            clock.advance(2.0)
+            return TimedEngine(name)
+
+    scheduler = InferenceScheduler(TimedProvider())
+    loop = asyncio.get_running_loop()
+    batch = [
+        scheduler_module._InferenceRequest(b"first", None, loop.create_future(), submitted_at=2.0),
+        scheduler_module._InferenceRequest(b"second", None, loop.create_future(), submitted_at=3.0),
+    ]
+    await scheduler._executor("mock")._execute_batch(batch)
+    results = [request.future.result() for request in batch]
+    timings = [inference_timing_from_result(result) for result in results]
+
+    assert [item["queue_wait_sec"] for item in timings] == [8.0, 7.0]
+    assert [item["model_ready_sec"] for item in timings] == [2.0, 2.0]
+    assert [item["model_inference_sec"] for item in timings] == [5.0, 5.0]
+    assert [item["audio_decode_sec"] for item in timings] == [0.1, 0.2]
+    assert originals[0].raw == {"inference_timing": {"audio_decode_sec": 0.1}}
+    assert scheduler.snapshot()["average_queue_wait_ms"] == 7500.0
+    await scheduler.shutdown()
+
+
+def test_inference_timing_only_exposes_supported_finite_nonnegative_measurements() -> None:
+    result = ASRResult(full_text="test", raw={"inference_timing": {
+        "queue_wait_sec": 0.0,
+        "model_ready_sec": -1.0,
+        "model_inference_sec": float("inf"),
+        "audio_prepare_sec": 0.12345678,
+        "audio_decode_sec": True,
+        "sdk_inference_sec": 2,
+        "model_generate_sec": "3.0",
+        "result_format_sec": float("nan"),
+        "total_sec": 99.0,
+    }})
+    assert inference_timing_from_result(result) == {
+        "queue_wait_sec": 0.0, "audio_prepare_sec": 0.123457, "sdk_inference_sec": 2.0,
+    }
+    assert inference_timing_from_result(ASRResult(full_text="no timing")) == {}
+    assert inference_timing_from_result(ASRResult(full_text="bad", raw={"inference_timing": []})) == {}
 
 
 def test_fireredasr2_native_batch_adapter_calls_upstream_once() -> None:

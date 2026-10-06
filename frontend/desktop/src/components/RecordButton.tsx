@@ -3,7 +3,11 @@ import { useASRStore } from '@/store/useASRStore'
 export function RecordButton({ onToggle }: { onToggle: () => void }) {
   const recordStatus = useASRStore((state) => state.recordStatus)
   const liveCaptionStatus = useASRStore((state) => state.liveCaptionStatus)
-  const disabled = liveCaptionStatus !== 'idle'
+  const transcribeStatus = useASRStore((state) => state.transcribeStatus)
+  const fileBatchRunning = useASRStore((state) => state.fileBatchRunning)
+  const modelLoading = useASRStore((state) => state.asrModelLoading)
+  const disabled = modelLoading || liveCaptionStatus !== 'idle' || recordStatus === 'processing' || fileBatchRunning
+    || ['uploading', 'processing', 'polling'].includes(transcribeStatus)
 
   return (
     <button type="button" className={`record-button ${recordStatus}`} disabled={disabled} onClick={onToggle}>

@@ -1,0 +1,28 @@
+.recognition-template-picker { padding: 18px 20px; }
+.recognition-template-heading { display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+.recognition-template-heading h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.recognition-template-heading p { margin: 6px 0 0; font-size: 11px; line-height: 1.7; color: var(--muted); }
+.recognition-template-auto { display: inline-flex; align-items: center; gap: 7px; flex-shrink: 0; font-size: 12px; color: #59708d; cursor: pointer; }
+.recognition-template-auto input { width: 16px; height: 16px; accent-color: #285ccb; }
+.recognition-template-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 10px; }
+.recognition-template-list button { display: inline-flex; align-items: center; justify-content: space-between; gap: 14px; min-width: 108px; max-width: 100%; padding: 9px 12px; background: #f8fafc; border: 1px solid #e1e7ef; border-radius: 8px; color: #5c6b80; text-align: left; }
+.recognition-template-list button strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
+.recognition-template-list button span { min-width: 10px; font-size: 12px; }
+.recognition-template-list button[aria-pressed="true"] { background: #edf3ff; border-color: #b8cdf3; color: #285ccb; }
+.recognition-template-status { display: flex; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 8px; color: #8390a2; font-size: 11px; }
+.recognition-template-status button { padding: 0; border: 0; color: #5777a8; background: none; font-size: 11px; }
+.recognition-template-editor { margin-top: 12px; padding-top: 12px; border-top: 1px solid #edf0f5; }
+.recognition-template-editor summary { font-size: 11px; color: #5e779d; cursor: pointer; }
+.recognition-template-form { display: grid; gap: 12px; margin-top: 14px; }
+.recognition-template-form label { display: grid; gap: 7px; color: #5d7089; font-size: 12px; }
+.recognition-template-form input, .recognition-template-form textarea { width: 100%; box-sizing: border-box; font-size: 12px; }
+.recognition-template-form label:first-child { max-width: 400px; }
+.recognition-template-form textarea { min-height: 110px; resize: vertical; line-height: 1.7; }
+.recognition-template-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.recognition-template-actions button { padding: 7px 11px; font-size: 12px; }
+@media (max-width: 660px) {
+  .recognition-template-picker { padding: 16px; }
+  .recognition-template-heading { align-items: flex-start; }
+  .recognition-template-heading p { font-size: 10px; }
+  .recognition-template-list button { min-width: 96px; }
+}

@@ -352,6 +352,7 @@ export type TranscribeResponse = {
   task_id: string
   status: string
   full_text: string
+  error_message?: string | null
   segments: Segment[]
   language: string | null
   engine_used: string
@@ -524,7 +525,7 @@ export class ASRApi {
   private ensureBackend(path: string) {
     const baseUrl = normalizeServerUrl(this.serverUrl)
     if (!baseUrl) {
-      throw new Error(`未确认后端地址，已阻止请求 ${path}。请先在「设置」中输入后端 IP/地址并点击「确认」。`)
+      throw new Error(`未确认后端地址，已阻止请求 ${path}。请先在首页启动本机服务，或连接已有后端。`)
     }
     return baseUrl
   }
@@ -598,8 +599,8 @@ export class ASRApi {
     )
   }
 
-  hotwords() {
-    return fetch(this.url('/v1/hotwords')).then((res) => parseResponse<HotwordConfig>(res))
+  hotwords(signal?: AbortSignal) {
+    return fetch(this.url('/v1/hotwords'), { signal }).then((res) => parseResponse<HotwordConfig>(res))
   }
 
   saveHotwords(payload: Omit<HotwordConfig, 'hotword_count' | 'rule_count' | 'path'>) {

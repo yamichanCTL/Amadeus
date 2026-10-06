@@ -1,5 +1,6 @@
 /// <reference types="vite/client" />
 import type { LocalRuntimeState } from './services/localRuntimeTypes'
+import type { StorageState } from './services/storageTypes'
 
 export type CaptionOverlayOptions = {
   fontSize: number
@@ -54,6 +55,10 @@ declare global {
       submitRecognition: () => void
     }
     electronAPI?: {
+      storageStatus: () => Promise<StorageState>
+      storageChooseDirectory: () => Promise<StorageState & { cancelled?: boolean }>
+      storageOpenFolder: (target?: string) => Promise<void>
+      storageClearManagedData: (target?: string) => Promise<StorageState & { cancelled?: boolean }>
       localAvatarStatus: () => Promise<LocalAvatarStatus>
       localAvatarRead: () => Promise<ArrayBuffer | null>
       localAvatarImport: () => Promise<LocalAvatarStatus & { cancelled?: boolean }>

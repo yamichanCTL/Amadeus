@@ -46,7 +46,7 @@ export function buildFfmpegExtractAudioArgs(inputPath: string, outputPath: strin
   ]
 }
 
-export async function extractAudioForUpload(filePath: string): Promise<UploadAudioExtraction> {
+export async function extractAudioForUpload(filePath: string, tempRoot = os.tmpdir()): Promise<UploadAudioExtraction> {
   if (!isVideoUploadPath(filePath)) {
     return {
       extracted: false,
@@ -56,7 +56,8 @@ export async function extractAudioForUpload(filePath: string): Promise<UploadAud
     }
   }
 
-  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'amadeus-upload-audio-'))
+  await fs.mkdir(tempRoot, { recursive: true })
+  const tempDir = await fs.mkdtemp(path.join(tempRoot, 'amadeus-upload-audio-'))
   const baseName = path.basename(filePath, path.extname(filePath)).replace(/[^\w.-]+/g, '_').slice(0, 80) || 'video'
   const outputPath = path.join(tempDir, `${baseName}.wav`)
   await runFfmpeg(buildFfmpegExtractAudioArgs(filePath, outputPath))

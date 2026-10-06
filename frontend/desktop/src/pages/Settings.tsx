@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { HotkeyCapture, TriggerCapture } from '@/components/TriggerCapture'
-import { LocalRuntimePanel } from '@/components/LocalRuntimePanel'
 import { LocalAvatarPanel } from '@/components/LocalAvatarPanel'
 import { audioRelayMixer, captureSpeakerAudio, listAudioInputDevices, listAudioOutputDevices, testAudioInputDevice, testAudioOutputDevice } from '@/services/audio'
 import { useASRStore } from '@/store/useASRStore'
@@ -8,6 +7,7 @@ import { useASRStore } from '@/store/useASRStore'
 export function SettingsPage() {
   const settings = useASRStore((state) => state.settings)
   const updateSettings = useASRStore((state) => state.updateSettings)
+  const setPage = useASRStore((state) => state.setPage)
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [outputDevices, setOutputDevices] = useState<MediaDeviceInfo[]>([])
   const [microphoneTest, setMicrophoneTest] = useState('')
@@ -22,26 +22,8 @@ export function SettingsPage() {
   const rafRef = useRef(0)
   const levelTimerRef = useRef(0)
   const monitorActiveRef = useRef(false)  // source of truth for toggle gate
-  // 后端地址采用「草稿 + 确认」交互：输入只改草稿，点「确认」才写入
-  // settings.serverUrl 并触发通信。未确认时通信层拿到的是旧（或空）地址，
-  // 满足「未设置不通信」。草稿随已确认地址初始化。
-  const [draftServerUrl, setDraftServerUrl] = useState(settings.serverUrl)
-  const [serverUrlStatus, setServerUrlStatus] = useState('')
-  const [activeSection, setActiveSection] = useState<'general' | 'audio' | 'recognition' | 'privacy'>('general')
+  const [activeSection, setActiveSection] = useState<'general' | 'audio' | 'avatar' | 'recognition' | 'privacy'>('general')
   const [captionPreviewOpen, setCaptionPreviewOpen] = useState(false)
-
-  // 当已确认的后端地址在外部变化时（如迁移清空），同步草稿。
-  useEffect(() => { setDraftServerUrl(settings.serverUrl) }, [settings.serverUrl])
-
-  const confirmServerUrl = async () => {
-    const trimmed = draftServerUrl.trim()
-    if (trimmed && trimmed !== '/' && !/^https?:\/\//i.test(trimmed) && !/^\S+:\d+$/.test(trimmed)) {
-      setServerUrlStatus('地址格式无效，请填写形如 http://host:port 的地址')
-      return
-    }
-    updateSettings({ serverUrl: trimmed, backendConfirmed: Boolean(trimmed) })
-    setServerUrlStatus(trimmed ? `已确认后端地址：${trimmed.replace(/\/+$/, '')}` : '已清空后端地址，未设置不进行通信')
-  }
 
   useEffect(() => {
     void Promise.all([
@@ -252,25 +234,24 @@ export function SettingsPage() {
   return (
     <div className="page settings-page">
       <header className="page-heading">
-        <div><h1>设置</h1><p>按功能分页管理应用、音频、识别字幕和数据隐私。</p></div>
+        <div><h1>设置</h1><p>管理应用偏好，各任务共用。</p></div>
       </header>
       <nav className="settings-tabs" aria-label="设置分类">
         {([
-          ['general', '常规'],
-          ['audio', '音频'],
+          ['general', '通用'],
+          ['audio', '音频设备'],
+          ['avatar', '角色与桌宠'],
           ['recognition', '识别与字幕'],
           ['privacy', '数据与隐私'],
         ] as const).map(([id, label]) => (
-          <button key={id} type="button" className={activeSection === id ? 'active' : ''} onClick={() => setActiveSection(id)}>{label}</button>
+          <button key={id} type="button" aria-pressed={activeSection === id} className={activeSection === id ? 'active' : ''} onClick={() => setActiveSection(id)}>{label}</button>
         ))}
       </nav>
 
       {activeSection === 'general' && (
         <>
-        <LocalRuntimePanel />
-        <LocalAvatarPanel />
         <section className="panel settings-section">
-          <div className="section-head"><div><h2>常规</h2><p>账户标识、后端入口和应用启动行为。</p></div></div>
+          <div className="section-head"><div><h2>常规</h2><p>账户标识、界面主题和应用启动行为。</p></div></div>
           <div className="settings-section-grid">
             <label className="wide">用户 ID
               <div className="inline-control">
@@ -278,14 +259,6 @@ export function SettingsPage() {
                 <button type="button" onClick={() => void saveUserId()}>保存</button>
               </div>
               <small>{userIdStatus || '保存在本机应用数据目录，并用于本机记录归档。'}</small>
-            </label>
-            <label className="wide">后端地址
-              <div className="inline-control">
-                <input value={draftServerUrl} onChange={(event) => setDraftServerUrl(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void confirmServerUrl() }} placeholder="http://your-server-ip:18000" />
-                <button type="button" onClick={() => void confirmServerUrl()}>确认</button>
-              </div>
-              <small>{serverUrlStatus || '输入只保存为草稿；点击确认后才开始连接后端。'}</small>
-              {settings.backendConfirmed && settings.serverUrl && <small className="soft-badge">已确认：{settings.serverUrl}</small>}
             </label>
             <label>主题
               <select value={settings.theme} onChange={(event) => updateSettings({ theme: event.target.value as typeof settings.theme })}>
@@ -308,12 +281,20 @@ export function SettingsPage() {
             </div>
           </div>
         </section>
+        <div className="settings-environment-link"><span>运行环境与服务连接在首页统一管理。</span><button type="button" onClick={() => setPage('home')}>前往首页</button></div>
         </>
       )}
 
+      {activeSection === 'avatar' && <section className="settings-avatar-workspace">
+        <div className="panel"><div className="section-head"><div><h2>角色与桌宠</h2><p>同一个角色模型用于实时对话与 Windows 桌宠。</p></div></div><LocalAvatarPanel />
+          <label className="check avatar-pet-toggle"><input type="checkbox" disabled={!window.electronAPI || navigator.platform !== 'Win32'} checked={settings.agentPetEnabled} onChange={(event) => updateSettings({ agentPetEnabled: event.target.checked })} />在桌面上显示 3D 角色</label>
+          {!window.electronAPI && <p className="muted">桌面悬浮角色需在 Windows 客户端中开启。</p>}
+        </div><div className="panel settings-avatar-preview"><h2>角色预览与口型</h2><p>进入实时对话，可切换全身 / 半身视角、试听口型，也可随时收起角色。</p><button onClick={() => setPage('realtime')}>打开角色预览</button></div>
+      </section>}
+
       {activeSection === 'audio' && (
         <section className="panel settings-section">
-          <div className="section-head"><div><h2>音频</h2><p>选择物理输入、系统回环和虚拟麦克风输出。</p></div></div>
+          <div className="section-head"><div><h2>音频设备</h2><p>选择输入与输出，并播放测试音确认设备。</p></div></div>
           <div className="settings-section-grid">
             <label>音频输入
               <div className="inline-control">
@@ -335,12 +316,14 @@ export function SettingsPage() {
               </div>
               <small>{routeStatus}</small>
             </label>
-            <label className="wide check route-toggle"><input type="checkbox" checked={settings.audioRelayEnabled} onChange={() => void toggleAudioRelay()} />常态透传真实麦克风，并将 TTS / 音效叠加到同一个虚拟输出</label>
+            <details className="wide settings-audio-advanced"><summary>高级：虚拟麦克风与直播混音{settings.audioRelayEnabled ? ' · 已启用' : ''}</summary>
+            <label className="check route-toggle"><input type="checkbox" checked={settings.audioRelayEnabled} onChange={() => void toggleAudioRelay()} />常态透传真实麦克风，并将 TTS / 音效叠加到同一个虚拟输出</label>
             {settings.audioRelayEnabled && <div className="wide audio-monitor-card">
               <strong>通路测试</strong>{levelBar('输入电平', inputLevel)}{levelBar('监听电平', monitorLevel)}
               <div className="inline-control"><button type="button" onClick={() => void toggleMonitor()}>{monitoring ? '停止监听' : '开始监听'}</button></div>
               {monitorError && <small className="error">{monitorError}</small>}
             </div>}
+            </details>
           </div>
         </section>
       )}

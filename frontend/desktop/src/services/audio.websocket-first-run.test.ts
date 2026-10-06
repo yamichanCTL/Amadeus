@@ -23,7 +23,7 @@ describe('streaming websocket first-run gate', () => {
     expect(WebSocket).not.toHaveBeenCalled()
     expect(events).toContainEqual({
       type: 'error',
-      message: '未配置后端地址。请在「设置 → 后端地址」填写并点击「确认」后再开始实时识别。',
+      message: '未配置后端地址。请先在首页启动本机服务，或连接已有后端，再开始实时识别。',
     })
   })
 

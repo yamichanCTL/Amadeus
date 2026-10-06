@@ -1,8 +1,8 @@
 {
-  "source": "F:\\Project\\Model3D\\Dance_Project\\Wuthering_Waves_V9_AEMEATH_DYNAMIC_REVIEW.blend",
+  "source": "<USER_SUPPLIED_MODEL>",
   "source_sha256": "d50e05f5c4c4924c55fff6429551101d93731b4e556a98726f142a33797b0d93",
   "source_unchanged": true,
-  "blend": "F:\\Project\\Model3D\\Amadeus\\assets\\digital_human\\aemeath\\v02\\Aemeath_DigitalHuman_v02.blend",
+  "blend": "assets/digital_human/aemeath/v02/Aemeath_DigitalHuman_v02.blend",
   "blender": "5.2.2 LTS",
   "original_vertex_count": 130108,
   "original_shape_count": 149,

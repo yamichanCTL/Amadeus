@@ -19,92 +19,106 @@ function formatTime(date: Date): string {
 
 export class LiveCaptionService {
   private streamer: StreamingASRClient | null = null
-  private finalized = true
+  private starting = false
+  private session: { cancelled: boolean; capture: () => void } | null = null
   private sessionTaskId = ''
+  private sessionSequence = 0
+  private sessionOriginMs = 0
 
   get isActive(): boolean {
-    return this.streamer !== null
+    return this.streamer !== null || this.starting
   }
 
   async start(): Promise<void> {
     const state = useASRStore.getState()
     const { settings } = state
 
-    if (this.streamer) return
+    if (this.isActive) return
     if (state.recordStatus !== 'idle') return
-    if (state.transcribeStatus === 'uploading' || state.transcribeStatus === 'polling') return
+    if (state.asrModelLoading || state.fileBatchRunning || ['uploading', 'processing', 'polling'].includes(state.transcribeStatus)) return
 
     // Req: 未设置后端地址时不进行任何通信（不连 WebSocket、不回退本机）。
     if (!settings.backendConfirmed || !settings.serverUrl.trim()) {
       state.setLiveCaptionStatus('error')
-      state.setError('未配置后端地址。请在「设置 → 后端地址」填写并点击「确认」后再开始实时识别。')
+      state.setError('未配置后端地址。请先在首页启动本机服务，或连接已有后端，再开始实时识别。')
       return
     }
 
-    // Reset transient state
+    // A session token invalidates every awaited stage, including overlay and input capture.
+    const session = { cancelled: false, capture: () => {} }
+    this.session = session
+    this.starting = true
+    const isCurrent = () => this.session === session && !session.cancelled
+    let client: StreamingASRClient | null = null
+    let snapshot: ReturnType<LiveCaptionService['captureSnapshot']> | null = null
+    let finalized = false
+    session.capture = () => { snapshot ||= this.captureSnapshot() }
     state.setLiveUtterances([])
-    this.finalized = false
-    this.sessionTaskId = `live_${Date.now()}`
+    this.sessionTaskId = `live_${Date.now()}_${++this.sessionSequence}`
+    this.sessionOriginMs = Date.now()
     state.setLiveCaptionStatus('connecting')
 
-    // Requirement 2a: show caption overlay immediately
-    if (settings.showDesktopCaptions) {
-      await window.electronAPI?.showCaptionOverlay('正在聆听…', {
-        fontSize: settings.captionFontSize,
-        color: settings.captionFontColor,
-        backgroundOpacity: settings.captionBackgroundOpacity,
-        width: settings.captionBoxWidth,
-        height: settings.captionBoxHeight,
-        x: settings.captionBoxX,
-        y: settings.captionBoxY,
-      })
-    }
-
-    this.streamer = new StreamingASRClient(settings.serverUrl, (event) => {
-      const s = useASRStore.getState()
-      if (event.type === 'accepted') {
-        // WebSocket accepted; model loading in progress
-      }
-      if (event.type === 'loading') {
-        // Backend loading heartbeat
-      }
-      if (event.type === 'configured') {
-        s.setLiveCaptionStatus('listening')
-      }
-      if (event.type === 'speech_start') {
-        const entry: UtteranceEntry = { text: '', startedAt: new Date(), endedAt: null }
-        s.setLiveUtterances([...s.liveUtterances, entry])
-        s.setLiveCaptionStatus('transcribing')
-      }
-      if (event.type === 'partial') {
-        this.updateUtterance(event.text)
-        this.refreshCaptionOverlay()
-      }
-      if (event.type === 'final') {
-        this.finalizeUtterance(event.text)
-        this.syncCurrentResult()
-        this.refreshCaptionOverlay()
-        s.setLiveCaptionStatus('listening')
-      }
-      if (event.type === 'error') {
-        s.setLiveCaptionStatus('error')
-        s.setError(event.message)
-      }
-      if (event.type === 'closed') {
-        this.streamer = null
-        this.saveToHistory(event.recording)
-      }
-    })
-
     try {
+      if (settings.showDesktopCaptions) {
+        await window.electronAPI?.showCaptionOverlay('正在聆听…', {
+          fontSize: settings.captionFontSize,
+          color: settings.captionFontColor,
+          backgroundOpacity: settings.captionBackgroundOpacity,
+          width: settings.captionBoxWidth,
+          height: settings.captionBoxHeight,
+          x: settings.captionBoxX,
+          y: settings.captionBoxY,
+        })
+      }
+      if (!isCurrent()) {
+        if (this.session === session) await window.electronAPI?.hideCaptionOverlay()
+        return
+      }
+
+      client = new StreamingASRClient(settings.serverUrl, (event) => {
+        // A stopped client may report its recording later. Archive the captured old
+        // session without changing a newer session's text, status or current result.
+        if (event.type === 'closed') {
+          if (finalized) return
+          finalized = true
+          session.cancelled = true
+          const current = this.session === session
+          if (current) { this.streamer = null; this.starting = false }
+          this.saveToHistory(event.recording, snapshot || this.captureSnapshot(), current)
+          return
+        }
+        if (!isCurrent()) return
+        const currentState = useASRStore.getState()
+        if (event.type === 'configured') {
+          this.sessionOriginMs = Date.now()
+          currentState.setLiveCaptionStatus('listening')
+        }
+        if (event.type === 'speech_start') {
+          const entry: UtteranceEntry = { text: '', startedAt: new Date(), endedAt: null }
+          currentState.setLiveUtterances([...currentState.liveUtterances, entry])
+          currentState.setLiveCaptionStatus('transcribing')
+        }
+        if (event.type === 'partial') { this.updateUtterance(event.text); void this.refreshCaptionOverlay() }
+        if (event.type === 'final') {
+          this.finalizeUtterance(event.text)
+          this.syncCurrentResult()
+          void this.refreshCaptionOverlay()
+          currentState.setLiveCaptionStatus('listening')
+        }
+        if (event.type === 'error') { currentState.setLiveCaptionStatus('error'); currentState.setError(event.message) }
+      })
+      this.streamer = client
       const useSpeaker = settings.inputSource === 'speaker' || settings.audioInputDeviceId === '__speaker_loopback__'
       const preparedInput = useSpeaker
         ? await captureSpeakerAudio()
         : audioRelayMixer.isActive()
           ? audioRelayMixer.createInputStream()
           : speechRecorder.takePreparedStream(settings.audioInputDeviceId || undefined)
-
-      await this.streamer.start({
+      if (!isCurrent()) {
+        preparedInput?.getTracks().forEach(track => track.stop())
+        return
+      }
+      await client.start({
         engine: settings.streamingEngine,
         language: settings.defaultLanguage === 'auto' ? undefined : settings.defaultLanguage,
         deviceId: useSpeaker ? undefined : (settings.audioInputDeviceId || undefined),
@@ -112,23 +126,34 @@ export class LiveCaptionService {
         userId: settings.userId || undefined,
         archive: settings.allowServerDataCollection,
       })
+      if (!isCurrent()) { client.stop(); return }
       state.updateSettings({ liveCaptionEnabled: true })
       window.electronAPI?.notifyLiveCaptionState(true)
     } catch (err) {
-      this.streamer?.stop()
+      if (!isCurrent()) { client?.stop(); return }
+      session.capture()
+      client?.stop()
       this.streamer = null
       state.setLiveCaptionStatus('error')
       throw err
+    } finally {
+      if (this.session === session) this.starting = false
     }
   }
 
   async stop(): Promise<void> {
-    if (!this.streamer) return
-    const s = this.streamer
+    const session = this.session
+    session?.capture()
+    if (session) session.cancelled = true
+    this.starting = false
+    const client = this.streamer
     this.streamer = null
-    s.stop()
+    client?.stop()
+    const state = useASRStore.getState()
+    state.setLiveCaptionStatus('idle')
+    state.updateSettings({ liveCaptionEnabled: false })
     await window.electronAPI?.hideCaptionOverlay()
-    window.electronAPI?.notifyLiveCaptionState(false)
+    if (this.session === session && !this.isActive) window.electronAPI?.notifyLiveCaptionState(false)
   }
 
   async toggle(): Promise<void> {
@@ -199,8 +224,8 @@ export class LiveCaptionService {
       full_text: fullText,
       segments: utterances.map((u) => ({
         text: u.text,
-        start: u.startedAt.getTime() / 1000,
-        end: (u.endedAt || new Date()).getTime() / 1000,
+        start: Math.max(0, (u.startedAt.getTime() - this.sessionOriginMs) / 1000),
+        end: Math.max(0, ((u.endedAt || new Date()).getTime() - this.sessionOriginMs) / 1000),
       })),
       language: s.settings.defaultLanguage,
       engine_used: s.settings.streamingEngine,
@@ -215,19 +240,21 @@ export class LiveCaptionService {
     if (result.full_text) useASRStore.getState().setCurrentResult(result)
   }
 
-  private saveToHistory(recording: StreamRecording | null): void {
-    if (this.finalized) return
-    this.finalized = true
+  private captureSnapshot() {
+    const state = useASRStore.getState()
+    return { result: this.buildCurrentResult(), utterances: state.liveUtterances.filter(u => u.text.trim()), settings: state.settings }
+  }
 
+  private saveToHistory(recording: StreamRecording | null, snapshot: ReturnType<LiveCaptionService['captureSnapshot']>, currentSession: boolean): void {
     const s = useASRStore.getState()
-    s.setLiveCaptionStatus('idle')
-    s.updateSettings({ liveCaptionEnabled: false })
-
-    const utterances = s.liveUtterances.filter((u) => u.text.trim())
-    const result = this.buildCurrentResult()
-    result.duration_sec = recording?.durationSec || null
+    if (currentSession) {
+      s.setLiveCaptionStatus('idle')
+      s.updateSettings({ liveCaptionEnabled: false })
+    }
+    const { utterances, settings } = snapshot
+    const result = { ...snapshot.result, duration_sec: recording?.durationSec || null }
     if (utterances.length) {
-      s.setCurrentResult(result)
+      if (currentSession) s.setCurrentResult(result)
       s.addHistory({
         ...result,
         id: result.task_id,
@@ -239,7 +266,7 @@ export class LiveCaptionService {
     const last = utterances[utterances.length - 1]
     void (async () => {
       const archived = await window.electronAPI?.archiveTranscription({
-        archiveRoot: s.settings.archiveDir || undefined,
+        archiveRoot: settings.archiveDir || undefined,
         archiveCategory: '实时识别',
         taskId: result.task_id,
         filename: 'live_caption.wav',
@@ -255,7 +282,7 @@ export class LiveCaptionService {
           duration_sec: result.duration_sec,
           sample_rate: recording?.sampleRate,
           samples: recording?.samples,
-          user_id: s.settings.userId || undefined,
+          user_id: settings.userId || undefined,
           category: '实时转录',
           type: '实时转录',
           spoken_at: {

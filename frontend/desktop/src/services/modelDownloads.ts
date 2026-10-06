@@ -1,5 +1,11 @@
 export type DownloadRegion = 'mainland' | 'global'
 export type DownloadSource = 'auto' | 'huggingface' | 'modelscope' | 'hf-mirror' | 'github'
+export interface ModelDownloadFile {
+  path: string
+  size: number
+  downloaded_bytes: number
+  status: 'pending' | 'downloading' | 'verifying' | 'completed'
+}
 export interface ModelDownloadJob {
   id: string
   status: 'queued' | 'downloading' | 'verifying' | 'completed' | 'cancelled' | 'error'
@@ -7,6 +13,16 @@ export interface ModelDownloadJob {
   total_bytes: number
   speed_bytes_per_second: number
   current_file: string
+  current_file_downloaded_bytes?: number
+  current_file_total_bytes?: number
+  transferred_bytes?: number
+  total_files?: number
+  completed_files?: number
+  files?: ModelDownloadFile[]
+  message?: string
+  target_path?: string
+  staging_path?: string | null
+  backup_path?: string | null
   error?: string
   source?: string
   region?: DownloadRegion

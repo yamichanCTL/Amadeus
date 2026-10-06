@@ -37,7 +37,7 @@ from app.core.archive import archive_file_error_record, archive_file_record
 from app.core.asr.base import EngineOptions
 from app.core.asr.hotwords import get_hotword_manager
 from app.core.llm import log_asr_ai_polish_result, run_auto_processing
-from app.core.inference_scheduler import transcribe_with_scheduler
+from app.core.inference_scheduler import inference_timing_from_result, transcribe_with_scheduler
 from app.core.pipeline.post.punctuation import restore_punctuation
 from app.db.crud import (
     create_task,
@@ -165,6 +165,7 @@ async def _run_llm_auto(text: str, opts: TranscribeOptions) -> tuple[LLMOutputs 
         return None, None
     outputs, error = await run_auto_processing(
         text=text,
+        provider=opts.llm.provider,
         model=opts.llm.model,
         base_url=opts.llm.base_url,
         api_token=opts.llm.api_token,
@@ -340,6 +341,7 @@ async def transcribe(
             result = await transcribe_with_scheduler(opts.engine, audio_bytes, engine_options)
             timing["asr_sec"] = round(time.perf_counter() - asr_started, 6)
             timing["asr_scheduler_enabled"] = 1.0
+            timing.update(inference_timing_from_result(result))
             return result
 
         result = await _run_with_timeout(load_and_transcribe, opts.timeout_sec)

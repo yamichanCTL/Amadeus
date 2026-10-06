@@ -109,13 +109,20 @@ def test_x_asr_resolves_all_released_window_files(tmp_path, chunk_ms: int) -> No
 
 
 @pytest.mark.parametrize("chunk_ms", [160, 480, 960, 1920])
-def test_x_asr_released_variant_is_downloaded_and_selectable(chunk_ms: int) -> None:
-    engine = XASREngine(model_name=f"chunk-{chunk_ms}ms-model", device="cpu")
+def test_x_asr_complete_variant_is_selectable(tmp_path, chunk_ms: int) -> None:
+    model_dir = _model_dir(tmp_path, chunk_ms)
+    # Availability checks reject truncated files; fixture only, no real weights.
+    for path in model_dir.iterdir():
+        path.write_bytes(path.read_bytes().ljust(2048, b" "))
+    engine = XASREngine(model_name=f"chunk-{chunk_ms}ms-model", model_dir=str(model_dir), device="cpu")
 
     info = engine.info()
     assert info["model_available"] is True
     assert info["chunk_ms"] == chunk_ms
     assert f"chunk-{chunk_ms}ms-model" in info["available_variants"]
+    (model_dir / f"encoder-{chunk_ms}ms.onnx").unlink()
+    assert engine.info()["model_available"] is False
+    assert f"chunk-{chunk_ms}ms-model" not in engine.info()["available_variants"]
 
 
 @pytest.mark.asyncio

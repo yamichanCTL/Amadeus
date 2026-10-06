@@ -204,7 +204,7 @@ async def test_higgs_voice_preset_persists_and_merges_with_voices(monkeypatch) -
 
     presets = await tts_api.higgs_voice_presets()
     assert presets["voices"] == ["Elysia clone"]
-    assert presets["path"].endswith("data/tts/voices")
+    assert Path(presets["path"]).parts[-3:] == ("data", "tts", "voices")
 
     voices = await tts_api.higgs_voices("http://localhost:8002")
     assert voices["voices"] == ["Elysia clone", "default", "elysia"]

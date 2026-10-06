@@ -8,7 +8,7 @@ export function MenuBar() {
     <div className="menubar">
       <button type="button" onClick={() => setPage('transcribe')}>新转写</button>
       <button type="button" onClick={() => setPage('history')}>历史记录</button>
-      <button type="button" onClick={() => setPage('models')}>模型管理</button>
+      <button type="button" onClick={() => setPage('home')}>任务与模型</button>
       <button type="button" disabled={!currentResult} onClick={() => window.electronAPI?.textToClipboard(currentResult?.full_text || '')}>
         复制结果
       </button>

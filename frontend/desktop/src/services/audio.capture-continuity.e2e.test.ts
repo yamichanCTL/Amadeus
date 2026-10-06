@@ -5,6 +5,7 @@ const harness = vi.hoisted(() => ({
   getUserMedia: vi.fn(),
   workletNode: null as any,
   contexts: [] as any[],
+  moduleLoad: vi.fn(async (): Promise<void> => undefined),
 }))
 
 const track = {
@@ -43,7 +44,7 @@ class MockAudioWorkletNode {
 class MockAudioContext {
   sampleRate = 48_000
   destination = {}
-  audioWorklet = { addModule: vi.fn(async () => undefined) }
+  audioWorklet = { addModule: harness.moduleLoad }
   createMediaStreamSource = vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn() }))
   createGain = vi.fn(() => ({ connect: vi.fn(), disconnect: vi.fn(), gain: { value: 0 } }))
   resume = vi.fn(async () => undefined)
@@ -79,6 +80,7 @@ describe('microphone capture continuity end to end', () => {
     harness.getUserMedia.mockReset().mockResolvedValue(stream)
     harness.workletNode = null
     harness.contexts.length = 0
+    harness.moduleLoad.mockReset().mockResolvedValue(undefined)
     track.stop.mockClear()
   })
 
@@ -153,6 +155,43 @@ describe('microphone capture continuity end to end', () => {
     const secondPcm = await wavPcm(second.blob)
     expect(secondPcm).toHaveLength(frames * 2)
     expect(secondPcm.every((sample) => sample === 2_000)).toBe(true)
+  })
+
+  it('releases only a late cancelled permission stream and preserves the newer capture', async () => {
+    let resolve!: (value: MediaStream) => void
+    const staleTrack = { ...track, stop: vi.fn() }
+    const staleStream = { ...stream, getTracks: () => [staleTrack], getAudioTracks: () => [staleTrack] } as unknown as MediaStream
+    harness.getUserMedia.mockReturnValueOnce(new Promise<MediaStream>(done => { resolve = done }))
+    const recorder = new AudioRecorder()
+    const staleStart = recorder.start('physical-mic')
+    const staleFailure = expect(staleStart).rejects.toThrow('录音启动已取消')
+    recorder.cancel()
+    await recorder.start('physical-mic')
+    resolve(staleStream)
+    await staleFailure
+    expect(staleTrack.stop).toHaveBeenCalledOnce()
+    expect(track.stop).not.toHaveBeenCalled()
+    emitChunk(0, 2222, 4096)
+    const recorded = await recorder.stop()
+    expect((await wavPcm(recorded.blob))[0]).toBe(2222)
+    expect(track.stop).toHaveBeenCalledOnce()
+  })
+
+  it('discards an old AudioWorklet module completion instead of attaching it to a newer recording', async () => {
+    let resolve!: () => void
+    harness.moduleLoad.mockReturnValueOnce(new Promise<void>(done => { resolve = done }))
+    const recorder = new AudioRecorder()
+    const staleStart = recorder.start('physical-mic')
+    await vi.waitFor(() => expect(harness.moduleLoad).toHaveBeenCalledOnce())
+    recorder.cancel()
+    await recorder.start('physical-mic')
+    const currentNode = harness.workletNode
+    resolve()
+    await staleStart
+    expect(harness.workletNode).toBe(currentNode)
+    emitChunk(0, 3333, 4096)
+    const recorded = await recorder.stop()
+    expect((await wavPcm(recorded.blob))[0]).toBe(3333)
   })
 })
 

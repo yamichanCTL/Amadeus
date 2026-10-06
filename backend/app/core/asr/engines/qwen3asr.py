@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import gc
+import io
 import logging
+import math
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
 import soundfile as sf
+import numpy as np
 
 from app.config import get_settings
 from app.core.asr.base import ASRResult, BaseASREngine, EngineOptions, Segment
 from app.core.json_utils import json_safe
+from app.core.model_cache import huggingface_cache_dir
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -58,6 +64,10 @@ class Qwen3ASREngine(BaseASREngine):
 
         model_ref = str(self._model_dir) if _path_has_model_files(self._model_dir) else self._model_name
         kwargs: dict[str, Any] = dict(self._extra)
+        if model_ref == self._model_name:
+            kwargs.setdefault("cache_dir", str(huggingface_cache_dir(settings)))
+        self._device, self._torch_dtype = _resolve_runtime_options(self._device, self._torch_dtype)
+        _require_cuda_if_selected(self._device)
         if self._device:
             kwargs.setdefault("device_map", self._device)
         if self._torch_dtype and self._torch_dtype != "auto":
@@ -75,6 +85,10 @@ class Qwen3ASREngine(BaseASREngine):
         if self._model is not None:
             del self._model
             self._model = None
+            # Transformers modules can retain reference cycles. Without a full
+            # collection, empty_cache cannot release live model tensors and a
+            # subsequent model switch may keep several GB of VRAM occupied.
+            gc.collect()
             try:
                 import torch
 
@@ -106,20 +120,37 @@ class Qwen3ASREngine(BaseASREngine):
     def _run_inference(self, audio_bytes: bytes, opts: EngineOptions) -> ASRResult:
         assert self._model is not None
 
-        # Windows disallows reopening an open NamedTemporaryFile. Close the
-        # writer before handing the path to libsndfile / qwen-asr and clean it
-        # up even when decoding or inference fails.
+        started = time.perf_counter()
+        # The SDK supports (waveform, sample_rate). Decode supported containers
+        # directly and use the same HQ soxr resampler as librosa's default.
+        # This avoids librosa.load's costly first-use imports on Windows, and
+        # also avoids writing and reading a second copy of each WAV recording.
         audio_path: Path | None = None
+        decoded = False
+        decode_started = time.perf_counter()
         try:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                audio_path = Path(tmp.name)
-                tmp.write(audio_bytes)
-            duration = _audio_duration_sec(str(audio_path))
-            raw = self._call_model(str(audio_path), opts)
+            try:
+                audio_input = _decode_qwen_audio(audio_bytes)
+                duration = len(audio_input[0]) / float(audio_input[1])
+                decoded = True
+            except sf.LibsndfileError:
+                # Retain the SDK's audioread/codec fallback for a container
+                # libsndfile cannot decode. Windows requires closing the writer
+                # before the SDK reopens this path.
+                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                    audio_path = Path(tmp.name)
+                    tmp.write(audio_bytes)
+                audio_input = str(audio_path)
+                duration = _audio_duration_sec(audio_input)
+            decode_sec = time.perf_counter() - decode_started
+            inference_started = time.perf_counter()
+            raw = self._call_model(audio_input, opts)
+            sdk_inference_sec = time.perf_counter() - inference_started
         finally:
             if audio_path is not None:
                 audio_path.unlink(missing_ok=True)
 
+        format_started = time.perf_counter()
         text = _extract_text(raw).strip()
         segments = [Segment(start=0.0, end=duration, text=text)] if text else []
         language = _extract_language(raw) or opts.language
@@ -134,11 +165,20 @@ class Qwen3ASREngine(BaseASREngine):
                 "model_dir": str(self._model_dir),
                 "device": self._device,
                 "result": json_safe(raw),
+                "inference_timing": {
+                    # Fallback decode occurs inside the SDK; do not fabricate
+                    # a separate decode timing when it cannot be observed.
+                    "audio_decode_sec": decode_sec if decoded else None,
+                    "audio_input_mode": "waveform" if decoded else "sdk_path",
+                    "sdk_inference_sec": sdk_inference_sec,
+                    "result_format_sec": time.perf_counter() - format_started,
+                    "total_engine_sec": time.perf_counter() - started,
+                },
             },
         )
 
-    def _call_model(self, audio_path: str, opts: EngineOptions) -> Any:
-        return _call_qwen_model(self._model, audio_path, opts)
+    def _call_model(self, audio_input: Any, opts: EngineOptions) -> Any:
+        return _call_qwen_model(self._model, audio_input, opts)
 
     def info(self) -> dict[str, Any]:
         base = super().info()
@@ -160,7 +200,7 @@ def _load_qwen_model(model_cls: Any, model_ref: str, kwargs: dict[str, Any]) -> 
     return model_cls.from_pretrained(model_ref, **kwargs)
 
 
-def _call_qwen_model(model: Any, audio_path: str, opts: EngineOptions) -> Any:
+def _call_qwen_model(model: Any, audio_path: Any, opts: EngineOptions) -> Any:
     language = _qwen_language(opts.language)
     kwargs = {"language": language} if language else {}
     for method_name in ("transcribe", "generate", "recognize"):
@@ -274,6 +314,36 @@ def _resolve_torch_dtype(name: str) -> Any:
     return mapping.get(name.lower(), name)
 
 
+def _resolve_runtime_options(device: str, dtype: str) -> tuple[str, str]:
+    """Only an explicit ``auto`` device selection permits CPU fallback.
+
+    CUDA remains the default, including managed Windows installs. Check the
+    installed torch runtime for ``auto`` because a machine with an NVIDIA GPU
+    can still have a CPU-only PyTorch build.
+    """
+    if device == "auto":
+        import torch
+
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+    if dtype == "auto":
+        dtype = "float32" if device == "cpu" else "bfloat16"
+    return device, dtype
+
+
+def _require_cuda_if_selected(device: str) -> None:
+    """Reject unavailable CUDA before loading weights; never change devices."""
+    if device != "cuda" and not device.startswith("cuda:"):
+        return
+    import torch
+
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            f"No CUDA GPUs are available for device '{device}'. "
+            "A CUDA-enabled PyTorch build and a working NVIDIA driver are required. "
+            "Select device='cpu' or device='auto' explicitly to allow CPU execution."
+        )
+
+
 def _audio_duration_sec(path: str) -> float:
     try:
         info = sf.info(path)
@@ -282,6 +352,26 @@ def _audio_duration_sec(path: str) -> float:
     except Exception:
         logger.debug("Could not read audio duration for %s.", path, exc_info=True)
     return 0.0
+
+
+def _decode_qwen_audio(audio_bytes: bytes) -> tuple[np.ndarray, int]:
+    """Match SDK mono/16 kHz input without its lazy librosa file loader."""
+    with io.BytesIO(audio_bytes) as source:
+        waveform, sample_rate = sf.read(source, dtype="float32", always_2d=False)
+    if waveform.ndim == 2:
+        waveform = np.mean(waveform, axis=-1).astype(np.float32)
+    if sample_rate != 16000:
+        import soxr
+
+        length = math.ceil(len(waveform) * 16000 / sample_rate)
+        waveform = soxr.resample(waveform, sample_rate, 16000, quality="HQ")
+        # librosa.resample defaults to fix=True: preserve its exact ceil-length
+        # convention, including fractional 44.1 kHz -> 16 kHz conversions.
+        if len(waveform) < length:
+            waveform = np.pad(waveform, (0, length - len(waveform)))
+        else:
+            waveform = waveform[:length]
+    return np.asarray(waveform, dtype=np.float32), 16000
 
 
 def _path_has_model_files(path: Path) -> bool:

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 let streamEvent: ((event: any) => void) | null = null
 const startStream = vi.fn(async () => undefined)
@@ -29,6 +29,8 @@ vi.mock('./audio', () => ({
 import { LiveCaptionService } from './liveCaption'
 import { DEFAULT_SETTINGS, useASRStore } from '@/store/useASRStore'
 
+afterEach(() => vi.useRealTimers())
+
 describe('live caption local persistence', () => {
   beforeEach(() => {
     streamEvent = null
@@ -41,7 +43,17 @@ describe('live caption local persistence', () => {
       recordStatus: 'idle',
       transcribeStatus: 'idle',
       liveCaptionStatus: 'idle',
+      asrModelLoading: false,
     })
+  })
+
+  it('does not start streaming while a model load is still running after navigation', async () => {
+    useASRStore.setState({ asrModelLoading: true })
+    const service = new LiveCaptionService()
+    await service.start()
+    expect(startStream).not.toHaveBeenCalled()
+    expect(useASRStore.getState().liveCaptionStatus).toBe('idle')
+    useASRStore.setState({ asrModelLoading: false })
   })
 
   it('fills the software result on each final and archives realtime WAV on stop', async () => {
@@ -74,5 +86,44 @@ describe('live caption local persistence', () => {
       audioExtension: '.wav',
     }))
     expect(useASRStore.getState().history[0]?.archived_audio).toContain('/wav/实时识别/')
+  })
+
+  it('releases recognition after a failed start even when no client remains', async () => {
+    const hideCaptionOverlay = vi.fn(async () => true)
+    const notifyLiveCaptionState = vi.fn()
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: { showCaptionOverlay: vi.fn(async () => true), hideCaptionOverlay, notifyLiveCaptionState } })
+    startStream.mockRejectedValueOnce(new Error('microphone unavailable'))
+    const service = new LiveCaptionService()
+    await expect(service.start()).rejects.toThrow('microphone unavailable')
+    expect(service.isActive).toBe(false)
+    expect(useASRStore.getState().liveCaptionStatus).toBe('error')
+    await service.stop()
+    expect(useASRStore.getState().liveCaptionStatus).toBe('idle')
+    expect(useASRStore.getState().settings.liveCaptionEnabled).toBe(false)
+    expect(hideCaptionOverlay).toHaveBeenCalled()
+    expect(notifyLiveCaptionState).toHaveBeenCalledWith(false)
+    await service.start()
+    expect(service.isActive).toBe(true)
+    await service.stop()
+  })
+
+  it('stores subtitle times relative to capture startup while preserving wall-clock text and archive metadata', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-06T00:00:00+08:00'))
+    const archiveTranscription = vi.fn(async () => null)
+    Object.defineProperty(window, 'electronAPI', { configurable: true, value: { showCaptionOverlay: vi.fn(async () => true), hideCaptionOverlay: vi.fn(async () => true), notifyLiveCaptionState: vi.fn(), archiveTranscription } })
+    const service = new LiveCaptionService()
+    await service.start()
+    vi.setSystemTime(new Date('2026-10-06T00:00:05+08:00'))
+    streamEvent?.({ type: 'configured' })
+    vi.setSystemTime(new Date('2026-10-06T00:00:08+08:00'))
+    streamEvent?.({ type: 'speech_start' })
+    vi.setSystemTime(new Date('2026-10-06T00:00:09+08:00'))
+    streamEvent?.({ type: 'final', text: '字幕内容', language: 'zh' })
+    expect(useASRStore.getState().currentResult?.segments).toEqual([{ text: '字幕内容', start: 3, end: 4 }])
+    expect(useASRStore.getState().currentResult?.full_text).toContain('00:00:08')
+    await service.stop()
+    await Promise.resolve()
+    expect(archiveTranscription).toHaveBeenCalledWith(expect.objectContaining({ metadata: expect.objectContaining({ spoken_at: { start: '2026-10-05T16:00:08.000Z', end: '2026-10-05T16:00:09.000Z' } }) }))
   })
 })

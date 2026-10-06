@@ -97,17 +97,18 @@ export function RealtimeVoiceConfig({ disabled, onCatalog }: {
 
   return <div className="wide realtime-voice-config">
     <div className="agent-config-grid">
-      <label>实时语音模型
+      <label>对话方式 / 语音模型
         <select aria-label="实时语音通道" value={settings.agentRealtimeProvider} disabled={disabled} onChange={(event) => {
           updateSettings({ agentRealtimeProvider: event.target.value as AgentRealtimeProvider })
         }}>
-          <option value="off">现有语音链路（Codex / 原有 Agent）</option>
+          <option value="off">语音识别 + Codex / Agent</option>
           {providerFallbacks.map((fallback) => {
             const item = catalog?.providers.find((entry) => entry.id === fallback.id)
             return <option key={fallback.id} value={fallback.id}>{item?.label || fallback.label}{item ? item.available ? '' : ' · 暂不可用' : ''}</option>
           })}
         </select>
       </label>
+      <p className="wide realtime-voice-hint">实时语音模型支持持续对话；选择语音识别时，使用已有 ASR 与对话引擎。</p>
       {settings.agentRealtimeProvider !== 'off' && <>
         <label>实时音色
           <select aria-label="实时音色" value={voice} disabled={disabled || !provider?.voices.length} onChange={(event) => setOption({ voice: event.target.value })}>

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { ArchiveSummaryResult, ModelInfo, TranscribeResponse } from '@/services/api'
+import { LEGACY_CONNECTION_ID, normalizeTaskModels, type ModelConnection, type LLMTask, type TaskModelBinding } from '@/services/taskModels'
 
 export type AppPage = 'home' | 'realtime' | 'transcribe' | 'history' | 'summary' | 'models' | 'settings' | 'voice' | 'debug'
 export type TranscribeStatus = 'idle' | 'uploading' | 'processing' | 'polling' | 'done' | 'error' | 'cancelled'
@@ -28,6 +29,7 @@ export type AsrModelConfig = {
   device: string
   computeType: string
   extraJson: string
+  deviceConfigured?: boolean
 }
 
 export type PromptCard = {
@@ -117,6 +119,8 @@ export type Settings = {
   llmProvider: string
   llmModel: string
   llmApiToken: string
+  modelConnections: ModelConnection[]
+  taskModels: Partial<Record<LLMTask, TaskModelBinding>>
   llmTargetLanguage: string
   llmStyle: string
   llmPolishPrompt: string
@@ -232,8 +236,8 @@ export const DEFAULT_SETTINGS: Settings = {
   asrModelConfigs: {
     fireredasr2: { modelName: 'FireRedASR2-AED', device: 'cuda', computeType: '', extraJson: '{"beam_size":3,"batch_size":1}' },
     sensevoice: { modelName: 'SenseVoiceSmall', device: 'cuda:0', computeType: '', extraJson: '{"batch_size_s":60}' },
-    qwen3asr: { modelName: 'Qwen/Qwen3-ASR-1.7B', device: 'cuda:0', computeType: 'bfloat16', extraJson: '{}' },
-    formalasr: { modelName: 'TaurenMountain/FormalASR-1.7B', device: 'cuda:0', computeType: 'bfloat16', extraJson: '{}' },
+    qwen3asr: { modelName: 'Qwen/Qwen3-ASR-1.7B', device: 'cuda:0', computeType: 'auto', extraJson: '{}' },
+    formalasr: { modelName: 'TaurenMountain/FormalASR-1.7B', device: 'cuda:0', computeType: 'auto', extraJson: '{}' },
     whisper: { modelName: 'base', device: 'cuda', computeType: 'float16', extraJson: '{}' },
     'x-asr': { modelName: 'chunk-960ms-model', device: 'cuda', computeType: '', extraJson: '{"num_threads":1,"text_format":"none"}' }
   },
@@ -289,6 +293,8 @@ export const DEFAULT_SETTINGS: Settings = {
   llmProvider: 'custom',
   llmModel: '',
   llmApiToken: '',
+  modelConnections: [],
+  taskModels: {},
   llmTargetLanguage: 'English',
   llmStyle: '',
   llmPolishPrompt: `你是一个专业的 ASR 转写结果后处理模型。你的任务是对输入文本进行纠错、断句、标点补全和轻度润色，使其更准确、更自然、更适合接入后续 LLM 理解。
@@ -528,6 +534,9 @@ type ASRState = {
   serverStatus: ServerStatus
   transcribeStatus: TranscribeStatus
   recordStatus: RecordStatus
+  fileBatchRunning: boolean
+  /** A model load continues across navigation; this process lock is not persisted. */
+  asrModelLoading: boolean
   liveCaptionStatus: LiveCaptionStatus
   settings: Settings
   models: ModelInfo[]
@@ -543,6 +552,7 @@ type ASRState = {
   setServerStatus: (status: ServerStatus) => void
   setTranscribeStatus: (status: TranscribeStatus) => void
   setRecordStatus: (status: RecordStatus) => void
+  setFileBatchRunning: (running: boolean) => void
   setLiveCaptionStatus: (status: LiveCaptionStatus) => void
   updateSettings: (settings: Partial<Settings>) => void
   updateSummaryWorkspace: (workspace: Partial<SummaryWorkspace>) => void
@@ -663,7 +673,8 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
       modelName: typeof current.modelName === 'string' && current.modelName.trim() ? current.modelName : fallback.modelName,
       device: typeof current.device === 'string' && current.device.trim() ? current.device : fallback.device,
       computeType: typeof current.computeType === 'string' ? current.computeType : fallback.computeType,
-      extraJson: typeof current.extraJson === 'string' && current.extraJson.trim() ? current.extraJson : fallback.extraJson
+      extraJson: typeof current.extraJson === 'string' && current.extraJson.trim() ? current.extraJson : fallback.extraJson,
+      ...(current.deviceConfigured === true ? { deviceConfigured: true } : {}),
     }]
   }))
   merged.liveCaptionChunkSec = Math.min(15, Math.max(2, Number(merged.liveCaptionChunkSec) || 4))
@@ -811,6 +822,7 @@ function normalizeSettings(value: Partial<Settings> | undefined): Settings {
   delete obsolete.multiEngine
   delete obsolete.passiveSummaryAutoCloudSave
   delete obsolete.mergeStrategy
+  Object.assign(merged, normalizeTaskModels(merged, legacy))
   return merged
 }
 
@@ -836,6 +848,8 @@ export const useASRStore = create<ASRState>()(
       serverStatus: 'checking',
       transcribeStatus: 'idle',
       recordStatus: 'idle',
+      fileBatchRunning: false,
+      asrModelLoading: false,
       liveCaptionStatus: 'idle',
       settings: normalizeSettings(DEFAULT_SETTINGS),
       models: [],
@@ -851,9 +865,24 @@ export const useASRStore = create<ASRState>()(
       setServerStatus: (serverStatus) => set({ serverStatus }),
       setTranscribeStatus: (transcribeStatus) => set({ transcribeStatus }),
       setRecordStatus: (recordStatus) => set({ recordStatus }),
+      setFileBatchRunning: (fileBatchRunning) => set({ fileBatchRunning }),
       setLiveCaptionStatus: (liveCaptionStatus) => set({ liveCaptionStatus }),
       updateSettings: (settings) => set((state) => {
         const patch = { ...settings }
+        const legacyModelChanged = Object.prototype.hasOwnProperty.call(patch, 'llmModel')
+        const legacyConnectionChanged = ['llmProvider', 'llmBaseUrl', 'llmApiToken'].some((key) => Object.prototype.hasOwnProperty.call(patch, key))
+        if (legacyConnectionChanged && !Object.prototype.hasOwnProperty.call(patch, 'modelConnections')) {
+          const next = { ...state.settings, ...patch }
+          patch.modelConnections = state.settings.modelConnections.map((connection) => connection.id === LEGACY_CONNECTION_ID ? {
+            ...connection, provider: next.llmProvider, baseUrl: next.llmBaseUrl, apiToken: next.llmApiToken,
+          } : connection)
+        }
+        if (legacyModelChanged && !Object.prototype.hasOwnProperty.call(patch, 'taskModels')) {
+          // The legacy editor now configures ASR postprocessing only.
+          patch.taskModels = { ...state.settings.taskModels, asr_postprocess: {
+            connectionId: LEGACY_CONNECTION_ID, model: String(patch.llmModel || ''),
+          } }
+        }
         if (Object.prototype.hasOwnProperty.call(patch, 'serverUrl') && !Object.prototype.hasOwnProperty.call(patch, 'backendConfirmed')) {
           patch.backendConfirmed = false
         }
@@ -890,10 +919,12 @@ export const useASRStore = create<ASRState>()(
     }),
     {
       name: 'asr-desktop-store',
-      version: 44,
+      version: 47,
       partialize: (state) => ({
         settings: state.settings,
-        history: state.history,
+        // Blob URLs belong to the current renderer and cannot survive an app
+        // restart. Keep the archive path so restored history can play its file.
+        history: state.history.map(item => item.audio_url?.startsWith('blob:') ? { ...item, audio_url: undefined } : item),
         summaryWorkspace: { ...state.summaryWorkspace, loading: false },
       }),
       migrate: (persisted, version) => {
@@ -923,11 +954,24 @@ export const useASRStore = create<ASRState>()(
           settings.llmAutoPolish = true
           settings.llmAutoTranslate = false
         }
+        // Apply old translation migrations before assigning task bindings.
+        if (version < 45) {
+          Object.assign(settings, normalizeTaskModels(settings))
+        }
+        if (version < 46) {
+          for (const engine of ['qwen3asr', 'formalasr']) {
+            const config = settings.asrModelConfigs[engine]
+            const fallback = DEFAULT_SETTINGS.asrModelConfigs[engine]
+            if (!config.deviceConfigured && config.modelName === fallback.modelName && config.device === 'auto') {
+              settings.asrModelConfigs[engine] = { ...config, device: fallback.device }
+            }
+          }
+        }
         return {
           ...state,
           settings,
           summaryWorkspace: normalizeSummaryWorkspace(state.summaryWorkspace),
-          history: Array.isArray(state.history) ? state.history.slice(0, 200) : []
+          history: Array.isArray(state.history) ? state.history.slice(0, 200).map(item => item.audio_url?.startsWith('blob:') ? { ...item, audio_url: undefined } : item) : []
         } as ASRState
       }
     }

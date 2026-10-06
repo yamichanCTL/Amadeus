@@ -53,10 +53,11 @@ describe('FormalASR configuration', () => {
     expect(useASRStore.getState().settings.llmAutoPolish).toBe(true)
     expect(screen.getByRole('note', { name: 'FormalASR 输出说明' }).textContent).toContain('追加 LLM 处理已开启')
 
-    const row = screen.getByRole('button', { name: /FormalASR · 中文口语整理/ }).closest('article')!
+    fireEvent.click(screen.getByRole('button', { name: /FormalASR · 中文口语整理/ }))
+    const row = screen.getByRole('article', { name: /FormalASR · 中文口语整理 配置/ })
     fireEvent.click(within(row).getByRole('button', { name: '加载' }))
     await waitFor(() => expect(apiMocks.loadModel).toHaveBeenCalledWith('formalasr', {
-      model_name: 'TaurenMountain/FormalASR-1.7B', device: 'cuda:0', compute_type: 'bfloat16', extra: {},
+      model_name: 'TaurenMountain/FormalASR-1.7B', device: 'cuda:0', extra: {},
     }))
 
     fireEvent.click(screen.getByRole('button', { name: '关闭追加 LLM 处理' }))
@@ -77,5 +78,33 @@ describe('FormalASR configuration', () => {
     expect(migrated.settings.offlineEngine).toBe('whisper')
     expect(migrated.settings.streamingEngine).toBe('x-asr')
     expect(migrated.settings.llmAutoPolish).toBe(true)
+  })
+
+  it.each(['cpu', 'auto'])('sends an explicitly selected %s device instead of using the backend CUDA default', async (device) => {
+    render(<ModelsPage asrSection="models" />)
+    const expand = await screen.findByRole('button', { name: /FormalASR · 中文口语整理/ })
+    fireEvent.click(expand)
+    const row = screen.getByRole('article', { name: /FormalASR · 中文口语整理 配置/ })
+    fireEvent.change(within(row).getByRole('combobox', { name: '加载设备' }), { target: { value: device } })
+    fireEvent.click(within(row).getByRole('button', { name: '加载' }))
+    await waitFor(() => expect(apiMocks.loadModel).toHaveBeenCalledWith('formalasr', {
+      model_name: 'TaurenMountain/FormalASR-1.7B', device, extra: {},
+    }))
+    expect(useASRStore.getState().settings.asrModelConfigs.formalasr.deviceConfigured).toBe(true)
+  })
+
+  it('retains custom model, precision, and JSON edits while inspecting another engine', async () => {
+    render(<ModelsPage asrSection="models" />)
+    fireEvent.click(await screen.findByRole('button', { name: /FormalASR · 中文口语整理/ }))
+    fireEvent.click(screen.getByText('模型路径与高级参数'))
+    fireEvent.change(screen.getByRole('textbox', { name: /模型 \/ 路径/ }), { target: { value: 'F:/models/formal-custom' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '计算精度 / dtype' }), { target: { value: 'float32' } })
+    fireEvent.change(screen.getByRole('textbox', { name: '参数 JSON' }), { target: { value: '{"max_new_tokens":256}' } })
+    fireEvent.click(screen.getByRole('button', { name: /SenseVoice/ }))
+    fireEvent.click(screen.getByRole('button', { name: /FormalASR · 中文口语整理/ }))
+    fireEvent.click(screen.getByRole('button', { name: '加载' }))
+    await waitFor(() => expect(apiMocks.loadModel).toHaveBeenCalledWith('formalasr', {
+      model_name: 'F:/models/formal-custom', device: 'cuda:0', compute_type: 'float32', extra: { max_new_tokens: 256 },
+    }))
   })
 })

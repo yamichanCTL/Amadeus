@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import platform
+import re
 import sys
 import time
 from collections.abc import Awaitable, Callable
@@ -332,43 +333,46 @@ async def _skill_delegate_agent(**params: Any) -> SkillExecuteResult:
 
 
 async def _skill_download_model(**params: Any) -> SkillExecuteResult:
-    """Download a model from HuggingFace or a URL into the models directory."""
-    source = str(params.get("source", "")).strip()  # huggingface repo id or URL
+    """Download a HuggingFace model inside the configured models directory."""
+    source = str(params.get("source", "")).strip()
+    if source.startswith("https://huggingface.co/"):
+        source = source.removeprefix("https://huggingface.co/").rstrip("/").removesuffix(".git")
     if not source:
         return SkillExecuteResult(skill="download_model", success=False, error="source is required (huggingface repo id or URL)")
 
     engine = str(params.get("engine", "unknown")).strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", engine):
+        return SkillExecuteResult(skill="download_model", success=False, error="engine must be a single directory name (letters, digits, - or _)")
+    if not re.fullmatch(r"(?:[A-Za-z0-9][A-Za-z0-9_.-]*/)?[A-Za-z0-9][A-Za-z0-9_.-]*", source) or ".." in source or "--" in source:
+        return SkillExecuteResult(skill="download_model", success=False, error="source must be a HuggingFace owner/model ID or its https://huggingface.co/ URL")
 
     from app.config import get_settings
     settings = get_settings()
-    target_dir = settings.models_dir / engine / source.replace("/", "_")
-    target_dir.mkdir(parents=True, exist_ok=True)
+    models_root = settings.models_dir.resolve()
+    target_dir = (models_root / engine / source.replace("/", "_")).resolve()
+    if models_root not in target_dir.parents:
+        return SkillExecuteResult(skill="download_model", success=False, error="model target must stay inside the configured models directory")
 
-    # Try huggingface hub first, then git clone as fallback
     try:
-        # Try using huggingface_hub if available
-        import importlib
-        if importlib.util.find_spec("huggingface_hub"):
-            from huggingface_hub import snapshot_download
-            downloaded = snapshot_download(
-                repo_id=source,
-                local_dir=str(target_dir),
-                local_dir_use_symlinks=False,
-            )
-            return SkillExecuteResult(
-                skill="download_model",
-                success=True,
-                output=f"Downloaded {source} → {target_dir}",
-                metadata={"source": source, "target": str(target_dir), "method": "huggingface_hub"},
-            )
-    except Exception:
-        pass
-
-    # Fallback: git clone from huggingface
-    hf_url = f"https://huggingface.co/{source}"
-    result = await _skill_git_clone(url=hf_url, target=str(target_dir.relative_to(PROJECT_ROOT)), depth=1)
-    result.skill = "download_model"
-    return result
+        from huggingface_hub import snapshot_download
+        from app.core.model_cache import huggingface_cache_dir
+        await asyncio.to_thread(
+            snapshot_download,
+            repo_id=source,
+            local_dir=str(target_dir),
+            local_dir_use_symlinks=False,
+            cache_dir=str(huggingface_cache_dir(settings)),
+        )
+        return SkillExecuteResult(
+            skill="download_model",
+            success=True,
+            output=f"Downloaded {source} → {target_dir}",
+            metadata={"source": source, "target": str(target_dir), "method": "huggingface_hub"},
+        )
+    except ImportError:
+        return SkillExecuteResult(skill="download_model", success=False, error="huggingface_hub is required to download model weights; use the model downloads page or install the model's dependencies")
+    except Exception as exc:
+        return SkillExecuteResult(skill="download_model", success=False, error=str(exc))
 
 
 async def _skill_speak_frontend(**params: Any) -> SkillExecuteResult:
@@ -976,9 +980,9 @@ _BUILTIN_SKILLS: dict[str, dict[str, Any]] = {
         "handler": _skill_download_model,
         "definition": SkillDefinition(
             name="download_model",
-            description="Download a model from HuggingFace or other sources into the local models directory",
+            description="Download a HuggingFace model into the configured local models directory",
             parameters=[
-                _param("source", "string", "HuggingFace repo ID (e.g., 'Qwen/Qwen3-ASR-1.7B') or git URL", required=True),
+                _param("source", "string", "HuggingFace repo ID (e.g., 'Qwen/Qwen3-ASR-1.7B') or its HuggingFace HTTPS URL", required=True),
                 _param("engine", "string", "Engine category for storage (e.g., 'tts', 'asr', 'llm')", default="unknown"),
             ],
             category="model",

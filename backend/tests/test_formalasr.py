@@ -3,18 +3,23 @@
 from __future__ import annotations
 
 import json
+import io
+import math
 import sys
+import weakref
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import numpy as np
+import soundfile as sf
 
 from app.config import get_settings
 from app.core.asr.base import ASRResult, EngineOptions
 from app.core.asr.engines.formalasr import FormalASREngine
-from app.core.asr.engines.qwen3asr import Qwen3ASREngine, _load_qwen_model
+from app.core.asr.engines.qwen3asr import Qwen3ASREngine, _decode_qwen_audio, _load_qwen_model, _resolve_runtime_options
 from app.core.asr.registry import get_engine_class
 from backend.tests.conftest import make_wav_bytes
 
@@ -35,6 +40,29 @@ def test_formalasr_defaults_are_separate_from_qwen_and_offline() -> None:
     assert info["supports_timestamps"] is False
     assert info["native_punctuation"] is True
     assert info["model_modes"] == ["offline"]
+
+
+@pytest.mark.asyncio
+async def test_model_unload_releases_reference_cycles_before_empty_cache(monkeypatch) -> None:
+    class CyclicModel:
+        def __init__(self):
+            self.reference = self
+
+    engine = FormalASREngine()
+    model = CyclicModel()
+    reference = weakref.ref(model)
+    engine._model = model
+    del model
+
+    def empty_cache():
+        assert reference() is None, "CUDA tensors must be released before flushing cached blocks"
+
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: True, empty_cache=empty_cache),
+    ))
+    await engine.unload()
+    assert not engine.is_loaded
+    assert reference() is None
 
 
 @pytest.mark.asyncio
@@ -72,19 +100,37 @@ def test_qwen_loader_does_not_retry_without_explicit_device_on_type_error() -> N
     assert factory.call_count == 1
 
 
+@pytest.mark.parametrize("cuda_available, expected", [
+    (False, ("cpu", "float32")), (True, ("cuda:0", "bfloat16")),
+])
+def test_managed_runtime_auto_device_follows_installed_torch(monkeypatch, cuda_available, expected):
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(
+        cuda=SimpleNamespace(is_available=lambda: cuda_available),
+    ))
+    assert _resolve_runtime_options("auto", "auto") == expected
+    assert _resolve_runtime_options("cuda:1", "float16") == ("cuda:1", "float16")
+
+
 @pytest.mark.parametrize("engine_class", [FormalASREngine, Qwen3ASREngine])
 @pytest.mark.parametrize("fail_inference", [False, True])
-def test_audio_is_reopenable_and_deleted_after_success_or_failure(
-    engine_class, fail_inference, tmp_path,
+@pytest.mark.parametrize("supported_wav", [False, True])
+def test_supported_wav_uses_waveform_and_codec_fallback_cleans_up(
+    engine_class, fail_inference, supported_wav, tmp_path,
 ) -> None:
-    wav = make_wav_bytes(0.1)
+    wav = make_wav_bytes(0.1) if supported_wav else b"SDK-only test container"
     paths: list[Path] = []
 
-    def transcribe(*, audio: str, **kwargs):
-        path = Path(audio)
-        paths.append(path)
-        # On Windows this fails if the original NamedTemporaryFile is open.
-        assert path.read_bytes() == wav
+    def transcribe(*, audio, **kwargs):
+        if supported_wav:
+            assert isinstance(audio, tuple)
+            assert audio[1] == 16000
+            assert len(audio[0]) == 1600
+            assert audio[0].dtype == np.float32
+        else:
+            path = Path(audio)
+            paths.append(path)
+            # On Windows this fails if the temporary writer is still open.
+            assert path.read_bytes() == wav
         if fail_inference:
             raise RuntimeError("test decode failed")
         if engine_class is FormalASREngine:
@@ -100,13 +146,37 @@ def test_audio_is_reopenable_and_deleted_after_success_or_failure(
         result = engine._run_inference(wav, EngineOptions())
         assert result.full_text == "请将会议改到周四。"
         json.dumps(result.raw, ensure_ascii=False)
+        timing = result.raw["inference_timing"]
+        assert timing["sdk_inference_sec"] >= 0
+        assert timing["audio_input_mode"] == ("waveform" if supported_wav else "sdk_path")
+        assert (timing["audio_decode_sec"] is not None) == supported_wav
         if engine_class is FormalASREngine:
             assert result.engine_name == "formalasr"
             assert result.language == "zh"
             assert result.segments == []
             assert result.raw["native_punctuation"] is True
-    assert len(paths) == 1
-    assert not paths[0].exists()
+    assert len(paths) == (0 if supported_wav else 1)
+    for path in paths:
+        assert not path.exists()
+
+
+@pytest.mark.parametrize("sample_rate", [16000, 44100, 48000])
+@pytest.mark.parametrize("channels", [1, 2])
+def test_decode_preserves_full_duration_and_mono_channels(sample_rate, channels):
+    frames = sample_rate // 5 + 7
+    waveform = np.sin(np.arange(frames) * 0.1).astype(np.float32) * 0.2
+    if channels == 2:
+        waveform = np.stack((waveform, waveform * 0.5), axis=-1)
+    buffer = io.BytesIO()
+    sf.write(buffer, waveform, sample_rate, format="WAV", subtype="FLOAT")
+    result, rate = _decode_qwen_audio(buffer.getvalue())
+    assert rate == 16000
+    assert len(result) == math.ceil(frames * 16000 / sample_rate)
+    assert result.dtype == np.float32
+    assert np.isfinite(result).all()
+    if sample_rate == 16000:
+        expected = waveform.mean(axis=-1) if channels == 2 else waveform
+        np.testing.assert_array_equal(result, expected)
 
 
 @pytest.mark.parametrize("options", [EngineOptions(language="en"), EngineOptions(task="translate")])
